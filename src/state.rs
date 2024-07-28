@@ -4,10 +4,8 @@ use postgres_es::{default_postgress_pool, PostgresCqrs, PostgresViewRepository};
 use sqlx::{Pool, Postgres};
 
 use crate::configs::settings::SETTINGS;
-use crate::domain::models::BankAccount;
-
-use super::bank_account::BankAccountView;
-use super::configs::cqrs_framework;
+use crate::domain::models::{BankAccount, BankAccountView};
+use crate::repository::configs::cqrs_framework;
 
 #[derive(Clone)]
 pub struct ApplicationState {

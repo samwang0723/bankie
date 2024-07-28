@@ -4,11 +4,11 @@ use sqlx::{Pool, Postgres};
 use std::sync::Arc;
 
 use crate::{
-    domain::models::BankAccount,
+    domain::models::*,
     service::{BankAccountServices, HappyPathBankAccountServices},
 };
 
-use super::bank_account::{AccountQuery, BankAccountView, SimpleLoggingQuery};
+use super::account_view::{AccountQuery, LoggingQuery};
 
 pub fn cqrs_framework(
     pool: Pool<Postgres>,
@@ -17,10 +17,10 @@ pub fn cqrs_framework(
     Arc<PostgresViewRepository<BankAccountView, BankAccount>>,
 ) {
     // A very simple query that writes each event to stdout.
-    let simple_query = SimpleLoggingQuery {};
+    let logging_query = LoggingQuery {};
 
     // A query that stores the current state of an individual account.
-    let account_view_repo = Arc::new(PostgresViewRepository::new("account_query", pool.clone()));
+    let account_view_repo = Arc::new(PostgresViewRepository::new("account_views", pool.clone()));
     let mut account_query = AccountQuery::new(account_view_repo.clone());
 
     // Without a query error handler there will be no indication if an
@@ -30,7 +30,7 @@ pub fn cqrs_framework(
 
     // Create and return an event-sourced `CqrsFramework`.
     let queries: Vec<Box<dyn Query<BankAccount>>> =
-        vec![Box::new(simple_query), Box::new(account_query)];
+        vec![Box::new(logging_query), Box::new(account_query)];
     let services = BankAccountServices::new(Box::new(HappyPathBankAccountServices));
     (
         Arc::new(postgres_es::postgres_cqrs(pool, queries, services)),

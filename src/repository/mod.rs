@@ -1,3 +1,3 @@
-pub mod bank_account;
+pub mod account_view;
 pub mod configs;
-pub mod state;
+pub mod migrate;
