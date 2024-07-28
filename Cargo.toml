@@ -4,10 +4,19 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cqrs-es = "0.4.2"
+cqrs-es = "0.4"
+postgres-es = "0.4"
 async-trait = "0.1.52"
 serde = { version = "1.0", features = ["derive"]}
 serde_derive = "1.0"
 tokio = { version = "1", features = ["full"] }
 rust_decimal = "1.35.0"
 rust_decimal_macros = "1.35.0"
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-native-tls", "json"] }
+lazy_static = "1.5"
+config = "0.14"
+dotenv = "0.15.0"
+
+[[bin]]
+name = "bankie"
+path = "src/main.rs"
