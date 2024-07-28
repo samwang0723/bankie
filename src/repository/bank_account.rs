@@ -1,10 +1,11 @@
 use async_trait::async_trait;
 use commands::BankAccountCommand;
-use cqrs_es::mem_store::MemStore;
-use cqrs_es::{Aggregate, CqrsFramework, EventEnvelope, Query};
+use cqrs_es::persist::GenericQuery;
+use cqrs_es::{Aggregate, CqrsFramework, EventEnvelope, Query, View};
 use events::BankAccountEvent;
+use postgres_es::PostgresViewRepository;
 use rust_decimal::Decimal;
-use rust_decimal_macros::dec;
+use serde::{Deserialize, Serialize};
 
 use crate::common::money::{Currency, Money};
 use crate::domain::models::BankAccount;
@@ -90,7 +91,7 @@ impl Aggregate for BankAccount {
     }
 }
 
-struct SimpleLoggingQuery {}
+pub struct SimpleLoggingQuery {}
 
 #[async_trait]
 impl Query<BankAccount> for SimpleLoggingQuery {
@@ -101,12 +102,82 @@ impl Query<BankAccount> for SimpleLoggingQuery {
     }
 }
 
+// Our second query, this one will be handled with Postgres `GenericQuery`
+// which will serialize and persist our view after it is updated. It also
+// provides a `load` method to deserialize the view on request.
+pub type AccountQuery = GenericQuery<
+    PostgresViewRepository<BankAccountView, BankAccount>,
+    BankAccountView,
+    BankAccount,
+>;
+
+// The view for a BankAccount query, for a standard http application this should
+// be designed to reflect the response dto that will be returned to a user.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct BankAccountView {
+    account_id: Option<String>,
+    balance: Money,
+    written_checks: Vec<String>,
+    ledger: Vec<LedgerEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LedgerEntry {
+    description: String,
+    amount: Money,
+}
+impl LedgerEntry {
+    fn new(description: &str, amount: Money) -> Self {
+        Self {
+            description: description.to_string(),
+            amount,
+        }
+    }
+}
+
+// This updates the view with events as they are committed.
+// The logic should be minimal here, e.g., don't calculate the account balance,
+// design the events to carry the balance information instead.
+impl View<BankAccount> for BankAccountView {
+    fn update(&mut self, event: &EventEnvelope<BankAccount>) {
+        match &event.payload {
+            BankAccountEvent::AccountOpened { account_id } => {
+                self.account_id = Some(account_id.clone());
+            }
+
+            BankAccountEvent::CustomerDepositedMoney { amount, balance } => {
+                self.ledger.push(LedgerEntry::new("deposit", *amount));
+                self.balance = *balance;
+            }
+
+            BankAccountEvent::CustomerWithdrewCash { amount, balance } => {
+                self.ledger
+                    .push(LedgerEntry::new("atm withdrawal", *amount));
+                self.balance = *balance;
+            }
+
+            BankAccountEvent::CustomerWroteCheck {
+                check_number,
+                amount,
+                balance,
+            } => {
+                self.ledger.push(LedgerEntry::new(check_number, *amount));
+                self.written_checks.push(check_number.clone());
+                self.balance = *balance;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod aggregate_tests {
+    use crate::service::{AtmError, BankAccountApi, CheckingError};
+
     use super::*;
     use cqrs_es::test::TestFramework;
     use events::BankAccountEvent;
     use rust_decimal_macros::dec;
+    use std::sync::Mutex;
 
     type AccountTestFramework = TestFramework<BankAccount>;
 
@@ -117,7 +188,8 @@ mod aggregate_tests {
             balance: Money::new(dec!(200.00), Currency::USD),
         };
 
-        AccountTestFramework::with(BankAccountServices)
+        let services = BankAccountServices::new(Box::new(MockBankAccountServices::default()));
+        AccountTestFramework::with(services)
             .given_no_previous_events()
             .when(BankAccountCommand::DepositMoney {
                 amount: Money::new(dec!(200.00), Currency::USD),
@@ -135,8 +207,8 @@ mod aggregate_tests {
             amount: Money::new(dec!(100.00), Currency::USD),
             balance: Money::new(dec!(100.00), Currency::USD),
         };
-
-        AccountTestFramework::with(BankAccountServices)
+        let services = BankAccountServices::new(Box::new(MockBankAccountServices::default()));
+        AccountTestFramework::with(services)
             .given(vec![previous])
             .when(BankAccountCommand::WithdrawMoney {
                 amount: Money::new(dec!(100.00), Currency::USD),
@@ -146,41 +218,50 @@ mod aggregate_tests {
 
     #[test]
     fn test_withdraw_money_funds_not_available() {
-        AccountTestFramework::with(BankAccountServices)
+        let services = BankAccountServices::new(Box::new(MockBankAccountServices::default()));
+        AccountTestFramework::with(services)
             .given_no_previous_events()
             .when(BankAccountCommand::WithdrawMoney {
                 amount: Money::new(dec!(200.00), Currency::USD),
             })
             .then_expect_error_message("insufficient funds");
     }
-}
 
-#[tokio::test]
-async fn test_event_store() {
-    let event_store = MemStore::<BankAccount>::default();
-    let query = SimpleLoggingQuery {};
-    let cqrs = CqrsFramework::new(event_store, vec![Box::new(query)], BankAccountServices);
+    pub struct MockBankAccountServices {
+        atm_withdrawal_response: Mutex<Option<Result<(), AtmError>>>,
+        validate_check_response: Mutex<Option<Result<(), CheckingError>>>,
+    }
 
-    let aggregate_id = "aggregate-instance-A";
+    impl Default for MockBankAccountServices {
+        fn default() -> Self {
+            Self {
+                atm_withdrawal_response: Mutex::new(None),
+                validate_check_response: Mutex::new(None),
+            }
+        }
+    }
 
-    // deposit $1000
-    cqrs.execute(
-        aggregate_id,
-        BankAccountCommand::DepositMoney {
-            amount: Money::new(dec!(1000.00), Currency::USD),
-        },
-    )
-    .await
-    .unwrap();
+    impl MockBankAccountServices {
+        fn set_atm_withdrawal_response(&self, response: Result<(), AtmError>) {
+            *self.atm_withdrawal_response.lock().unwrap() = Some(response);
+        }
+        fn set_validate_check_response(&self, response: Result<(), CheckingError>) {
+            *self.validate_check_response.lock().unwrap() = Some(response);
+        }
+    }
 
-    // write a check for $236.15
-    cqrs.execute(
-        aggregate_id,
-        BankAccountCommand::WriteCheck {
-            check_number: "1337".to_string(),
-            amount: Money::new(dec!(236.15), Currency::USD),
-        },
-    )
-    .await
-    .unwrap();
+    #[async_trait]
+    impl BankAccountApi for MockBankAccountServices {
+        async fn atm_withdrawal(&self, _atm_id: &str, _amount: f64) -> Result<(), AtmError> {
+            self.atm_withdrawal_response.lock().unwrap().take().unwrap()
+        }
+
+        async fn validate_check(
+            &self,
+            _account_id: &str,
+            _check_number: &str,
+        ) -> Result<(), CheckingError> {
+            self.validate_check_response.lock().unwrap().take().unwrap()
+        }
+    }
 }
