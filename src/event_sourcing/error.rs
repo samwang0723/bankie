@@ -16,3 +16,20 @@ impl From<&str> for BankAccountError {
         BankAccountError(message.to_string())
     }
 }
+
+#[derive(Debug)]
+pub struct LedgerError(String);
+
+impl Display for LedgerError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for LedgerError {}
+
+impl From<&str> for LedgerError {
+    fn from(message: &str) -> Self {
+        LedgerError(message.to_string())
+    }
+}

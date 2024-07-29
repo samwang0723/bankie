@@ -2,16 +2,14 @@ use async_trait::async_trait;
 use cqrs_es::persist::GenericQuery;
 use cqrs_es::{EventEnvelope, Query, View};
 use postgres_es::PostgresViewRepository;
-use rust_decimal::Decimal;
 
-use crate::common::money::{Currency, Money};
-use crate::domain::models::{BankAccount, BankAccountView, LedgerEntry};
+use crate::domain::models::{BankAccount, BankAccountStatus, BankAccountView};
 use crate::event_sourcing::event::BankAccountEvent;
 
-pub struct LoggingQuery {}
+pub struct AccountLogging {}
 
 #[async_trait]
-impl Query<BankAccount> for LoggingQuery {
+impl Query<BankAccount> for AccountLogging {
     async fn dispatch(&self, aggregate_id: &str, events: &[EventEnvelope<BankAccount>]) {
         for event in events {
             println!("{}-{}\n{:#?}", aggregate_id, event.sequence, &event.payload);
@@ -34,28 +32,26 @@ pub type AccountQuery = GenericQuery<
 impl View<BankAccount> for BankAccountView {
     fn update(&mut self, event: &EventEnvelope<BankAccount>) {
         match &event.payload {
-            BankAccountEvent::AccountOpened { account_id } => {
-                self.account_id = Some(account_id.clone());
-                self.balance = Money::new(Decimal::ZERO, Currency::USD);
-            }
-            BankAccountEvent::CustomerDepositedMoney { amount, balance } => {
-                self.ledger.push(LedgerEntry::new("deposit", *amount));
-                self.balance = *balance;
-            }
-            BankAccountEvent::CustomerWithdrewCash { amount, balance } => {
-                self.ledger
-                    .push(LedgerEntry::new("atm withdrawal", *amount));
-                self.balance = *balance;
-            }
-            BankAccountEvent::CustomerWroteCheck {
-                check_number,
-                amount,
-                balance,
+            BankAccountEvent::AccountOpened {
+                account_id,
+                timestamp,
             } => {
-                self.ledger.push(LedgerEntry::new(check_number, *amount));
-                self.written_checks.push(check_number.clone());
-                self.balance = *balance;
+                self.account_id = account_id.clone();
+                self.status = BankAccountStatus::Pending;
+                self.updated_at = timestamp.clone();
             }
+            BankAccountEvent::AccountKycApproved {
+                account_id,
+                ledger_id,
+                timestamp,
+            } => {
+                self.account_id = account_id.clone();
+                self.ledger_id = ledger_id.clone();
+                self.status = BankAccountStatus::Approved;
+                self.updated_at = timestamp.clone();
+            }
+            BankAccountEvent::CustomerDepositedMoney { amount: _ } => {}
+            BankAccountEvent::CustomerWithdrewCash { amount: _ } => {}
         }
     }
 }

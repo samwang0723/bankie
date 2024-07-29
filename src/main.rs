@@ -23,11 +23,10 @@ async fn main() {
     let opening_command = event_sourcing::command::BankAccountCommand::OpenAccount {
         account_id: account_id.clone(),
     };
-    let mut metadata: HashMap<String, String> = HashMap::new();
-    metadata.insert("time".to_string(), chrono::Utc::now().to_rfc3339());
     match state
+        .bank_account
         .cqrs
-        .execute_with_metadata(&account_id, opening_command, metadata)
+        .execute(&account_id, opening_command)
         .await
     {
         Ok(_) => {
@@ -38,19 +37,34 @@ async fn main() {
         }
     }
 
-    // execute deposit
-    let deposit_command = event_sourcing::command::BankAccountCommand::DepositMoney {
-        amount: Money::new(dec!(100.00), Currency::USD),
+    let approved_command = event_sourcing::command::BankAccountCommand::ApproveAccount {
+        account_id: account_id.clone(),
     };
-    let mut metadata_2: HashMap<String, String> = HashMap::new();
-    metadata_2.insert("time".to_string(), chrono::Utc::now().to_rfc3339());
     match state
+        .bank_account
         .cqrs
-        .execute_with_metadata(&account_id, deposit_command, metadata_2)
+        .execute(&account_id, approved_command)
         .await
     {
         Ok(_) => {
-            println!("Deposit successful");
+            println!("Account approved");
+        }
+        Err(e) => {
+            println!("Error: {:?}", e);
+        }
+    }
+
+    let deposit_command = event_sourcing::command::BankAccountCommand::Deposit {
+        amount: Money::new(dec!(356.43), Currency::USD),
+    };
+    match state
+        .bank_account
+        .cqrs
+        .execute(&account_id, deposit_command)
+        .await
+    {
+        Ok(_) => {
+            println!("Account deposit money");
         }
         Err(e) => {
             println!("Error: {:?}", e);
@@ -58,10 +72,23 @@ async fn main() {
     }
 
     // read the account view
-    match state.account_query.load(&account_id).await {
+    match state.bank_account.query.load(&account_id).await {
         Ok(view) => match view {
             None => println!("Account not found"),
-            Some(account_view) => println!("Account: {:#?}", account_view),
+            Some(account_view) => {
+                println!("Account: {:#?}", account_view);
+                println!("---------");
+                // read the account view
+                match state.ledger.query.load(&account_view.ledger_id).await {
+                    Ok(view) => match view {
+                        None => println!("Ledger not found"),
+                        Some(ledger_view) => println!("Ledger: {:#?}", ledger_view),
+                    },
+                    Err(err) => {
+                        println!("Error: {:#?}\n", err);
+                    }
+                };
+            }
         },
         Err(err) => {
             println!("Error: {:#?}\n", err);
