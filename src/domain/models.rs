@@ -23,9 +23,10 @@ pub struct BankAccount {
 // The view for a BankAccount query
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct BankAccountView {
-    pub account_id: String,
+    pub id: String,
     pub ledger_id: String,
     pub status: BankAccountStatus,
+    pub created_at: String,
     pub updated_at: String,
 }
 
@@ -47,6 +48,8 @@ pub struct LedgerView {
     pub pending: Money,
     pub current: Money,
     pub transactions: Vec<Transaction>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -54,16 +57,16 @@ pub struct Transaction {
     pub done_by: String,
     pub credit: Money,
     pub debit: Money,
-    pub created_at: String,
+    pub timestamp: String,
 }
 
 impl Transaction {
-    pub fn new(done_by: &str, credit: Money, debit: Money, created_at: String) -> Self {
+    pub fn new(done_by: &str, credit: Money, debit: Money, timestamp: String) -> Self {
         Self {
             done_by: done_by.to_string(),
             credit,
             debit,
-            created_at,
+            timestamp,
         }
     }
 }

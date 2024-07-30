@@ -34,15 +34,16 @@ impl View<BankAccount> for BankAccountView {
     fn update(&mut self, event: &EventEnvelope<BankAccount>) {
         match &event.payload {
             BankAccountEvent::AccountOpened { base_event } => {
-                self.account_id = base_event.get_aggregate_id();
+                self.id = base_event.get_aggregate_id();
                 self.status = BankAccountStatus::Pending;
+                self.created_at = base_event.get_created_at();
                 self.updated_at = base_event.get_created_at();
             }
             BankAccountEvent::AccountKycApproved {
                 ledger_id,
                 base_event,
             } => {
-                self.account_id = base_event.get_aggregate_id();
+                self.id = base_event.get_aggregate_id();
                 self.ledger_id = ledger_id.clone();
                 self.status = BankAccountStatus::Approved;
                 self.updated_at = base_event.get_created_at();

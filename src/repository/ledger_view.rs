@@ -35,6 +35,7 @@ impl View<Ledger> for LedgerView {
                 self.account_id = Some(account_id.clone());
                 self.available = self.available - *amount;
                 self.current = self.available + self.pending;
+                self.updated_at = base_event.get_created_at();
                 self.transactions.push(Transaction::new(
                     &account_id,
                     Money::new(Decimal::ZERO, Currency::USD),
@@ -49,6 +50,10 @@ impl View<Ledger> for LedgerView {
 
                 self.available = self.available + *amount;
                 self.current = self.available + self.pending;
+                if amount == &Money::new(Decimal::ZERO, Currency::USD) {
+                    self.created_at = base_event.get_created_at();
+                    self.updated_at = base_event.get_created_at();
+                }
                 self.transactions.push(Transaction::new(
                     &account_id,
                     *amount,

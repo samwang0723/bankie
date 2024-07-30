@@ -19,7 +19,7 @@ impl Aggregate for models::BankAccount {
 
     // This identifier should be unique to the system.
     fn aggregate_type() -> String {
-        "Account".to_string()
+        "account".to_string()
     }
 
     // The aggregate logic goes here. Note that this will be the _bulk_ of a CQRS system
@@ -128,7 +128,7 @@ impl Aggregate for models::Ledger {
 
     // This identifier should be unique to the system.
     fn aggregate_type() -> String {
-        "Ledger".to_string()
+        "ledger".to_string()
     }
 
     // The aggregate logic goes here. Note that this will be the _bulk_ of a CQRS system
