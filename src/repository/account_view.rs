@@ -5,6 +5,7 @@ use postgres_es::PostgresViewRepository;
 
 use crate::domain::events::BankAccountEvent;
 use crate::domain::models::{BankAccount, BankAccountStatus, BankAccountView};
+use crate::event_sourcing::event::Event;
 
 pub struct AccountLogging {}
 
@@ -32,26 +33,22 @@ pub type AccountQuery = GenericQuery<
 impl View<BankAccount> for BankAccountView {
     fn update(&mut self, event: &EventEnvelope<BankAccount>) {
         match &event.payload {
-            BankAccountEvent::AccountOpened {
-                account_id,
-                timestamp,
-            } => {
-                self.account_id = account_id.clone();
+            BankAccountEvent::AccountOpened { base_event } => {
+                self.account_id = base_event.get_aggregate_id();
                 self.status = BankAccountStatus::Pending;
-                self.updated_at = timestamp.clone();
+                self.updated_at = base_event.get_created_at();
             }
             BankAccountEvent::AccountKycApproved {
-                account_id,
                 ledger_id,
-                timestamp,
+                base_event,
             } => {
-                self.account_id = account_id.clone();
+                self.account_id = base_event.get_aggregate_id();
                 self.ledger_id = ledger_id.clone();
                 self.status = BankAccountStatus::Approved;
-                self.updated_at = timestamp.clone();
+                self.updated_at = base_event.get_created_at();
             }
-            BankAccountEvent::CustomerDepositedMoney { amount: _ } => {}
-            BankAccountEvent::CustomerWithdrewCash { amount: _ } => {}
+            BankAccountEvent::CustomerDepositedMoney { .. } => {}
+            BankAccountEvent::CustomerWithdrewCash { .. } => {}
         }
     }
 }

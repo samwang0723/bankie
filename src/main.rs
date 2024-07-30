@@ -16,16 +16,14 @@ mod state;
 async fn main() {
     dotenv::dotenv().ok();
     let state = new_application_state().await;
-    let account_id = Uuid::new_v4().to_string();
+    let account_id = Uuid::new_v4();
 
     // execute account opening
-    let opening_command = event_sourcing::command::BankAccountCommand::OpenAccount {
-        account_id: account_id.clone(),
-    };
+    let opening_command = event_sourcing::command::BankAccountCommand::OpenAccount { account_id };
     match state
         .bank_account
         .cqrs
-        .execute(&account_id, opening_command)
+        .execute(&account_id.to_string(), opening_command)
         .await
     {
         Ok(_) => {
@@ -36,13 +34,13 @@ async fn main() {
         }
     }
 
-    let approved_command = event_sourcing::command::BankAccountCommand::ApproveAccount {
-        account_id: account_id.clone(),
-    };
+    // execute account KYC approved
+    let approved_command =
+        event_sourcing::command::BankAccountCommand::ApproveAccount { account_id };
     match state
         .bank_account
         .cqrs
-        .execute(&account_id, approved_command)
+        .execute(&account_id.to_string(), approved_command)
         .await
     {
         Ok(_) => {
@@ -53,13 +51,14 @@ async fn main() {
         }
     }
 
+    // execute account deposit
     let deposit_command = event_sourcing::command::BankAccountCommand::Deposit {
         amount: Money::new(dec!(356.43), Currency::USD),
     };
     match state
         .bank_account
         .cqrs
-        .execute(&account_id, deposit_command)
+        .execute(&account_id.to_string(), deposit_command)
         .await
     {
         Ok(_) => {
@@ -70,8 +69,26 @@ async fn main() {
         }
     }
 
+    // execute account deposit
+    let withdrawal_command = event_sourcing::command::BankAccountCommand::Withdrawl {
+        amount: Money::new(dec!(26.23), Currency::USD),
+    };
+    match state
+        .bank_account
+        .cqrs
+        .execute(&account_id.to_string(), withdrawal_command)
+        .await
+    {
+        Ok(_) => {
+            println!("Account withdrawl money");
+        }
+        Err(e) => {
+            println!("Error: {:?}", e);
+        }
+    }
+
     // read the account view
-    match state.bank_account.query.load(&account_id).await {
+    match state.bank_account.query.load(&account_id.to_string()).await {
         Ok(view) => match view {
             None => println!("Account not found"),
             Some(account_view) => {

@@ -1,13 +1,14 @@
 use async_trait::async_trait;
 use command::{BankAccountCommand, LedgerCommand};
-use cqrs_es::Aggregate;
+use cqrs_es::{Aggregate, DomainEvent};
+use event::{BaseEvent, Event};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::common::money::{Currency, Money};
 use crate::domain::*;
 use crate::event_sourcing::*;
-use crate::service::{BankAccountServices, LedgerType, MockLedgerServices};
+use crate::service::{BankAccountServices, MockLedgerServices};
 
 #[async_trait]
 impl Aggregate for models::BankAccount {
@@ -30,42 +31,42 @@ impl Aggregate for models::BankAccount {
     ) -> Result<Vec<Self::Event>, Self::Error> {
         match command {
             BankAccountCommand::OpenAccount { account_id } => {
-                Ok(vec![events::BankAccountEvent::AccountOpened {
-                    account_id,
-                    timestamp: chrono::Utc::now().to_rfc3339(),
-                }])
+                let mut base_event = BaseEvent::default();
+                base_event.set_aggregate_id(account_id);
+                base_event.set_created_at(chrono::Utc::now());
+                Ok(vec![events::BankAccountEvent::AccountOpened { base_event }])
             }
             BankAccountCommand::ApproveAccount { account_id } => {
-                let ledger_id = Uuid::new_v4().to_string();
+                let ledger_id = Uuid::new_v4();
+                let command = LedgerCommand::Init {
+                    ledger_id,
+                    account_id,
+                };
                 if services
                     .services
-                    .write_ledger(
-                        &ledger_id,
-                        &account_id,
-                        Money::new(Decimal::ZERO, Currency::USD),
-                        LedgerType::Init,
-                    )
+                    .write_ledger(ledger_id.to_string(), command)
                     .await
                     .is_err()
                 {
                     return Err("ledger write failed".into());
                 };
-
+                let mut base_event = BaseEvent::default();
+                base_event.set_aggregate_id(account_id);
+                base_event.set_created_at(chrono::Utc::now());
                 Ok(vec![events::BankAccountEvent::AccountKycApproved {
-                    account_id,
-                    ledger_id,
-                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    ledger_id: ledger_id.to_string(),
+                    base_event,
                 }])
             }
             BankAccountCommand::Deposit { amount } => {
+                let command = LedgerCommand::Credit {
+                    ledger_id: Uuid::parse_str(&self.ledger_id).unwrap(),
+                    account_id: Uuid::parse_str(&self.account_id).unwrap(),
+                    amount,
+                };
                 if services
                     .services
-                    .write_ledger(
-                        &self.ledger_id,
-                        &self.account_id,
-                        amount,
-                        LedgerType::Credit,
-                    )
+                    .write_ledger(self.ledger_id.clone(), command)
                     .await
                     .is_err()
                 {
@@ -74,9 +75,14 @@ impl Aggregate for models::BankAccount {
                 Ok(vec![])
             }
             BankAccountCommand::Withdrawl { amount } => {
+                let command = LedgerCommand::Debit {
+                    ledger_id: Uuid::parse_str(&self.ledger_id).unwrap(),
+                    account_id: Uuid::parse_str(&self.account_id).unwrap(),
+                    amount,
+                };
                 if services
                     .services
-                    .write_ledger(&self.ledger_id, &self.account_id, amount, LedgerType::Debit)
+                    .write_ledger(self.ledger_id.clone(), command)
                     .await
                     .is_err()
                 {
@@ -89,28 +95,24 @@ impl Aggregate for models::BankAccount {
 
     fn apply(&mut self, event: Self::Event) {
         match event {
-            events::BankAccountEvent::AccountOpened {
-                account_id,
-                timestamp,
-            } => {
-                self.account_id = account_id;
+            events::BankAccountEvent::AccountOpened { base_event } => {
+                self.account_id = base_event.get_aggregate_id();
                 self.status = models::BankAccountStatus::Pending;
-                self.timestamp = timestamp;
+                self.timestamp = base_event.get_created_at();
             }
             events::BankAccountEvent::AccountKycApproved {
-                account_id,
                 ledger_id,
-                timestamp,
+                base_event,
             } => {
-                self.account_id = account_id;
+                self.account_id = base_event.get_aggregate_id();
                 self.ledger_id = ledger_id;
                 self.status = models::BankAccountStatus::Approved;
-                self.timestamp = timestamp;
+                self.timestamp = base_event.get_created_at();
             }
             // Money handling actions are just delegate to Ledger, does not need
             // to record anything in the event.
-            events::BankAccountEvent::CustomerDepositedMoney { amount: _ } => {}
-            events::BankAccountEvent::CustomerWithdrewCash { amount: _ } => {}
+            events::BankAccountEvent::CustomerDepositedMoney { .. } => {}
+            events::BankAccountEvent::CustomerWithdrewCash { .. } => {}
         }
     }
 }
@@ -138,62 +140,63 @@ impl Aggregate for models::Ledger {
             LedgerCommand::Init {
                 ledger_id,
                 account_id,
-            } => Ok(vec![events::LedgerEvent::LedgerCredited {
-                ledger_id,
-
-                account_id,
-                amount: Money::new(Decimal::ZERO, Currency::USD),
-                timestamp: chrono::Utc::now().to_rfc3339(),
-            }]),
+            } => {
+                let mut base_event = BaseEvent::default();
+                base_event.set_aggregate_id(ledger_id);
+                base_event.set_parent_id(account_id);
+                base_event.set_created_at(chrono::Utc::now());
+                Ok(vec![events::LedgerEvent::LedgerCredited {
+                    amount: Money::new(Decimal::ZERO, Currency::USD),
+                    base_event,
+                }])
+            }
             LedgerCommand::Debit {
                 ledger_id,
                 account_id,
                 amount,
-            } => Ok(vec![events::LedgerEvent::LedgerDebited {
-                ledger_id,
-                account_id,
-                amount,
-                timestamp: chrono::Utc::now().to_rfc3339(),
-            }]),
+            } => {
+                let mut base_event = BaseEvent::default();
+                base_event.set_aggregate_id(ledger_id);
+                base_event.set_parent_id(account_id);
+                base_event.set_created_at(chrono::Utc::now());
+                Ok(vec![events::LedgerEvent::LedgerDebited {
+                    amount,
+                    base_event,
+                }])
+            }
             LedgerCommand::Credit {
                 ledger_id,
                 account_id,
                 amount,
-            } => Ok(vec![events::LedgerEvent::LedgerCredited {
-                ledger_id,
-                account_id,
-                amount,
-                timestamp: chrono::Utc::now().to_rfc3339(),
-            }]),
+            } => {
+                let mut base_event = BaseEvent::default();
+                base_event.set_aggregate_id(ledger_id);
+                base_event.set_parent_id(account_id);
+                base_event.set_created_at(chrono::Utc::now());
+                Ok(vec![events::LedgerEvent::LedgerCredited {
+                    amount,
+                    base_event,
+                }])
+            }
         }
     }
 
     fn apply(&mut self, event: Self::Event) {
+        let event_type = event.event_type();
         match event {
-            events::LedgerEvent::LedgerCredited {
-                ledger_id,
-                account_id,
-                amount,
-                timestamp,
-            } => {
-                self.id = ledger_id;
+            events::LedgerEvent::LedgerCredited { amount, base_event } => {
+                self.id = base_event.get_aggregate_id();
                 self.amount = amount;
-                self.transaction_type = LedgerType::Credit.to_string();
-                self.account_id = account_id;
-                self.timestamp = timestamp;
+                self.transaction_type = event_type;
+                self.account_id = base_event.get_parent_id();
+                self.timestamp = base_event.get_created_at();
             }
-            events::LedgerEvent::LedgerDebited {
-                ledger_id,
-
-                account_id,
-                amount,
-                timestamp,
-            } => {
-                self.id = ledger_id;
+            events::LedgerEvent::LedgerDebited { amount, base_event } => {
+                self.id = base_event.get_aggregate_id();
                 self.amount = amount;
-                self.transaction_type = LedgerType::Debit.to_string();
-                self.account_id = account_id;
-                self.timestamp = timestamp;
+                self.transaction_type = event_type;
+                self.account_id = base_event.get_parent_id();
+                self.timestamp = base_event.get_created_at();
             }
         }
     }

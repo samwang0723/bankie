@@ -1,29 +1,29 @@
-use serde::Deserialize;
+use uuid::Uuid;
 
 use crate::common::money::Money;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub enum BankAccountCommand {
-    OpenAccount { account_id: String },
-    ApproveAccount { account_id: String },
+    OpenAccount { account_id: Uuid },
+    ApproveAccount { account_id: Uuid },
     Deposit { amount: Money },
     Withdrawl { amount: Money },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub enum LedgerCommand {
     Init {
-        ledger_id: String,
-        account_id: String,
+        ledger_id: Uuid,
+        account_id: Uuid,
     },
     Credit {
-        ledger_id: String,
-        account_id: String,
+        ledger_id: Uuid,
+        account_id: Uuid,
         amount: Money,
     },
     Debit {
-        ledger_id: String,
-        account_id: String,
+        ledger_id: Uuid,
+        account_id: Uuid,
         amount: Money,
     },
 }

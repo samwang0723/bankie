@@ -1,24 +1,26 @@
 use cqrs_es::DomainEvent;
 use serde::{Deserialize, Serialize};
 
-use crate::common::money::Money;
+use crate::{common::money::Money, event_sourcing::event::BaseEvent};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum BankAccountEvent {
     AccountOpened {
-        account_id: String,
-        timestamp: String,
+        base_event: BaseEvent,
     },
     AccountKycApproved {
-        account_id: String,
         ledger_id: String,
-        timestamp: String,
+        base_event: BaseEvent,
     },
     CustomerDepositedMoney {
         amount: Money,
+        ledger_id: String,
+        base_event: BaseEvent,
     },
     CustomerWithdrewCash {
         amount: Money,
+        ledger_id: String,
+        base_event: BaseEvent,
     },
 }
 
@@ -41,16 +43,12 @@ impl DomainEvent for BankAccountEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum LedgerEvent {
     LedgerCredited {
-        ledger_id: String,
-        account_id: String,
         amount: Money,
-        timestamp: String,
+        base_event: BaseEvent,
     },
     LedgerDebited {
-        ledger_id: String,
-        account_id: String,
         amount: Money,
-        timestamp: String,
+        base_event: BaseEvent,
     },
 }
 
