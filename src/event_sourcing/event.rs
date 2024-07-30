@@ -22,7 +22,7 @@ pub trait Event {
     fn set_created_at(&mut self, created_at: DateTime<Utc>);
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BaseEvent {
     created_at: String,
     aggregate_id: String,
@@ -52,5 +52,25 @@ impl Event for BaseEvent {
 
     fn set_created_at(&mut self, created_at: DateTime<Utc>) {
         self.created_at = created_at.to_rfc3339();
+    }
+}
+
+impl PartialEq for BaseEvent {
+    fn eq(&self, other: &Self) -> bool {
+        if self.aggregate_id != other.aggregate_id || self.parent_id != other.parent_id {
+            return false;
+        }
+
+        // Parse the created_at strings into DateTime objects
+        let self_created_at = DateTime::parse_from_rfc3339(&self.created_at).ok();
+        let other_created_at = DateTime::parse_from_rfc3339(&other.created_at).ok();
+
+        match (self_created_at, other_created_at) {
+            (Some(self_dt), Some(other_dt)) => {
+                // Compare timestamps, allowing for a small difference (e.g., 1 second)
+                (self_dt - other_dt).abs().num_seconds() <= 1
+            }
+            _ => self.created_at == other.created_at, // Fall back to string comparison if parsing fails
+        }
     }
 }

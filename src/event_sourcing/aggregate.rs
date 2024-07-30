@@ -201,3 +201,81 @@ impl Aggregate for models::Ledger {
         }
     }
 }
+
+// The aggregate tests are the most important part of a CQRS system.
+// The simplicity and flexibility of these tests are a good part of what
+// makes an event sourced system so friendly to changing business requirements.
+#[cfg(test)]
+mod aggregate_tests {
+    use async_trait::async_trait;
+    use rust_decimal_macros::dec;
+    use std::sync::Mutex;
+    use uuid::Uuid;
+
+    use cqrs_es::test::TestFramework;
+
+    use crate::{
+        common::money::{Currency, Money},
+        service::{BankAccountApi, BankAccountServices},
+    };
+
+    use super::{
+        command::{BankAccountCommand, LedgerCommand},
+        event::{BaseEvent, Event},
+        events::BankAccountEvent,
+        models::BankAccount,
+    };
+
+    // A test framework that will apply our events and command
+    // and verify that the logic works as expected.
+    type AccountTestFramework = TestFramework<BankAccount>;
+
+    #[test]
+    fn test_acccount_creation() {
+        let uuid = Uuid::new_v4();
+        let mut base_event = BaseEvent::default();
+        base_event.set_aggregate_id(uuid);
+        base_event.set_created_at(chrono::Utc::now());
+
+        let expected = BankAccountEvent::AccountOpened { base_event };
+        let command = BankAccountCommand::OpenAccount { account_id: uuid };
+        let services = BankAccountServices::new(Box::new(MockBankAccountServices::default()));
+        // Obtain a new test framework
+        AccountTestFramework::with(services)
+            // In a test case with no previous events
+            .given_no_previous_events()
+            // Wnen we fire this command
+            .when(command)
+            // then we expect these results
+            .then_expect_events(vec![expected]);
+    }
+
+    pub struct MockBankAccountServices {
+        write_ledger_response: Mutex<Option<Result<(), anyhow::Error>>>,
+    }
+
+    impl Default for MockBankAccountServices {
+        fn default() -> Self {
+            Self {
+                write_ledger_response: Mutex::new(None),
+            }
+        }
+    }
+
+    impl MockBankAccountServices {
+        fn set_write_ledger_response(&self, response: Result<(), anyhow::Error>) {
+            *self.write_ledger_response.lock().unwrap() = Some(response);
+        }
+    }
+
+    #[async_trait]
+    impl BankAccountApi for MockBankAccountServices {
+        async fn write_ledger(
+            &self,
+            _ledger_id: String,
+            _command: LedgerCommand,
+        ) -> Result<(), anyhow::Error> {
+            self.write_ledger_response.lock().unwrap().take().unwrap()
+        }
+    }
+}
