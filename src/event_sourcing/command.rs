@@ -5,7 +5,7 @@ use crate::common::money::Money;
 #[derive(Debug)]
 pub enum BankAccountCommand {
     OpenAccount { account_id: Uuid },
-    ApproveAccount { account_id: Uuid },
+    ApproveAccount { account_id: Uuid, ledger_id: Uuid },
     Deposit { amount: Money },
     Withdrawl { amount: Money },
 }

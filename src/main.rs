@@ -35,8 +35,11 @@ async fn main() {
     }
 
     // execute account KYC approved
-    let approved_command =
-        event_sourcing::command::BankAccountCommand::ApproveAccount { account_id };
+    let ledger_id = Uuid::new_v4();
+    let approved_command = event_sourcing::command::BankAccountCommand::ApproveAccount {
+        account_id,
+        ledger_id,
+    };
     match state
         .bank_account
         .cqrs
