@@ -1,9 +1,9 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 
-use crate::{event_sourcing::command::LedgerCommand, state::LedgerLoaderSaver};
+use crate::{event_sourcing::command::BalanceCommand, state::BalanceLoaderSaver};
 
-pub struct MockLedgerServices;
+pub struct MockBalanceServices;
 
 pub struct BankAccountServices {
     pub services: Box<dyn BankAccountApi>,
@@ -21,12 +21,12 @@ pub trait BankAccountApi: Sync + Send {
     async fn write_ledger(
         &self,
         ledger_id: String,
-        command: LedgerCommand,
+        command: BalanceCommand,
     ) -> Result<(), anyhow::Error>;
 }
 
 pub struct BankAccountLogic {
-    pub ledger: LedgerLoaderSaver,
+    pub ledger: BalanceLoaderSaver,
 }
 
 #[async_trait]
@@ -34,7 +34,7 @@ impl BankAccountApi for BankAccountLogic {
     async fn write_ledger(
         &self,
         ledger_id: String,
-        command: LedgerCommand,
+        command: BalanceCommand,
     ) -> Result<(), anyhow::Error> {
         // Should call ledger commange to write the transaction.
         self.ledger

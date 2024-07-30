@@ -12,7 +12,7 @@ pub enum BankAccountEvent {
         ledger_id: String,
         base_event: BaseEvent,
     },
-    CustomerDepositedMoney {
+    CustomerDepositedCash {
         amount: Money,
         ledger_id: String,
         base_event: BaseEvent,
@@ -27,10 +27,10 @@ pub enum BankAccountEvent {
 impl DomainEvent for BankAccountEvent {
     fn event_type(&self) -> String {
         let event_type: &str = match self {
-            BankAccountEvent::AccountOpened { .. } => "AccountOpened",
-            BankAccountEvent::AccountKycApproved { .. } => "AccountKycApproved",
-            BankAccountEvent::CustomerDepositedMoney { .. } => "CustomerDepositedMoney",
-            BankAccountEvent::CustomerWithdrewCash { .. } => "CustomerWithdrewCash",
+            BankAccountEvent::AccountOpened { .. } => "bank_account.opened",
+            BankAccountEvent::AccountKycApproved { .. } => "bank_account.kyc_approved",
+            BankAccountEvent::CustomerDepositedCash { .. } => "bank_account.deposited",
+            BankAccountEvent::CustomerWithdrewCash { .. } => "bank_account.withdrew",
         };
         event_type.to_string()
     }
@@ -41,22 +41,21 @@ impl DomainEvent for BankAccountEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum LedgerEvent {
-    LedgerCredited {
+pub enum BalanceEvent {
+    BalanceChanged {
         amount: Money,
-        base_event: BaseEvent,
-    },
-    LedgerDebited {
-        amount: Money,
+        transaction_id: String,
+        transaction_type: String,
+        available_delta: Money,
+        pending_delta: Money,
         base_event: BaseEvent,
     },
 }
 
-impl DomainEvent for LedgerEvent {
+impl DomainEvent for BalanceEvent {
     fn event_type(&self) -> String {
         let event_type: &str = match self {
-            LedgerEvent::LedgerCredited { .. } => "LedgerCredited",
-            LedgerEvent::LedgerDebited { .. } => "LedgerDebited",
+            BalanceEvent::BalanceChanged { .. } => "balance.changed",
         };
         event_type.to_string()
     }

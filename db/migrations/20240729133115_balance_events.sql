@@ -1,4 +1,4 @@
-CREATE TABLE ledger_events
+CREATE TABLE balance_events
 (
     aggregate_type text                         NOT NULL,
     aggregate_id   text                         NOT NULL,

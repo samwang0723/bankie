@@ -14,7 +14,7 @@ pub enum BankAccountStatus {
 
 #[derive(Serialize, Default, Deserialize)]
 pub struct BankAccount {
-    pub account_id: String,
+    pub id: String,
     pub status: BankAccountStatus,
     pub ledger_id: String,
     pub timestamp: String,
@@ -31,42 +31,23 @@ pub struct BankAccountView {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct Ledger {
+pub struct Balance {
     pub id: String,
     pub account_id: String,
-    pub transaction_type: String,
+    pub available: Money,
+    pub pending: Money,
     pub amount: Money,
     pub timestamp: String,
 }
 
 // The view for a Ledger query
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct LedgerView {
+pub struct BalanceView {
     pub id: String,
-    pub account_id: Option<String>,
+    pub account_id: String,
     pub available: Money,
     pub pending: Money,
-    pub current: Money,
-    pub transactions: Vec<Transaction>,
+    pub current_balance: Money,
     pub created_at: String,
     pub updated_at: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Transaction {
-    pub done_by: String,
-    pub credit: Money,
-    pub debit: Money,
-    pub timestamp: String,
-}
-
-impl Transaction {
-    pub fn new(done_by: &str, credit: Money, debit: Money, timestamp: String) -> Self {
-        Self {
-            done_by: done_by.to_string(),
-            credit,
-            debit,
-            timestamp,
-        }
-    }
 }

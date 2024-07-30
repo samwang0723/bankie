@@ -5,18 +5,18 @@ use std::sync::Arc;
 
 use crate::{
     domain::models::*,
-    service::{BankAccountLogic, BankAccountServices, MockLedgerServices},
-    state::LedgerLoaderSaver,
+    service::{BankAccountLogic, BankAccountServices, MockBalanceServices},
+    state::BalanceLoaderSaver,
 };
 
 use super::{
-    account_view::{AccountLogging, AccountQuery},
-    ledger_view::{LedgerLogging, LedgerQuery},
+    balance_view::{BalanceLogging, BalanceQuery},
+    bank_account_view::{AccountLogging, AccountQuery},
 };
 
 pub fn configure_bank_account(
     pool: Pool<Postgres>,
-    ledger_loader_saver: LedgerLoaderSaver,
+    ledger_loader_saver: BalanceLoaderSaver,
 ) -> (
     Arc<PostgresCqrs<BankAccount>>,
     Arc<PostgresViewRepository<BankAccountView, BankAccount>>,
@@ -25,7 +25,10 @@ pub fn configure_bank_account(
     let logging_query = AccountLogging {};
 
     // A query that stores the current state of an individual account.
-    let account_view_repo = Arc::new(PostgresViewRepository::new("account_views", pool.clone()));
+    let account_view_repo = Arc::new(PostgresViewRepository::new(
+        "bank_account_views",
+        pool.clone(),
+    ));
     let mut account_query = AccountQuery::new(account_view_repo.clone());
 
     // Without a query error handler there will be no indication if an
@@ -51,15 +54,15 @@ pub fn configure_bank_account(
 pub fn configure_ledger(
     pool: Pool<Postgres>,
 ) -> (
-    Arc<PostgresCqrs<Ledger>>,
-    Arc<PostgresViewRepository<LedgerView, Ledger>>,
+    Arc<PostgresCqrs<Balance>>,
+    Arc<PostgresViewRepository<BalanceView, Balance>>,
 ) {
     // A very simple query that writes each event to stdout.
-    let logging_query = LedgerLogging {};
+    let logging_query = BalanceLogging {};
 
     // A query that stores the current state of an individual account.
     let ledger_view_repo = Arc::new(PostgresViewRepository::new("ledger_views", pool.clone()));
-    let mut ledger_query = LedgerQuery::new(ledger_view_repo.clone());
+    let mut ledger_query = BalanceQuery::new(ledger_view_repo.clone());
 
     // Without a query error handler there will be no indication if an
     // error occurs (e.g., database connection failure, missing columns or table).
@@ -67,12 +70,12 @@ pub fn configure_ledger(
     ledger_query.use_error_handler(Box::new(|e| println!("{}", e)));
 
     // Create and return an event-sourced `CqrsFramework`.
-    let queries: Vec<Box<dyn Query<Ledger>>> =
+    let queries: Vec<Box<dyn Query<Balance>>> =
         vec![Box::new(logging_query), Box::new(ledger_query)];
 
     let repo = PostgresEventRepository::new(pool).with_tables("ledger_events", "ledger_snapshots");
     let store = PersistedEventStore::new_event_store(repo);
-    let cqrs = CqrsFramework::new(store, queries, MockLedgerServices {});
+    let cqrs = CqrsFramework::new(store, queries, MockBalanceServices {});
 
     (Arc::new(cqrs), ledger_view_repo)
 }

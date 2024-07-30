@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use command::{BankAccountCommand, LedgerCommand};
-use cqrs_es::{Aggregate, DomainEvent};
+use command::{BalanceCommand, BankAccountCommand};
+use cqrs_es::Aggregate;
 use event::{BaseEvent, Event};
 use rust_decimal::Decimal;
 use uuid::Uuid;
@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::common::money::{Currency, Money};
 use crate::domain::*;
 use crate::event_sourcing::*;
-use crate::service::{BankAccountServices, MockLedgerServices};
+use crate::service::{BankAccountServices, MockBalanceServices};
 
 #[async_trait]
 impl Aggregate for models::BankAccount {
@@ -19,7 +19,7 @@ impl Aggregate for models::BankAccount {
 
     // This identifier should be unique to the system.
     fn aggregate_type() -> String {
-        "account".to_string()
+        "bank_account".to_string()
     }
 
     // The aggregate logic goes here. Note that this will be the _bulk_ of a CQRS system
@@ -40,18 +40,6 @@ impl Aggregate for models::BankAccount {
                 account_id,
                 ledger_id,
             } => {
-                let command = LedgerCommand::Init {
-                    ledger_id,
-                    account_id,
-                };
-                if services
-                    .services
-                    .write_ledger(ledger_id.to_string(), command)
-                    .await
-                    .is_err()
-                {
-                    return Err("ledger write failed".into());
-                };
                 let mut base_event = BaseEvent::default();
                 base_event.set_aggregate_id(account_id);
                 base_event.set_created_at(chrono::Utc::now());
@@ -61,9 +49,11 @@ impl Aggregate for models::BankAccount {
                 }])
             }
             BankAccountCommand::Deposit { amount } => {
-                let command = LedgerCommand::Credit {
+                // TODO: need to create transaction first
+                let command = BalanceCommand::Credit {
                     ledger_id: Uuid::parse_str(&self.ledger_id).unwrap(),
-                    account_id: Uuid::parse_str(&self.account_id).unwrap(),
+                    account_id: Uuid::parse_str(&self.id).unwrap(),
+                    transaction_id: Uuid::new_v4(),
                     amount,
                 };
                 if services
@@ -77,9 +67,11 @@ impl Aggregate for models::BankAccount {
                 Ok(vec![])
             }
             BankAccountCommand::Withdrawl { amount } => {
-                let command = LedgerCommand::Debit {
+                // TODO: need to create transaction first
+                let command = BalanceCommand::Debit {
                     ledger_id: Uuid::parse_str(&self.ledger_id).unwrap(),
-                    account_id: Uuid::parse_str(&self.account_id).unwrap(),
+                    account_id: Uuid::parse_str(&self.id).unwrap(),
+                    transaction_id: Uuid::new_v4(),
                     amount,
                 };
                 if services
@@ -98,7 +90,7 @@ impl Aggregate for models::BankAccount {
     fn apply(&mut self, event: Self::Event) {
         match event {
             events::BankAccountEvent::AccountOpened { base_event } => {
-                self.account_id = base_event.get_aggregate_id();
+                self.id = base_event.get_aggregate_id();
                 self.status = models::BankAccountStatus::Pending;
                 self.timestamp = base_event.get_created_at();
             }
@@ -106,29 +98,29 @@ impl Aggregate for models::BankAccount {
                 ledger_id,
                 base_event,
             } => {
-                self.account_id = base_event.get_aggregate_id();
+                self.id = base_event.get_aggregate_id();
                 self.ledger_id = ledger_id;
                 self.status = models::BankAccountStatus::Approved;
                 self.timestamp = base_event.get_created_at();
             }
             // Money handling actions are just delegate to Ledger, does not need
             // to record anything in the event.
-            events::BankAccountEvent::CustomerDepositedMoney { .. } => {}
+            events::BankAccountEvent::CustomerDepositedCash { .. } => {}
             events::BankAccountEvent::CustomerWithdrewCash { .. } => {}
         }
     }
 }
 
 #[async_trait]
-impl Aggregate for models::Ledger {
-    type Command = command::LedgerCommand;
-    type Event = events::LedgerEvent;
+impl Aggregate for models::Balance {
+    type Command = command::BalanceCommand;
+    type Event = events::BalanceEvent;
     type Error = error::LedgerError;
-    type Services = MockLedgerServices;
+    type Services = MockBalanceServices;
 
     // This identifier should be unique to the system.
     fn aggregate_type() -> String {
-        "ledger".to_string()
+        "balance".to_string()
     }
 
     // The aggregate logic goes here. Note that this will be the _bulk_ of a CQRS system
@@ -139,64 +131,81 @@ impl Aggregate for models::Ledger {
         _services: &Self::Services,
     ) -> Result<Vec<Self::Event>, Self::Error> {
         match command {
-            LedgerCommand::Init {
+            BalanceCommand::Debit {
                 ledger_id,
                 account_id,
-            } => {
-                let mut base_event = BaseEvent::default();
-                base_event.set_aggregate_id(ledger_id);
-                base_event.set_parent_id(account_id);
-                base_event.set_created_at(chrono::Utc::now());
-                Ok(vec![events::LedgerEvent::LedgerCredited {
-                    amount: Money::new(Decimal::ZERO, Currency::USD),
-                    base_event,
-                }])
-            }
-            LedgerCommand::Debit {
-                ledger_id,
-                account_id,
+                transaction_id,
                 amount,
             } => {
                 let mut base_event = BaseEvent::default();
                 base_event.set_aggregate_id(ledger_id);
                 base_event.set_parent_id(account_id);
                 base_event.set_created_at(chrono::Utc::now());
-                Ok(vec![events::LedgerEvent::LedgerDebited {
-                    amount,
-                    base_event,
-                }])
+                Ok(vec![
+                    events::BalanceEvent::BalanceChanged {
+                        amount,
+                        transaction_id: transaction_id.to_string(),
+                        transaction_type: "debit_hold".to_string(),
+                        available_delta: Money::new(Decimal::ZERO - amount.amount, Currency::USD),
+                        pending_delta: Money::new(amount.amount, Currency::USD),
+                        base_event: base_event.clone(),
+                    },
+                    events::BalanceEvent::BalanceChanged {
+                        amount,
+                        transaction_id: transaction_id.to_string(),
+                        transaction_type: "debit_release".to_string(),
+                        available_delta: Money::new(Decimal::ZERO, Currency::USD),
+                        pending_delta: Money::new(Decimal::ZERO - amount.amount, Currency::USD),
+                        base_event,
+                    },
+                ])
             }
-            LedgerCommand::Credit {
+            BalanceCommand::Credit {
                 ledger_id,
                 account_id,
+                transaction_id,
                 amount,
             } => {
                 let mut base_event = BaseEvent::default();
                 base_event.set_aggregate_id(ledger_id);
                 base_event.set_parent_id(account_id);
                 base_event.set_created_at(chrono::Utc::now());
-                Ok(vec![events::LedgerEvent::LedgerCredited {
-                    amount,
-                    base_event,
-                }])
+                Ok(vec![
+                    events::BalanceEvent::BalanceChanged {
+                        amount,
+                        transaction_id: transaction_id.to_string(),
+                        transaction_type: "credit_hold".to_string(),
+                        available_delta: Money::new(Decimal::ZERO, Currency::USD),
+                        pending_delta: Money::new(amount.amount, Currency::USD),
+                        base_event: base_event.clone(),
+                    },
+                    events::BalanceEvent::BalanceChanged {
+                        amount,
+                        transaction_id: transaction_id.to_string(),
+                        transaction_type: "credit_release".to_string(),
+                        available_delta: Money::new(amount.amount, Currency::USD),
+                        pending_delta: Money::new(Decimal::ZERO - amount.amount, Currency::USD),
+                        base_event,
+                    },
+                ])
             }
         }
     }
 
     fn apply(&mut self, event: Self::Event) {
-        let event_type = event.event_type();
         match event {
-            events::LedgerEvent::LedgerCredited { amount, base_event } => {
+            events::BalanceEvent::BalanceChanged {
+                amount,
+                transaction_id: _,
+                transaction_type: _,
+                available_delta,
+                pending_delta,
+                base_event,
+            } => {
                 self.id = base_event.get_aggregate_id();
                 self.amount = amount;
-                self.transaction_type = event_type;
-                self.account_id = base_event.get_parent_id();
-                self.timestamp = base_event.get_created_at();
-            }
-            events::LedgerEvent::LedgerDebited { amount, base_event } => {
-                self.id = base_event.get_aggregate_id();
-                self.amount = amount;
-                self.transaction_type = event_type;
+                self.available = self.available + available_delta;
+                self.pending = self.pending + pending_delta;
                 self.account_id = base_event.get_parent_id();
                 self.timestamp = base_event.get_created_at();
             }
@@ -218,20 +227,19 @@ mod aggregate_tests {
 
     use crate::{
         common::money::{Currency, Money},
-        service::{BankAccountApi, BankAccountServices, MockLedgerServices},
+        service::{BankAccountApi, BankAccountServices},
     };
 
     use super::{
-        command::{BankAccountCommand, LedgerCommand},
+        command::{BalanceCommand, BankAccountCommand},
         event::{BaseEvent, Event},
-        events::{BankAccountEvent, LedgerEvent},
-        models::{BankAccount, Ledger},
+        events::BankAccountEvent,
+        models::BankAccount,
     };
 
     // A test framework that will apply our events and command
     // and verify that the logic works as expected.
     type AccountTestFramework = TestFramework<BankAccount>;
-    type LedgerTestFramework = TestFramework<Ledger>;
 
     #[test]
     fn test_acccount_creation() {
@@ -327,33 +335,6 @@ mod aggregate_tests {
             .when(command)
             // then we expect these results
             .then_expect_events(vec![]);
-
-        let mut ledger_base_event = BaseEvent::default();
-        ledger_base_event.set_aggregate_id(ledger_id);
-        ledger_base_event.set_parent_id(uuid);
-        ledger_base_event.set_created_at(chrono::Utc::now());
-
-        let ledger_previous = LedgerEvent::LedgerCredited {
-            amount: Money::new(dec!(0.0), Currency::USD),
-            base_event: ledger_base_event,
-        };
-
-        let mut ledger_base_event_1 = BaseEvent::default();
-        ledger_base_event_1.set_aggregate_id(ledger_id);
-        ledger_base_event_1.set_parent_id(uuid);
-        ledger_base_event_1.set_created_at(chrono::Utc::now());
-
-        LedgerTestFramework::with(MockLedgerServices {})
-            .given(vec![ledger_previous])
-            .when(LedgerCommand::Credit {
-                ledger_id,
-                account_id: uuid,
-                amount: Money::new(dec!(1000.0), Currency::USD),
-            })
-            .then_expect_events(vec![LedgerEvent::LedgerCredited {
-                amount: Money::new(dec!(1000.0), Currency::USD),
-                base_event: ledger_base_event_1,
-            }])
     }
 
     pub struct MockBankAccountServices {
@@ -379,7 +360,7 @@ mod aggregate_tests {
         async fn write_ledger(
             &self,
             _ledger_id: String,
-            _command: LedgerCommand,
+            _command: BalanceCommand,
         ) -> Result<(), anyhow::Error> {
             self.write_ledger_response.lock().unwrap().take().unwrap()
         }

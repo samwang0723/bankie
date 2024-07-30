@@ -4,13 +4,13 @@ use postgres_es::{default_postgress_pool, PostgresCqrs, PostgresViewRepository};
 use sqlx::{Pool, Postgres};
 
 use crate::configs::settings::SETTINGS;
-use crate::domain::models::{BankAccount, BankAccountView, Ledger, LedgerView};
+use crate::domain::models::{Balance, BalanceView, BankAccount, BankAccountView};
 use crate::repository::configs::{configure_bank_account, configure_ledger};
 
 #[derive(Clone)]
 pub struct ApplicationState {
     pub bank_account: BankAccountLoaderSaver,
-    pub ledger: LedgerLoaderSaver,
+    pub ledger: BalanceLoaderSaver,
 }
 
 #[derive(Clone)]
@@ -20,9 +20,9 @@ pub struct BankAccountLoaderSaver {
 }
 
 #[derive(Clone)]
-pub struct LedgerLoaderSaver {
-    pub cqrs: Arc<PostgresCqrs<Ledger>>,
-    pub query: Arc<PostgresViewRepository<LedgerView, Ledger>>,
+pub struct BalanceLoaderSaver {
+    pub cqrs: Arc<PostgresCqrs<Balance>>,
+    pub query: Arc<PostgresViewRepository<BalanceView, Balance>>,
 }
 
 pub async fn new_application_state() -> ApplicationState {
@@ -34,7 +34,7 @@ pub async fn new_application_state() -> ApplicationState {
     // see init file at `/db/init.sql` for more.
     let pool: Pool<Postgres> = default_postgress_pool(&SETTINGS.database.connection_string()).await;
     let (ledger_cqrs, ledger_query) = configure_ledger(pool.clone());
-    let ledger_loader_saver = LedgerLoaderSaver {
+    let ledger_loader_saver = BalanceLoaderSaver {
         cqrs: ledger_cqrs,
         query: ledger_query,
     };

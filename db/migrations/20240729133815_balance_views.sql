@@ -1,4 +1,4 @@
-CREATE TABLE ledger_views
+CREATE TABLE balance_views
 (
     view_id text                        NOT NULL,
     version bigint CHECK (version >= 0) NOT NULL,

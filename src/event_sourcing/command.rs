@@ -11,19 +11,17 @@ pub enum BankAccountCommand {
 }
 
 #[derive(Debug)]
-pub enum LedgerCommand {
-    Init {
-        ledger_id: Uuid,
-        account_id: Uuid,
-    },
+pub enum BalanceCommand {
     Credit {
         ledger_id: Uuid,
         account_id: Uuid,
+        transaction_id: Uuid,
         amount: Money,
     },
     Debit {
         ledger_id: Uuid,
         account_id: Uuid,
+        transaction_id: Uuid,
         amount: Money,
     },
 }

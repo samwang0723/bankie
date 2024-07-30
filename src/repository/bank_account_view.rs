@@ -48,7 +48,7 @@ impl View<BankAccount> for BankAccountView {
                 self.status = BankAccountStatus::Approved;
                 self.updated_at = base_event.get_created_at();
             }
-            BankAccountEvent::CustomerDepositedMoney { .. } => {}
+            BankAccountEvent::CustomerDepositedCash { .. } => {}
             BankAccountEvent::CustomerWithdrewCash { .. } => {}
         }
     }

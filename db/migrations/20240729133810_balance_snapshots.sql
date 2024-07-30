@@ -1,4 +1,4 @@
-CREATE TABLE ledger_snapshots
+CREATE TABLE balance_snapshots
 (
     aggregate_type   text                                 NOT NULL,
     aggregate_id     text                                 NOT NULL,
