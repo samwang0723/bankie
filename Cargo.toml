@@ -33,4 +33,4 @@ path = "src/main.rs"
 
 [[bin]]
 name = "migrations"
-path = "src/repository/migrate-tmp.rs"
+path = "src/repository/migrate.rs"

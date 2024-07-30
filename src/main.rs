@@ -2,7 +2,6 @@ use common::money::{Currency, Money};
 use cqrs_es::persist::ViewRepository;
 use rust_decimal_macros::dec;
 use state::new_application_state;
-use std::collections::HashMap;
 use uuid::Uuid;
 
 mod common;

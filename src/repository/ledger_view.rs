@@ -5,8 +5,8 @@ use postgres_es::PostgresViewRepository;
 use rust_decimal::Decimal;
 
 use crate::common::money::{Currency, Money};
+use crate::domain::events::LedgerEvent;
 use crate::domain::models::{Ledger, LedgerView, Transaction};
-use crate::event_sourcing::event::LedgerEvent;
 
 pub struct LedgerLogging {}
 

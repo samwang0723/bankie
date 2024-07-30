@@ -32,7 +32,7 @@ test:
 
 lint: ## lints the entire codebase
 	cargo clippy
-	cargo fmt
+	cargo fmt -- --check
 	cargo check
 
 ###########
@@ -56,14 +56,15 @@ db-pg-migrate:
 	printf "Enter host for db(localhost): \n"; read -rs DB_HOST &&\
 	printf "Enter pass for db: \n"; read -rs DB_PASSWORD &&\
 	printf "Enter port(5432...): \n"; read -r DB_PORT &&\
-	sed \
+	sed -i.bak \
 	-e "s/DB_HOST/$$DB_HOST/g" \
 	-e "s/DB_PORT/$$DB_PORT/g" \
 	-e "s/DB_PASSWORD/$$DB_PASSWORD/g" \
 	-e "s/APP_NAME_UND/$(APP_NAME_UND)/g" \
-	./src/repository/migrate.rs > ./src/repository/migrate-tmp.rs && \
+	./src/repository/migrate.rs && \
 	cargo run --bin migrations && \
-	rm ./src/repository/migrate-tmp.rs \
+	git stash push -m "Stash changes made by db-pg-migrate" && \
+	mv ./src/repository/migrate.rs.bak ./src/repository/migrate.rs \
 	)
 
 #########

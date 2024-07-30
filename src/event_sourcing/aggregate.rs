@@ -1,19 +1,18 @@
 use async_trait::async_trait;
 use command::{BankAccountCommand, LedgerCommand};
 use cqrs_es::Aggregate;
-use event::{BankAccountEvent, LedgerEvent};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::common::money::{Currency, Money};
-use crate::domain::models::{BankAccount, BankAccountStatus, Ledger};
+use crate::domain::*;
 use crate::event_sourcing::*;
 use crate::service::{BankAccountServices, LedgerType, MockLedgerServices};
 
 #[async_trait]
-impl Aggregate for BankAccount {
+impl Aggregate for models::BankAccount {
     type Command = command::BankAccountCommand;
-    type Event = event::BankAccountEvent;
+    type Event = events::BankAccountEvent;
     type Error = error::BankAccountError;
     type Services = BankAccountServices;
 
@@ -31,7 +30,7 @@ impl Aggregate for BankAccount {
     ) -> Result<Vec<Self::Event>, Self::Error> {
         match command {
             BankAccountCommand::OpenAccount { account_id } => {
-                Ok(vec![BankAccountEvent::AccountOpened {
+                Ok(vec![events::BankAccountEvent::AccountOpened {
                     account_id,
                     timestamp: chrono::Utc::now().to_rfc3339(),
                 }])
@@ -52,7 +51,7 @@ impl Aggregate for BankAccount {
                     return Err("ledger write failed".into());
                 };
 
-                Ok(vec![BankAccountEvent::AccountKycApproved {
+                Ok(vec![events::BankAccountEvent::AccountKycApproved {
                     account_id,
                     ledger_id,
                     timestamp: chrono::Utc::now().to_rfc3339(),
@@ -90,36 +89,36 @@ impl Aggregate for BankAccount {
 
     fn apply(&mut self, event: Self::Event) {
         match event {
-            event::BankAccountEvent::AccountOpened {
+            events::BankAccountEvent::AccountOpened {
                 account_id,
                 timestamp,
             } => {
                 self.account_id = account_id;
-                self.status = BankAccountStatus::Pending;
+                self.status = models::BankAccountStatus::Pending;
                 self.timestamp = timestamp;
             }
-            event::BankAccountEvent::AccountKycApproved {
+            events::BankAccountEvent::AccountKycApproved {
                 account_id,
                 ledger_id,
                 timestamp,
             } => {
                 self.account_id = account_id;
                 self.ledger_id = ledger_id;
-                self.status = BankAccountStatus::Approved;
+                self.status = models::BankAccountStatus::Approved;
                 self.timestamp = timestamp;
             }
             // Money handling actions are just delegate to Ledger, does not need
             // to record anything in the event.
-            event::BankAccountEvent::CustomerDepositedMoney { amount: _ } => {}
-            event::BankAccountEvent::CustomerWithdrewCash { amount: _ } => {}
+            events::BankAccountEvent::CustomerDepositedMoney { amount: _ } => {}
+            events::BankAccountEvent::CustomerWithdrewCash { amount: _ } => {}
         }
     }
 }
 
 #[async_trait]
-impl Aggregate for Ledger {
+impl Aggregate for models::Ledger {
     type Command = command::LedgerCommand;
-    type Event = event::LedgerEvent;
+    type Event = events::LedgerEvent;
     type Error = error::LedgerError;
     type Services = MockLedgerServices;
 
@@ -139,7 +138,7 @@ impl Aggregate for Ledger {
             LedgerCommand::Init {
                 ledger_id,
                 account_id,
-            } => Ok(vec![LedgerEvent::LedgerCredited {
+            } => Ok(vec![events::LedgerEvent::LedgerCredited {
                 ledger_id,
 
                 account_id,
@@ -150,7 +149,7 @@ impl Aggregate for Ledger {
                 ledger_id,
                 account_id,
                 amount,
-            } => Ok(vec![LedgerEvent::LedgerDebited {
+            } => Ok(vec![events::LedgerEvent::LedgerDebited {
                 ledger_id,
                 account_id,
                 amount,
@@ -160,7 +159,7 @@ impl Aggregate for Ledger {
                 ledger_id,
                 account_id,
                 amount,
-            } => Ok(vec![LedgerEvent::LedgerCredited {
+            } => Ok(vec![events::LedgerEvent::LedgerCredited {
                 ledger_id,
                 account_id,
                 amount,
@@ -171,7 +170,7 @@ impl Aggregate for Ledger {
 
     fn apply(&mut self, event: Self::Event) {
         match event {
-            event::LedgerEvent::LedgerCredited {
+            events::LedgerEvent::LedgerCredited {
                 ledger_id,
                 account_id,
                 amount,
@@ -183,7 +182,7 @@ impl Aggregate for Ledger {
                 self.account_id = account_id;
                 self.timestamp = timestamp;
             }
-            event::LedgerEvent::LedgerDebited {
+            events::LedgerEvent::LedgerDebited {
                 ledger_id,
 
                 account_id,

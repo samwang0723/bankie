@@ -3,8 +3,8 @@ use cqrs_es::persist::GenericQuery;
 use cqrs_es::{EventEnvelope, Query, View};
 use postgres_es::PostgresViewRepository;
 
+use crate::domain::events::BankAccountEvent;
 use crate::domain::models::{BankAccount, BankAccountStatus, BankAccountView};
-use crate::event_sourcing::event::BankAccountEvent;
 
 pub struct AccountLogging {}
 
