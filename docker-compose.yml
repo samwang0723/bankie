@@ -1,0 +1,28 @@
+version: '3.9'
+
+services:
+  postgresql:
+    container_name: postgresql
+    image: docker.io/bitnami/postgresql:16
+    ports:
+      - '5432:5432'
+    volumes:
+      - 'postgresql_data:/bitnami/postgresql'
+    environment:
+      - ALLOW_EMPTY_PASSWORD=yes
+      - POSTGRESQL_SHARED_BUFFERS=128MB
+      - POSTGRESQL_WORK_MEM=32MB
+      - POSTGRESQL_MAINTENANCE_WORK_MEM=64MB
+      - POSTGRESQL_EFFECTIVE_CACHE_SIZE=512MB
+      - POSTGRESQL_MAX_CONNECTIONS=100
+      - POSTGRESQL_FSYNC=off
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+volumes:
+  postgresql_data:
+    driver: local

@@ -3,11 +3,18 @@
 help: ## show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {sub("\\\\n",sprintf("\n%22c"," "), $$2);printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-PROJECT_NAME?=core
+PROJECT_NAME?=bankie
 APP_NAME?=bankie
 VERSION?=v0.1.0
 
+APP_NAME_UND=$(shell echo "$(PROJECT_NAME)" | tr '-' '_')
+
 SHELL = /bin/bash
+
+ifneq (,$(wildcard .env))
+    include .env
+    export $(shell sed 's/=.*//' .env)
+endif
 
 ########
 # test #
@@ -25,8 +32,40 @@ test:
 
 lint: ## lints the entire codebase
 	cargo clippy
-	cargo fmt
+	cargo fmt -- --check
 	cargo check
+
+###########
+# migrate #
+###########
+
+db-pg-init-main: ## create users and passwords in postgres for your app
+	@( \
+	printf "Enter host for db(localhost): \n"; read -rs DB_HOST &&\
+	printf "Enter pass for db: \n"; read -rs DB_PASSWORD &&\
+	printf "Enter port(5432...): \n"; read -r DB_PORT &&\
+	sed \
+	-e "s/DB_PASSWORD/$$DB_PASSWORD/g" \
+	-e "s/APP_NAME_UND/$(APP_NAME_UND)/g" \
+	./db/init.sql | \
+	PGPASSWORD=$$DB_PASSWORD psql -h $$DB_HOST -p $$DB_PORT -U postgres -f - \
+	)
+
+db-pg-migrate:
+	@( \
+	printf "Enter host for db(localhost): \n"; read -rs DB_HOST &&\
+	printf "Enter pass for db: \n"; read -rs DB_PASSWORD &&\
+	printf "Enter port(5432...): \n"; read -r DB_PORT &&\
+	sed -i.bak \
+	-e "s/DB_HOST/$$DB_HOST/g" \
+	-e "s/DB_PORT/$$DB_PORT/g" \
+	-e "s/DB_PASSWORD/$$DB_PASSWORD/g" \
+	-e "s/APP_NAME_UND/$(APP_NAME_UND)/g" \
+	./src/repository/migrate.rs && \
+	cargo run --bin migrations && \
+	git stash push -m "Stash changes made by db-pg-migrate" && \
+	mv ./src/repository/migrate.rs.bak ./src/repository/migrate.rs \
+	)
 
 #########
 # build #

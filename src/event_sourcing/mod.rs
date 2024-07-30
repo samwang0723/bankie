@@ -1,3 +1,4 @@
-pub mod commands;
-pub mod errors;
-pub mod events;
+pub mod aggregate;
+pub mod command;
+pub mod error;
+pub mod event;
