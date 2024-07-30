@@ -10,7 +10,7 @@ use crate::repository::configs::{configure_bank_account, configure_ledger};
 #[derive(Clone)]
 pub struct ApplicationState {
     pub bank_account: BankAccountLoaderSaver,
-    pub ledger: BalanceLoaderSaver,
+    pub balance: BalanceLoaderSaver,
 }
 
 #[derive(Clone)]
@@ -45,6 +45,6 @@ pub async fn new_application_state() -> ApplicationState {
             cqrs: bc_cqrs,
             query: bc_query,
         },
-        ledger: ledger_loader_saver,
+        balance: ledger_loader_saver,
     }
 }

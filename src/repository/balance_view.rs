@@ -28,6 +28,12 @@ pub type BalanceQuery =
 impl View<Balance> for BalanceView {
     fn update(&mut self, event: &EventEnvelope<Balance>) {
         match &event.payload {
+            BalanceEvent::BalanceInitiated { base_event } => {
+                self.id = base_event.get_aggregate_id();
+                self.account_id = base_event.get_parent_id();
+                self.created_at = base_event.get_created_at();
+                self.updated_at = base_event.get_created_at();
+            }
             BalanceEvent::BalanceChanged {
                 amount: _,
                 transaction_id: _,

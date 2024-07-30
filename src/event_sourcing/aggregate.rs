@@ -30,35 +30,45 @@ impl Aggregate for models::BankAccount {
         services: &Self::Services,
     ) -> Result<Vec<Self::Event>, Self::Error> {
         match command {
-            BankAccountCommand::OpenAccount { account_id } => {
+            BankAccountCommand::OpenAccount { id } => {
                 let mut base_event = BaseEvent::default();
-                base_event.set_aggregate_id(account_id);
+                base_event.set_aggregate_id(id);
                 base_event.set_created_at(chrono::Utc::now());
                 Ok(vec![events::BankAccountEvent::AccountOpened { base_event }])
             }
-            BankAccountCommand::ApproveAccount {
-                account_id,
-                ledger_id,
-            } => {
+            BankAccountCommand::ApproveAccount { id, balance_id } => {
+                let command = BalanceCommand::Init {
+                    id: balance_id,
+                    account_id: id,
+                };
+                if services
+                    .services
+                    .write_balance(balance_id.to_string(), command)
+                    .await
+                    .is_err()
+                {
+                    return Err("ledger write failed".into());
+                };
+
                 let mut base_event = BaseEvent::default();
-                base_event.set_aggregate_id(account_id);
+                base_event.set_aggregate_id(id);
                 base_event.set_created_at(chrono::Utc::now());
                 Ok(vec![events::BankAccountEvent::AccountKycApproved {
-                    ledger_id: ledger_id.to_string(),
+                    balance_id: balance_id.to_string(),
                     base_event,
                 }])
             }
             BankAccountCommand::Deposit { amount } => {
                 // TODO: need to create transaction first
                 let command = BalanceCommand::Credit {
-                    ledger_id: Uuid::parse_str(&self.ledger_id).unwrap(),
+                    id: Uuid::parse_str(&self.balance_id).unwrap(),
                     account_id: Uuid::parse_str(&self.id).unwrap(),
                     transaction_id: Uuid::new_v4(),
                     amount,
                 };
                 if services
                     .services
-                    .write_ledger(self.ledger_id.clone(), command)
+                    .write_balance(self.balance_id.clone(), command)
                     .await
                     .is_err()
                 {
@@ -69,14 +79,14 @@ impl Aggregate for models::BankAccount {
             BankAccountCommand::Withdrawl { amount } => {
                 // TODO: need to create transaction first
                 let command = BalanceCommand::Debit {
-                    ledger_id: Uuid::parse_str(&self.ledger_id).unwrap(),
+                    id: Uuid::parse_str(&self.balance_id).unwrap(),
                     account_id: Uuid::parse_str(&self.id).unwrap(),
                     transaction_id: Uuid::new_v4(),
                     amount,
                 };
                 if services
                     .services
-                    .write_ledger(self.ledger_id.clone(), command)
+                    .write_balance(self.balance_id.clone(), command)
                     .await
                     .is_err()
                 {
@@ -95,11 +105,11 @@ impl Aggregate for models::BankAccount {
                 self.timestamp = base_event.get_created_at();
             }
             events::BankAccountEvent::AccountKycApproved {
-                ledger_id,
+                balance_id,
                 base_event,
             } => {
                 self.id = base_event.get_aggregate_id();
-                self.ledger_id = ledger_id;
+                self.balance_id = balance_id;
                 self.status = models::BankAccountStatus::Approved;
                 self.timestamp = base_event.get_created_at();
             }
@@ -131,14 +141,23 @@ impl Aggregate for models::Balance {
         _services: &Self::Services,
     ) -> Result<Vec<Self::Event>, Self::Error> {
         match command {
+            BalanceCommand::Init { id, account_id } => {
+                let mut base_event = BaseEvent::default();
+                base_event.set_aggregate_id(id);
+                base_event.set_parent_id(account_id);
+                base_event.set_created_at(chrono::Utc::now());
+                Ok(vec![events::BalanceEvent::BalanceInitiated {
+                    base_event: base_event.clone(),
+                }])
+            }
             BalanceCommand::Debit {
-                ledger_id,
+                id,
                 account_id,
                 transaction_id,
                 amount,
             } => {
                 let mut base_event = BaseEvent::default();
-                base_event.set_aggregate_id(ledger_id);
+                base_event.set_aggregate_id(id);
                 base_event.set_parent_id(account_id);
                 base_event.set_created_at(chrono::Utc::now());
                 Ok(vec![
@@ -161,13 +180,13 @@ impl Aggregate for models::Balance {
                 ])
             }
             BalanceCommand::Credit {
-                ledger_id,
+                id,
                 account_id,
                 transaction_id,
                 amount,
             } => {
                 let mut base_event = BaseEvent::default();
-                base_event.set_aggregate_id(ledger_id);
+                base_event.set_aggregate_id(id);
                 base_event.set_parent_id(account_id);
                 base_event.set_created_at(chrono::Utc::now());
                 Ok(vec![
@@ -194,6 +213,14 @@ impl Aggregate for models::Balance {
 
     fn apply(&mut self, event: Self::Event) {
         match event {
+            events::BalanceEvent::BalanceInitiated { base_event } => {
+                self.id = base_event.get_aggregate_id();
+                self.account_id = base_event.get_parent_id();
+                self.amount = Money::new(Decimal::ZERO, Currency::USD);
+                self.available = Money::new(Decimal::ZERO, Currency::USD);
+                self.pending = Money::new(Decimal::ZERO, Currency::USD);
+                self.timestamp = base_event.get_created_at();
+            }
             events::BalanceEvent::BalanceChanged {
                 amount,
                 transaction_id: _,
@@ -249,7 +276,7 @@ mod aggregate_tests {
         base_event.set_created_at(chrono::Utc::now());
 
         let expected = BankAccountEvent::AccountOpened { base_event };
-        let command = BankAccountCommand::OpenAccount { account_id: uuid };
+        let command = BankAccountCommand::OpenAccount { id: uuid };
         let services = BankAccountServices::new(Box::new(MockBankAccountServices::default()));
         // Obtain a new test framework
         AccountTestFramework::with(services)
@@ -264,7 +291,7 @@ mod aggregate_tests {
     #[test]
     fn test_acccount_kyc_approved() {
         let uuid = Uuid::new_v4();
-        let ledger_id = Uuid::new_v4();
+        let balance_id = Uuid::new_v4();
 
         let mut old_event = BaseEvent::default();
         old_event.set_aggregate_id(uuid);
@@ -278,12 +305,12 @@ mod aggregate_tests {
             base_event: old_event,
         };
         let expected = BankAccountEvent::AccountKycApproved {
-            ledger_id: ledger_id.to_string(),
+            balance_id: balance_id.to_string(),
             base_event,
         };
         let command = BankAccountCommand::ApproveAccount {
-            account_id: uuid,
-            ledger_id,
+            id: uuid,
+            balance_id,
         };
         let mock_services = MockBankAccountServices::default();
         mock_services.set_write_ledger_response(Ok(()));
@@ -300,7 +327,7 @@ mod aggregate_tests {
     #[test]
     fn test_deposit() {
         let uuid = Uuid::new_v4();
-        let ledger_id = Uuid::new_v4();
+        let balance_id = Uuid::new_v4();
 
         let mut old_event = BaseEvent::default();
         old_event.set_aggregate_id(uuid);
@@ -318,7 +345,7 @@ mod aggregate_tests {
             base_event: old_event,
         };
         let previous_2 = BankAccountEvent::AccountKycApproved {
-            ledger_id: ledger_id.to_string(),
+            balance_id: balance_id.to_string(),
             base_event: old_event2,
         };
 
@@ -357,7 +384,7 @@ mod aggregate_tests {
 
     #[async_trait]
     impl BankAccountApi for MockBankAccountServices {
-        async fn write_ledger(
+        async fn write_balance(
             &self,
             _ledger_id: String,
             _command: BalanceCommand,

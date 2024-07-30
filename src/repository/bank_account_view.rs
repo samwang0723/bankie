@@ -40,11 +40,11 @@ impl View<BankAccount> for BankAccountView {
                 self.updated_at = base_event.get_created_at();
             }
             BankAccountEvent::AccountKycApproved {
-                ledger_id,
+                balance_id,
                 base_event,
             } => {
                 self.id = base_event.get_aggregate_id();
-                self.ledger_id = ledger_id.clone();
+                self.balance_id = balance_id.clone();
                 self.status = BankAccountStatus::Approved;
                 self.updated_at = base_event.get_created_at();
             }

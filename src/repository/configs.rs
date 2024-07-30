@@ -61,21 +61,22 @@ pub fn configure_ledger(
     let logging_query = BalanceLogging {};
 
     // A query that stores the current state of an individual account.
-    let ledger_view_repo = Arc::new(PostgresViewRepository::new("ledger_views", pool.clone()));
-    let mut ledger_query = BalanceQuery::new(ledger_view_repo.clone());
+    let balance_view_repo = Arc::new(PostgresViewRepository::new("balance_views", pool.clone()));
+    let mut balance_query = BalanceQuery::new(balance_view_repo.clone());
 
     // Without a query error handler there will be no indication if an
     // error occurs (e.g., database connection failure, missing columns or table).
     // Consider logging an error or panicking in your own application.
-    ledger_query.use_error_handler(Box::new(|e| println!("{}", e)));
+    balance_query.use_error_handler(Box::new(|e| println!("{}", e)));
 
     // Create and return an event-sourced `CqrsFramework`.
     let queries: Vec<Box<dyn Query<Balance>>> =
-        vec![Box::new(logging_query), Box::new(ledger_query)];
+        vec![Box::new(logging_query), Box::new(balance_query)];
 
-    let repo = PostgresEventRepository::new(pool).with_tables("ledger_events", "ledger_snapshots");
+    let repo =
+        PostgresEventRepository::new(pool).with_tables("balance_events", "balance_snapshots");
     let store = PersistedEventStore::new_event_store(repo);
     let cqrs = CqrsFramework::new(store, queries, MockBalanceServices {});
 
-    (Arc::new(cqrs), ledger_view_repo)
+    (Arc::new(cqrs), balance_view_repo)
 }

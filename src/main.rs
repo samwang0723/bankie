@@ -19,26 +19,25 @@ async fn main() {
     let account_id = Uuid::new_v4();
 
     // execute account opening
-    let opening_command = event_sourcing::command::BankAccountCommand::OpenAccount { account_id };
+    let opening_command =
+        event_sourcing::command::BankAccountCommand::OpenAccount { id: account_id };
     match state
         .bank_account
         .cqrs
         .execute(&account_id.to_string(), opening_command)
         .await
     {
-        Ok(_) => {
-            println!("Account opened");
-        }
+        Ok(_) => {}
         Err(e) => {
             println!("Error: {:?}", e);
         }
     }
 
     // execute account KYC approved
-    let ledger_id = Uuid::new_v4();
+    let balance_id = Uuid::new_v4();
     let approved_command = event_sourcing::command::BankAccountCommand::ApproveAccount {
-        account_id,
-        ledger_id,
+        id: account_id,
+        balance_id,
     };
     match state
         .bank_account
@@ -46,9 +45,7 @@ async fn main() {
         .execute(&account_id.to_string(), approved_command)
         .await
     {
-        Ok(_) => {
-            println!("Account approved");
-        }
+        Ok(_) => {}
         Err(e) => {
             println!("Error: {:?}", e);
         }
@@ -64,9 +61,7 @@ async fn main() {
         .execute(&account_id.to_string(), deposit_command)
         .await
     {
-        Ok(_) => {
-            println!("Account deposit money");
-        }
+        Ok(_) => {}
         Err(e) => {
             println!("Error: {:?}", e);
         }
@@ -82,9 +77,7 @@ async fn main() {
         .execute(&account_id.to_string(), withdrawal_command)
         .await
     {
-        Ok(_) => {
-            println!("Account withdrawl money");
-        }
+        Ok(_) => {}
         Err(e) => {
             println!("Error: {:?}", e);
         }
@@ -98,10 +91,10 @@ async fn main() {
                 println!("Account: {:#?}", account_view);
                 println!("---------");
                 // read the account view
-                match state.ledger.query.load(&account_view.ledger_id).await {
+                match state.balance.query.load(&account_view.balance_id).await {
                     Ok(view) => match view {
-                        None => println!("Ledger not found"),
-                        Some(ledger_view) => println!("Ledger: {:#?}", ledger_view),
+                        None => println!("Balance not found"),
+                        Some(ledger_view) => println!("Balance: {:#?}", ledger_view),
                     },
                     Err(err) => {
                         println!("Error: {:#?}\n", err);
