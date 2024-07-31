@@ -2,13 +2,14 @@ use async_trait::async_trait;
 use command::{BalanceCommand, BankAccountCommand};
 use cqrs_es::Aggregate;
 use event::{BaseEvent, Event};
+use finance::{JournalEntry, JournalLine, Transaction};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::common::money::{Currency, Money};
-use crate::domain::*;
 use crate::event_sourcing::*;
 use crate::service::{BankAccountServices, MockBalanceServices};
+use crate::{configs, domain::*};
 
 #[async_trait]
 impl Aggregate for models::BankAccount {
@@ -59,40 +60,130 @@ impl Aggregate for models::BankAccount {
                 }])
             }
             BankAccountCommand::Deposit { amount } => {
-                // TODO: need to create transaction first
-                let command = BalanceCommand::Credit {
-                    id: Uuid::parse_str(&self.balance_id).unwrap(),
-                    account_id: Uuid::parse_str(&self.id).unwrap(),
-                    transaction_id: Uuid::new_v4(),
-                    amount,
+                let transaction = Transaction {
+                    id: Uuid::new_v4(),
+                    bank_account_id: Uuid::parse_str(&self.id).unwrap(),
+                    transaction_reference: "bank_account.deposit".to_string(),
+                    transaction_date: chrono::Utc::now().date_naive(),
+                    amount: amount.amount,
+                    currency: amount.currency.to_string(),
+                    description: None,
+                    journal_entry_id: None,
+                    status: "completed".to_string(),
                 };
-                if services
+                let journal_entry = JournalEntry {
+                    id: Uuid::new_v4(),
+                    entry_date: chrono::Utc::now().date_naive(),
+                    description: None,
+                    status: "posted".to_string(),
+                };
+                let journal_lines = vec![
+                    JournalLine {
+                        id: Uuid::new_v4(),
+                        journal_entry_id: None,
+                        balance_id: configs::settings::INCOMING_MASTER_BANK_UUID,
+                        credit_amount: Decimal::ZERO,
+                        debit_amount: amount.amount,
+                        currency: amount.currency.to_string(),
+                        description: None,
+                    },
+                    JournalLine {
+                        id: Uuid::new_v4(),
+                        journal_entry_id: None,
+                        balance_id: Uuid::parse_str(&self.balance_id).unwrap(),
+                        debit_amount: Decimal::ZERO,
+                        credit_amount: amount.amount,
+                        currency: amount.currency.to_string(),
+                        description: None,
+                    },
+                ];
+                match services
                     .services
-                    .write_balance(self.balance_id.clone(), command)
+                    .create_transaction_with_journal(transaction, journal_entry, journal_lines)
                     .await
-                    .is_err()
                 {
-                    return Err("ledger write failed".into());
-                };
-                Ok(vec![])
+                    Ok(transaction_id) => {
+                        let command = BalanceCommand::Credit {
+                            id: Uuid::parse_str(&self.balance_id).unwrap(),
+                            account_id: Uuid::parse_str(&self.id).unwrap(),
+                            transaction_id,
+                            amount,
+                        };
+                        if services
+                            .services
+                            .write_balance(self.balance_id.clone(), command)
+                            .await
+                            .is_err()
+                        {
+                            return Err("ledger write failed".into());
+                        };
+                        Ok(vec![])
+                    }
+                    Err(_) => Err("transaction write failed".into()),
+                }
             }
             BankAccountCommand::Withdrawl { amount } => {
-                // TODO: need to create transaction first
-                let command = BalanceCommand::Debit {
-                    id: Uuid::parse_str(&self.balance_id).unwrap(),
-                    account_id: Uuid::parse_str(&self.id).unwrap(),
-                    transaction_id: Uuid::new_v4(),
-                    amount,
+                let transaction = Transaction {
+                    id: Uuid::new_v4(),
+                    bank_account_id: Uuid::parse_str(&self.id).unwrap(),
+                    transaction_reference: "bank_account.withdrawal".to_string(),
+                    transaction_date: chrono::Utc::now().date_naive(),
+                    amount: amount.amount,
+                    currency: amount.currency.to_string(),
+                    description: None,
+                    journal_entry_id: None,
+                    status: "completed".to_string(),
                 };
-                if services
+                let journal_entry = JournalEntry {
+                    id: Uuid::new_v4(),
+                    entry_date: chrono::Utc::now().date_naive(),
+                    description: None,
+                    status: "posted".to_string(),
+                };
+                let journal_lines = vec![
+                    JournalLine {
+                        id: Uuid::new_v4(),
+                        journal_entry_id: None,
+                        balance_id: configs::settings::OUTGOING_MASTER_BANK_UUID,
+                        debit_amount: Decimal::ZERO,
+                        credit_amount: amount.amount,
+                        currency: amount.currency.to_string(),
+                        description: None,
+                    },
+                    JournalLine {
+                        id: Uuid::new_v4(),
+                        journal_entry_id: None,
+                        balance_id: Uuid::parse_str(&self.balance_id).unwrap(),
+                        credit_amount: Decimal::ZERO,
+                        debit_amount: amount.amount,
+                        currency: amount.currency.to_string(),
+                        description: None,
+                    },
+                ];
+                match services
                     .services
-                    .write_balance(self.balance_id.clone(), command)
+                    .create_transaction_with_journal(transaction, journal_entry, journal_lines)
                     .await
-                    .is_err()
                 {
-                    return Err("ledger write failed".into());
-                };
-                Ok(vec![])
+                    Ok(transaction_id) => {
+                        let command = BalanceCommand::Debit {
+                            id: Uuid::parse_str(&self.balance_id).unwrap(),
+                            account_id: Uuid::parse_str(&self.id).unwrap(),
+                            transaction_id,
+                            amount,
+                        };
+                        if services
+                            .services
+                            .write_balance(self.balance_id.clone(), command)
+                            .await
+                            .is_err()
+                        {
+                            return Err("ledger write failed".into());
+                        };
+                        Ok(vec![])
+                    }
+                    Err(_) => Err("transaction write failed".into()),
+                }
             }
         }
     }
@@ -261,6 +352,7 @@ mod aggregate_tests {
         command::{BalanceCommand, BankAccountCommand},
         event::{BaseEvent, Event},
         events::BankAccountEvent,
+        finance::{JournalEntry, JournalLine, Transaction},
         models::BankAccount,
     };
 
@@ -366,12 +458,14 @@ mod aggregate_tests {
 
     pub struct MockBankAccountServices {
         write_ledger_response: Mutex<Option<Result<(), anyhow::Error>>>,
+        write_transaction_response: Mutex<Option<Result<Uuid, anyhow::Error>>>,
     }
 
     impl Default for MockBankAccountServices {
         fn default() -> Self {
             Self {
                 write_ledger_response: Mutex::new(None),
+                write_transaction_response: Mutex::new(None),
             }
         }
     }
@@ -379,6 +473,11 @@ mod aggregate_tests {
     impl MockBankAccountServices {
         fn set_write_ledger_response(&self, response: Result<(), anyhow::Error>) {
             *self.write_ledger_response.lock().unwrap() = Some(response);
+        }
+
+        #[allow(dead_code)]
+        fn set_write_transaction_response(&self, response: Result<Uuid, anyhow::Error>) {
+            *self.write_transaction_response.lock().unwrap() = Some(response);
         }
     }
 
@@ -390,6 +489,19 @@ mod aggregate_tests {
             _command: BalanceCommand,
         ) -> Result<(), anyhow::Error> {
             self.write_ledger_response.lock().unwrap().take().unwrap()
+        }
+
+        async fn create_transaction_with_journal(
+            &self,
+            _transaction: Transaction,
+            _journal_entry: JournalEntry,
+            _journal_lines: Vec<JournalLine>,
+        ) -> Result<Uuid, anyhow::Error> {
+            self.write_transaction_response
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap()
         }
     }
 }

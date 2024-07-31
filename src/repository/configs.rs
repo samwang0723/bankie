@@ -10,6 +10,7 @@ use crate::{
 };
 
 use super::{
+    adapter::Adapter,
     balance_view::{BalanceLogging, BalanceQuery},
     bank_account_view::{AccountLogging, AccountQuery},
 };
@@ -41,6 +42,7 @@ pub fn configure_bank_account(
         vec![Box::new(logging_query), Box::new(account_query)];
     let services = BankAccountServices::new(Box::new(BankAccountLogic {
         balance: ledger_loader_saver,
+        finance: Arc::new(Adapter::new(pool.clone())),
     }));
 
     let repo = PostgresEventRepository::new(pool)

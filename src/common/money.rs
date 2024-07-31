@@ -24,6 +24,15 @@ impl Currency {
     }
 }
 
+impl fmt::Display for Currency {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Currency::USD => write!(f, "USD"),
+            Currency::TWD => write!(f, "TWD"),
+        }
+    }
+}
+
 impl FromStr for Currency {
     type Err = CurrencyParseError;
 

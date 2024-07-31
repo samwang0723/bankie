@@ -8,32 +8,6 @@ use uuid::Uuid;
 
 #[async_trait]
 impl DatabaseClient for PgPool {
-    async fn create_transaction(&self, transaction: Transaction) -> Result<Uuid, Error> {
-        let transaction_id = sqlx::query!(
-            r#"
-            INSERT INTO transactions (id, bank_account_id, transaction_reference,
-            transaction_date, amount, currency, description, status, journal_entry_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            RETURNING id
-            "#,
-            transaction.id,
-            transaction.bank_account_id,
-            transaction.transaction_reference,
-            transaction.transaction_date,
-            transaction.amount,
-            transaction.currency,
-            transaction.description,
-            transaction.status,
-            journal_entry_id
-        )
-        .fetch_one(self)
-        .await?
-        .id;
-
-        // Return the transaction ID after successful insertion
-        Ok(transaction_id)
-    }
-
     async fn create_transaction_with_journal(
         &self,
         transaction: Transaction,
@@ -54,7 +28,7 @@ impl DatabaseClient for PgPool {
             journal_entry.description,
             journal_entry.status
         )
-        .fetch_one(&mut tx)
+        .fetch_one(&mut *tx)
         .await?
         .id;
 
@@ -73,7 +47,7 @@ impl DatabaseClient for PgPool {
                 journal_line.currency,
                 journal_line.description
             )
-            .execute(&mut tx)
+            .execute(&mut *tx)
             .await?;
         }
 
@@ -95,7 +69,7 @@ impl DatabaseClient for PgPool {
             transaction.status,
             journal_entry_id
         )
-        .fetch_one(&mut tx)
+        .fetch_one(&mut *tx)
         .await?
         .id;
 

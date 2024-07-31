@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use sqlx::prelude::FromRow;
 use uuid::Uuid;
@@ -13,9 +13,8 @@ pub struct Transaction {
     pub currency: String,
     pub description: Option<String>,
     pub status: String,
+    #[allow(dead_code)]
     pub journal_entry_id: Option<Uuid>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(FromRow, Debug)]
@@ -24,19 +23,16 @@ pub struct JournalEntry {
     pub entry_date: NaiveDate,
     pub description: Option<String>,
     pub status: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(FromRow, Debug)]
 pub struct JournalLine {
     pub id: Uuid,
-    pub journal_entry_id: Uuid,
+    #[allow(dead_code)]
+    pub journal_entry_id: Option<Uuid>,
     pub balance_id: Uuid,
     pub debit_amount: Decimal,
     pub credit_amount: Decimal,
     pub currency: String,
     pub description: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
 }
