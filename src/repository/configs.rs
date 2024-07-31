@@ -40,7 +40,7 @@ pub fn configure_bank_account(
     let queries: Vec<Box<dyn Query<BankAccount>>> =
         vec![Box::new(logging_query), Box::new(account_query)];
     let services = BankAccountServices::new(Box::new(BankAccountLogic {
-        ledger: ledger_loader_saver,
+        balance: ledger_loader_saver,
     }));
 
     let repo = PostgresEventRepository::new(pool)
@@ -51,7 +51,7 @@ pub fn configure_bank_account(
     (Arc::new(cqrs), account_view_repo)
 }
 
-pub fn configure_ledger(
+pub fn configure_balance(
     pool: Pool<Postgres>,
 ) -> (
     Arc<PostgresCqrs<Balance>>,

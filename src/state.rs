@@ -5,7 +5,7 @@ use sqlx::{Pool, Postgres};
 
 use crate::configs::settings::SETTINGS;
 use crate::domain::models::{Balance, BalanceView, BankAccount, BankAccountView};
-use crate::repository::configs::{configure_bank_account, configure_ledger};
+use crate::repository::configs::{configure_balance, configure_bank_account};
 
 #[derive(Clone)]
 pub struct ApplicationState {
@@ -33,7 +33,7 @@ pub async fn new_application_state() -> ApplicationState {
     // The needed database tables are automatically configured with `docker-compose up -d`,
     // see init file at `/db/init.sql` for more.
     let pool: Pool<Postgres> = default_postgress_pool(&SETTINGS.database.connection_string()).await;
-    let (ledger_cqrs, ledger_query) = configure_ledger(pool.clone());
+    let (ledger_cqrs, ledger_query) = configure_balance(pool.clone());
     let ledger_loader_saver = BalanceLoaderSaver {
         cqrs: ledger_cqrs,
         query: ledger_query,

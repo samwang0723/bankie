@@ -23,7 +23,7 @@ pub trait BankAccountApi: Sync + Send {
 }
 
 pub struct BankAccountLogic {
-    pub ledger: BalanceLoaderSaver,
+    pub balance: BalanceLoaderSaver,
 }
 
 #[async_trait]
@@ -34,7 +34,7 @@ impl BankAccountApi for BankAccountLogic {
         command: BalanceCommand,
     ) -> Result<(), anyhow::Error> {
         // Should call ledger commange to write the transaction.
-        self.ledger
+        self.balance
             .cqrs
             .execute(&id, command)
             .await
