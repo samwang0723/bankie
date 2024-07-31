@@ -337,6 +337,7 @@ impl Aggregate for models::Balance {
 #[cfg(test)]
 mod aggregate_tests {
     use async_trait::async_trait;
+    use lazy_static::lazy_static;
     use rust_decimal_macros::dec;
     use std::sync::Mutex;
     use uuid::Uuid;
@@ -360,101 +361,78 @@ mod aggregate_tests {
     // and verify that the logic works as expected.
     type AccountTestFramework = TestFramework<BankAccount>;
 
-    #[test]
-    fn test_acccount_creation() {
-        let uuid = Uuid::new_v4();
-        let mut base_event = BaseEvent::default();
-        base_event.set_aggregate_id(uuid);
-        base_event.set_created_at(chrono::Utc::now());
-
-        let expected = BankAccountEvent::AccountOpened { base_event };
-        let command = BankAccountCommand::OpenAccount { id: uuid };
-        let services = BankAccountServices::new(Box::new(MockBankAccountServices::default()));
-        // Obtain a new test framework
-        AccountTestFramework::with(services)
-            // In a test case with no previous events
-            .given_no_previous_events()
-            // Wnen we fire this command
-            .when(command)
-            // then we expect these results
-            .then_expect_events(vec![expected]);
+    lazy_static! {
+        static ref BALANCE_ID: Uuid = Uuid::new_v4();
+        static ref ACCOUNT_ID: Uuid = Uuid::new_v4();
     }
 
-    #[test]
-    fn test_acccount_kyc_approved() {
-        let uuid = Uuid::new_v4();
-        let balance_id = Uuid::new_v4();
-
-        let mut old_event = BaseEvent::default();
-        old_event.set_aggregate_id(uuid);
-        old_event.set_created_at(chrono::Utc::now());
-
+    fn create_base_event(uuid: Uuid) -> BaseEvent {
         let mut base_event = BaseEvent::default();
         base_event.set_aggregate_id(uuid);
         base_event.set_created_at(chrono::Utc::now());
+        base_event
+    }
 
-        let previous = BankAccountEvent::AccountOpened {
-            base_event: old_event,
-        };
-        let expected = BankAccountEvent::AccountKycApproved {
-            balance_id: balance_id.to_string(),
-            base_event,
-        };
-        let command = BankAccountCommand::ApproveAccount {
-            id: uuid,
-            balance_id,
-        };
+    fn setup_mock_services() -> MockBankAccountServices {
         let mock_services = MockBankAccountServices::default();
         mock_services.set_write_ledger_response(Ok(()));
-        let services = BankAccountServices::new(Box::new(mock_services));
-        // Obtain a new test framework
-        AccountTestFramework::with(services)
-            .given(vec![previous])
-            // Wnen we fire this command
-            .when(command)
-            // then we expect these results
-            .then_expect_events(vec![expected]);
+        mock_services.set_write_transaction_response(Ok(Uuid::new_v4()));
+        mock_services
     }
 
-    #[test]
-    fn test_deposit() {
-        let uuid = Uuid::new_v4();
-        let balance_id = Uuid::new_v4();
-
-        let mut old_event = BaseEvent::default();
-        old_event.set_aggregate_id(uuid);
-        old_event.set_created_at(chrono::Utc::now());
-
-        let mut old_event2 = BaseEvent::default();
-        old_event2.set_aggregate_id(uuid);
-        old_event2.set_created_at(chrono::Utc::now());
-
-        let mut base_event = BaseEvent::default();
-        base_event.set_aggregate_id(uuid);
-        base_event.set_created_at(chrono::Utc::now());
-
-        let previous_1 = BankAccountEvent::AccountOpened {
-            base_event: old_event,
+    macro_rules! test_case {
+        ($name:ident, $given:expr, $command:expr, $expected:expr) => {
+            #[test]
+            fn $name() {
+                let services = BankAccountServices::new(Box::new(setup_mock_services()));
+                AccountTestFramework::with(services)
+                    .given($given)
+                    .when($command)
+                    .then_expect_events($expected);
+            }
         };
-        let previous_2 = BankAccountEvent::AccountKycApproved {
-            balance_id: balance_id.to_string(),
-            base_event: old_event2,
-        };
-
-        let command = BankAccountCommand::Deposit {
-            amount: Money::new(dec!(1000.0), Currency::USD),
-        };
-        let mock_services = MockBankAccountServices::default();
-        mock_services.set_write_ledger_response(Ok(()));
-        let services = BankAccountServices::new(Box::new(mock_services));
-        // Obtain a new test framework
-        AccountTestFramework::with(services)
-            .given(vec![previous_1, previous_2])
-            // Wnen we fire this command
-            .when(command)
-            // then we expect these results
-            .then_expect_events(vec![]);
     }
+
+    test_case!(
+        test_account_creation,
+        vec![],
+        BankAccountCommand::OpenAccount { id: *ACCOUNT_ID },
+        vec![BankAccountEvent::AccountOpened {
+            base_event: create_base_event(*ACCOUNT_ID)
+        }]
+    );
+
+    test_case!(
+        test_account_kyc_approved,
+        vec![BankAccountEvent::AccountOpened {
+            base_event: create_base_event(*ACCOUNT_ID)
+        }],
+        BankAccountCommand::ApproveAccount {
+            id: *ACCOUNT_ID,
+            balance_id: *BALANCE_ID
+        },
+        vec![BankAccountEvent::AccountKycApproved {
+            balance_id: BALANCE_ID.to_string(),
+            base_event: create_base_event(*ACCOUNT_ID)
+        }]
+    );
+
+    test_case!(
+        test_deposit,
+        vec![
+            BankAccountEvent::AccountOpened {
+                base_event: create_base_event(*ACCOUNT_ID)
+            },
+            BankAccountEvent::AccountKycApproved {
+                balance_id: BALANCE_ID.to_string(),
+                base_event: create_base_event(*ACCOUNT_ID)
+            }
+        ],
+        BankAccountCommand::Deposit {
+            amount: Money::new(dec!(1000.0), Currency::USD)
+        },
+        vec![]
+    );
 
     pub struct MockBankAccountServices {
         write_ledger_response: Mutex<Option<Result<(), anyhow::Error>>>,
@@ -475,7 +453,6 @@ mod aggregate_tests {
             *self.write_ledger_response.lock().unwrap() = Some(response);
         }
 
-        #[allow(dead_code)]
         fn set_write_transaction_response(&self, response: Result<Uuid, anyhow::Error>) {
             *self.write_transaction_response.lock().unwrap() = Some(response);
         }
