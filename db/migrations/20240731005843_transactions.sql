@@ -10,7 +10,7 @@ CREATE TABLE journal_entries (
 CREATE TABLE journal_lines (
     id uuid PRIMARY KEY,
     journal_entry_id uuid NOT NULL REFERENCES journal_entries(id),
-    balance_id uuid NOT NULL REFERENCES ledger_accounts(id),
+    balance_id uuid NOT NULL,
     debit_amount decimal(19,4) NOT NULL DEFAULT 0,
     credit_amount decimal(19,4) NOT NULL DEFAULT 0,
     currency char(3) NOT NULL,
