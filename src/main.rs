@@ -58,26 +58,26 @@ async fn main() {
     let ledger_id = Uuid::new_v4();
 
     // open incoming master account
-    create_bank_account(
-        state.clone(),
-        "".to_string(),
-        Uuid::new_v4(),
-        configs::settings::INCOMING_MASTER_BANK_UUID,
-        domain::models::BankAccountType::Master,
-    )
-    .await
-    .unwrap();
-
-    // open outgoing master account
-    create_bank_account(
-        state.clone(),
-        "".to_string(),
-        Uuid::new_v4(),
-        configs::settings::OUTGOING_MASTER_BANK_UUID,
-        domain::models::BankAccountType::Master,
-    )
-    .await
-    .unwrap();
+    // create_bank_account(
+    //     state.clone(),
+    //     "".to_string(),
+    //     Uuid::new_v4(),
+    //     configs::settings::INCOMING_MASTER_BANK_UUID,
+    //     domain::models::BankAccountType::Master,
+    // )
+    // .await
+    // .unwrap();
+    //
+    // // open outgoing master account
+    // create_bank_account(
+    //     state.clone(),
+    //     "".to_string(),
+    //     Uuid::new_v4(),
+    //     configs::settings::OUTGOING_MASTER_BANK_UUID,
+    //     domain::models::BankAccountType::Master,
+    // )
+    // .await
+    // .unwrap();
 
     // open customer account
     create_bank_account(
@@ -101,7 +101,7 @@ async fn main() {
         .await
         .unwrap();
 
-    // execute account deposit
+    // execute account Withdrawl
     let withdrawal_command = event_sourcing::command::BankAccountCommand::Withdrawl {
         amount: Money::new(dec!(26.23), Currency::USD),
     };
@@ -111,6 +111,17 @@ async fn main() {
         .execute(&account_id.to_string(), withdrawal_command)
         .await
         .unwrap();
+
+    // execute account invalid Withdrawl
+    // let withdrawal_command = event_sourcing::command::BankAccountCommand::Withdrawl {
+    //     amount: Money::new(dec!(522.23), Currency::USD),
+    // };
+    // state
+    //     .bank_account
+    //     .cqrs
+    //     .execute(&account_id.to_string(), withdrawal_command)
+    //     .await
+    //     .unwrap();
 
     // read the account view
     match state.bank_account.query.load(&account_id.to_string()).await {

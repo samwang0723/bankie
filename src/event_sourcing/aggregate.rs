@@ -3,12 +3,13 @@ use command::{BankAccountCommand, LedgerCommand};
 use cqrs_es::Aggregate;
 use event::{BaseEvent, Event};
 use finance::{JournalEntry, JournalLine, Transaction};
+use models::LedgerAction;
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::common::money::{Currency, Money};
-use crate::event_sourcing::*;
 use crate::service::{BankAccountServices, MockLedgerServices};
+use crate::{common, event_sourcing::*};
 use crate::{configs, domain::*};
 
 #[async_trait]
@@ -72,7 +73,11 @@ impl Aggregate for models::BankAccount {
             BankAccountCommand::Deposit { amount } => {
                 match services
                     .services
-                    .validate(Uuid::parse_str(&self.id).unwrap(), amount.currency)
+                    .validate(
+                        Uuid::parse_str(&self.id).unwrap(),
+                        LedgerAction::Deposit,
+                        amount,
+                    )
                     .await
                 {
                     Ok(_) => {}
@@ -81,7 +86,7 @@ impl Aggregate for models::BankAccount {
                 let transaction = Transaction {
                     id: Uuid::new_v4(),
                     bank_account_id: Uuid::parse_str(&self.id).unwrap(),
-                    transaction_reference: "bank_account.deposit".to_string(),
+                    transaction_reference: common::snowflake::generate_transaction_reference("DE"),
                     transaction_date: chrono::Utc::now().date_naive(),
                     amount: amount.amount,
                     currency: amount.currency.to_string(),
@@ -143,7 +148,11 @@ impl Aggregate for models::BankAccount {
             BankAccountCommand::Withdrawl { amount } => {
                 match services
                     .services
-                    .validate(Uuid::parse_str(&self.id).unwrap(), amount.currency)
+                    .validate(
+                        Uuid::parse_str(&self.id).unwrap(),
+                        LedgerAction::Withdraw,
+                        amount,
+                    )
                     .await
                 {
                     Ok(_) => {}
@@ -153,7 +162,7 @@ impl Aggregate for models::BankAccount {
                 let transaction = Transaction {
                     id: Uuid::new_v4(),
                     bank_account_id: Uuid::parse_str(&self.id).unwrap(),
-                    transaction_reference: "bank_account.withdrawal".to_string(),
+                    transaction_reference: common::snowflake::generate_transaction_reference("WI"),
                     transaction_date: chrono::Utc::now().date_naive(),
                     amount: amount.amount,
                     currency: amount.currency.to_string(),
@@ -389,7 +398,7 @@ mod aggregate_tests {
         event::{BaseEvent, Event},
         events::BankAccountEvent,
         finance::{JournalEntry, JournalLine, Transaction},
-        models::{BankAccount, BankAccountType},
+        models::{BankAccount, BankAccountType, LedgerAction},
     };
 
     // A test framework that will apply our events and command
@@ -560,7 +569,8 @@ mod aggregate_tests {
         async fn validate(
             &self,
             _account_id: Uuid,
-            _currency: Currency,
+            _action: LedgerAction,
+            _amount: Money,
         ) -> Result<(), anyhow::Error> {
             self.validate_response.lock().unwrap().take().unwrap()
         }

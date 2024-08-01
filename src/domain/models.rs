@@ -21,6 +21,13 @@ pub enum BankAccountType {
     Tax,
 }
 
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum LedgerAction {
+    #[default]
+    Deposit,
+    Withdraw,
+}
+
 #[derive(Serialize, Default, Deserialize)]
 pub struct BankAccount {
     pub id: String,

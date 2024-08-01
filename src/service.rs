@@ -7,10 +7,10 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    common::money::Currency,
+    common::money::Money,
     domain::{
         finance::{JournalEntry, JournalLine, Transaction},
-        models::BankAccountStatus,
+        models::{BankAccountStatus, LedgerAction},
     },
     event_sourcing::command::LedgerCommand,
     repository::adapter::Adapter,
@@ -39,7 +39,12 @@ pub trait BankAccountApi: Sync + Send {
         journal_entry: JournalEntry,
         journal_lines: Vec<JournalLine>,
     ) -> Result<Uuid, anyhow::Error>;
-    async fn validate(&self, account_id: Uuid, currency: Currency) -> Result<(), anyhow::Error>;
+    async fn validate(
+        &self,
+        account_id: Uuid,
+        action: LedgerAction,
+        amount: Money,
+    ) -> Result<(), anyhow::Error>;
 }
 
 pub struct BankAccountLogic {
@@ -71,7 +76,12 @@ impl BankAccountApi for BankAccountLogic {
             .map_err(|e| anyhow!("Failed to write transaction: {}", e))
     }
 
-    async fn validate(&self, account_id: Uuid, currency: Currency) -> Result<(), anyhow::Error> {
+    async fn validate(
+        &self,
+        account_id: Uuid,
+        action: LedgerAction,
+        amount: Money,
+    ) -> Result<(), anyhow::Error> {
         match self.bank_account.query.load(&account_id.to_string()).await {
             Ok(view) => match view {
                 None => println!("Account not found"),
@@ -79,9 +89,25 @@ impl BankAccountApi for BankAccountLogic {
                     if account_view.status != BankAccountStatus::Approved {
                         return Err(anyhow!("Account is not active"));
                     }
-                    if account_view.currency != currency {
+                    if account_view.currency != amount.currency {
                         return Err(anyhow!("Currency invalid"));
                     }
+
+                    match self.ledger.query.load(&account_view.ledger_id).await {
+                        Ok(view) => match view {
+                            None => println!("Ledger not found"),
+                            Some(ledger_view) => {
+                                if action == LedgerAction::Withdraw
+                                    && ledger_view.available < amount
+                                {
+                                    return Err(anyhow!("Insufficient funds"));
+                                }
+                            }
+                        },
+                        Err(err) => {
+                            return Err(err.into());
+                        }
+                    };
                 }
             },
             Err(err) => {
