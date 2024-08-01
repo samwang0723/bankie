@@ -7,7 +7,7 @@ use crate::{
     domain::models::*,
     event_sourcing::query::{AccountLogging, AccountQuery, LedgerLogging, LedgerQuery},
     service::{BankAccountLogic, BankAccountServices, MockLedgerServices},
-    state::LedgerLoaderSaver,
+    state::{BankAccountLoader, LedgerLoaderSaver},
 };
 
 use super::adapter::Adapter;
@@ -38,6 +38,9 @@ pub fn configure_bank_account(
     let queries: Vec<Box<dyn Query<BankAccount>>> =
         vec![Box::new(logging_query), Box::new(account_query)];
     let services = BankAccountServices::new(Box::new(BankAccountLogic {
+        bank_account: BankAccountLoader {
+            query: Arc::clone(&account_view_repo),
+        },
         ledger: ledger_loader_saver,
         finance: Arc::new(Adapter::new(pool.clone())),
     }));

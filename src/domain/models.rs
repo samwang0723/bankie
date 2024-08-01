@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::common::money::Money;
+use crate::common::money::{Currency, Money};
 
-#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum BankAccountStatus {
     #[default]
     Pending,
@@ -26,6 +26,7 @@ pub struct BankAccount {
     pub id: String,
     pub status: BankAccountStatus,
     pub account_type: BankAccountType,
+    pub currency: Currency,
     pub ledger_id: String,
     pub timestamp: String,
 }
@@ -37,6 +38,7 @@ pub struct BankAccountView {
     pub ledger_id: String,
     pub status: BankAccountStatus,
     pub account_type: BankAccountType,
+    pub currency: Currency,
     pub created_at: String,
     pub updated_at: String,
 }

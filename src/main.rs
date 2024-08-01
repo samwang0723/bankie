@@ -24,6 +24,7 @@ async fn create_bank_account(
     let opening_command = event_sourcing::command::BankAccountCommand::OpenAccount {
         id: account_id,
         account_type,
+        currency: Currency::USD,
     };
 
     state

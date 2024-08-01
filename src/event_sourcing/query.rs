@@ -36,12 +36,14 @@ impl View<BankAccount> for BankAccountView {
             BankAccountEvent::AccountOpened {
                 base_event,
                 account_type,
+                currency,
             } => {
                 self.id = base_event.get_aggregate_id();
                 self.status = BankAccountStatus::Pending;
                 self.created_at = base_event.get_created_at();
                 self.updated_at = base_event.get_created_at();
                 self.account_type = *account_type;
+                self.currency = *currency;
             }
             BankAccountEvent::AccountKycApproved {
                 ledger_id,

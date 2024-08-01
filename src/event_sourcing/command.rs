@@ -1,12 +1,16 @@
 use uuid::Uuid;
 
-use crate::{common::money::Money, domain::models::BankAccountType};
+use crate::{
+    common::money::{Currency, Money},
+    domain::models::BankAccountType,
+};
 
 #[derive(Debug)]
 pub enum BankAccountCommand {
     OpenAccount {
         id: Uuid,
         account_type: BankAccountType,
+        currency: Currency,
     },
     ApproveAccount {
         id: Uuid,

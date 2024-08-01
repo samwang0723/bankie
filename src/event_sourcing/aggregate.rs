@@ -31,13 +31,18 @@ impl Aggregate for models::BankAccount {
         services: &Self::Services,
     ) -> Result<Vec<Self::Event>, Self::Error> {
         match command {
-            BankAccountCommand::OpenAccount { id, account_type } => {
+            BankAccountCommand::OpenAccount {
+                id,
+                account_type,
+                currency,
+            } => {
                 let mut base_event = BaseEvent::default();
                 base_event.set_aggregate_id(id);
                 base_event.set_created_at(chrono::Utc::now());
                 Ok(vec![events::BankAccountEvent::AccountOpened {
                     base_event,
                     account_type,
+                    currency,
                 }])
             }
             BankAccountCommand::ApproveAccount { id, ledger_id } => {
@@ -63,6 +68,14 @@ impl Aggregate for models::BankAccount {
                 }])
             }
             BankAccountCommand::Deposit { amount } => {
+                match services
+                    .services
+                    .validate(Uuid::parse_str(&self.id).unwrap(), amount.currency)
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(_) => return Err("validation failed".into()),
+                };
                 let transaction = Transaction {
                     id: Uuid::new_v4(),
                     bank_account_id: Uuid::parse_str(&self.id).unwrap(),
@@ -126,6 +139,15 @@ impl Aggregate for models::BankAccount {
                 }
             }
             BankAccountCommand::Withdrawl { amount } => {
+                match services
+                    .services
+                    .validate(Uuid::parse_str(&self.id).unwrap(), amount.currency)
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(_) => return Err("validation failed".into()),
+                };
+
                 let transaction = Transaction {
                     id: Uuid::new_v4(),
                     bank_account_id: Uuid::parse_str(&self.id).unwrap(),
@@ -196,11 +218,13 @@ impl Aggregate for models::BankAccount {
             events::BankAccountEvent::AccountOpened {
                 base_event,
                 account_type,
+                currency,
             } => {
                 self.id = base_event.get_aggregate_id();
                 self.status = models::BankAccountStatus::Pending;
                 self.timestamp = base_event.get_created_at();
                 self.account_type = account_type;
+                self.currency = currency;
             }
             events::BankAccountEvent::AccountKycApproved {
                 ledger_id,
@@ -384,6 +408,7 @@ mod aggregate_tests {
         let mock_services = MockBankAccountServices::default();
         mock_services.set_write_ledger_response(Ok(()));
         mock_services.set_write_transaction_response(Ok(Uuid::new_v4()));
+        mock_services.set_validate_response(Ok(()));
         mock_services
     }
 
@@ -405,11 +430,13 @@ mod aggregate_tests {
         vec![],
         BankAccountCommand::OpenAccount {
             id: *ACCOUNT_ID,
-            account_type: BankAccountType::Retail
+            account_type: BankAccountType::Retail,
+            currency: Currency::USD
         },
         vec![BankAccountEvent::AccountOpened {
             base_event: create_base_event(*ACCOUNT_ID),
-            account_type: BankAccountType::Retail
+            account_type: BankAccountType::Retail,
+            currency: Currency::USD
         }]
     );
 
@@ -417,7 +444,8 @@ mod aggregate_tests {
         test_account_kyc_approved,
         vec![BankAccountEvent::AccountOpened {
             base_event: create_base_event(*ACCOUNT_ID),
-            account_type: BankAccountType::Retail
+            account_type: BankAccountType::Retail,
+            currency: Currency::USD
         }],
         BankAccountCommand::ApproveAccount {
             id: *ACCOUNT_ID,
@@ -434,7 +462,8 @@ mod aggregate_tests {
         vec![
             BankAccountEvent::AccountOpened {
                 base_event: create_base_event(*ACCOUNT_ID),
-                account_type: BankAccountType::Retail
+                account_type: BankAccountType::Retail,
+                currency: Currency::USD
             },
             BankAccountEvent::AccountKycApproved {
                 ledger_id: LEDGER_ID.to_string(),
@@ -450,6 +479,7 @@ mod aggregate_tests {
     pub struct MockBankAccountServices {
         write_ledger_response: Mutex<Option<Result<(), anyhow::Error>>>,
         write_transaction_response: Mutex<Option<Result<Uuid, anyhow::Error>>>,
+        validate_response: Mutex<Option<Result<(), anyhow::Error>>>,
     }
 
     impl Default for MockBankAccountServices {
@@ -457,6 +487,7 @@ mod aggregate_tests {
             Self {
                 write_ledger_response: Mutex::new(None),
                 write_transaction_response: Mutex::new(None),
+                validate_response: Mutex::new(None),
             }
         }
     }
@@ -468,6 +499,10 @@ mod aggregate_tests {
 
         fn set_write_transaction_response(&self, response: Result<Uuid, anyhow::Error>) {
             *self.write_transaction_response.lock().unwrap() = Some(response);
+        }
+
+        fn set_validate_response(&self, response: Result<(), anyhow::Error>) {
+            *self.validate_response.lock().unwrap() = Some(response);
         }
     }
 
@@ -492,6 +527,14 @@ mod aggregate_tests {
                 .unwrap()
                 .take()
                 .unwrap()
+        }
+
+        async fn validate(
+            &self,
+            _account_id: Uuid,
+            _currency: Currency,
+        ) -> Result<(), anyhow::Error> {
+            self.validate_response.lock().unwrap().take().unwrap()
         }
     }
 }

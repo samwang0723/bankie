@@ -1,7 +1,10 @@
 use cqrs_es::DomainEvent;
 use serde::{Deserialize, Serialize};
 
-use crate::{common::money::Money, event_sourcing::event::BaseEvent};
+use crate::{
+    common::money::{Currency, Money},
+    event_sourcing::event::BaseEvent,
+};
 
 use super::models::BankAccountType;
 
@@ -9,6 +12,7 @@ use super::models::BankAccountType;
 pub enum BankAccountEvent {
     AccountOpened {
         account_type: BankAccountType,
+        currency: Currency,
         base_event: BaseEvent,
     },
     AccountKycApproved {

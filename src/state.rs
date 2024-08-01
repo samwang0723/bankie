@@ -20,6 +20,11 @@ pub struct BankAccountLoaderSaver {
 }
 
 #[derive(Clone)]
+pub struct BankAccountLoader {
+    pub query: Arc<PostgresViewRepository<BankAccountView, BankAccount>>,
+}
+
+#[derive(Clone)]
 pub struct LedgerLoaderSaver {
     pub cqrs: Arc<PostgresCqrs<Ledger>>,
     pub query: Arc<PostgresViewRepository<LedgerView, Ledger>>,
