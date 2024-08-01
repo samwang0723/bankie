@@ -10,6 +10,7 @@ pub enum BankAccountCommand {
     OpenAccount {
         id: Uuid,
         account_type: BankAccountType,
+        user_id: String,
         currency: Currency,
     },
     ApproveAccount {

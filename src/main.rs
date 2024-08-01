@@ -16,6 +16,7 @@ mod state;
 
 async fn create_bank_account(
     state: ApplicationState,
+    user_id: String,
     account_id: Uuid,
     ledger_id: Uuid,
     account_type: domain::models::BankAccountType,
@@ -24,6 +25,7 @@ async fn create_bank_account(
     let opening_command = event_sourcing::command::BankAccountCommand::OpenAccount {
         id: account_id,
         account_type,
+        user_id,
         currency: Currency::USD,
     };
 
@@ -58,6 +60,7 @@ async fn main() {
     // open incoming master account
     create_bank_account(
         state.clone(),
+        "".to_string(),
         Uuid::new_v4(),
         configs::settings::INCOMING_MASTER_BANK_UUID,
         domain::models::BankAccountType::Master,
@@ -68,6 +71,7 @@ async fn main() {
     // open outgoing master account
     create_bank_account(
         state.clone(),
+        "".to_string(),
         Uuid::new_v4(),
         configs::settings::OUTGOING_MASTER_BANK_UUID,
         domain::models::BankAccountType::Master,
@@ -78,6 +82,7 @@ async fn main() {
     // open customer account
     create_bank_account(
         state.clone(),
+        Uuid::new_v4().to_string(),
         account_id,
         ledger_id,
         domain::models::BankAccountType::Retail,

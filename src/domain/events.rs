@@ -13,6 +13,7 @@ pub enum BankAccountEvent {
     AccountOpened {
         account_type: BankAccountType,
         currency: Currency,
+        user_id: String,
         base_event: BaseEvent,
     },
     AccountKycApproved {

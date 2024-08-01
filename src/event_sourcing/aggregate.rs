@@ -34,6 +34,7 @@ impl Aggregate for models::BankAccount {
             BankAccountCommand::OpenAccount {
                 id,
                 account_type,
+                user_id,
                 currency,
             } => {
                 let mut base_event = BaseEvent::default();
@@ -42,6 +43,7 @@ impl Aggregate for models::BankAccount {
                 Ok(vec![events::BankAccountEvent::AccountOpened {
                     base_event,
                     account_type,
+                    user_id,
                     currency,
                 }])
             }
@@ -218,6 +220,7 @@ impl Aggregate for models::BankAccount {
             events::BankAccountEvent::AccountOpened {
                 base_event,
                 account_type,
+                user_id,
                 currency,
             } => {
                 self.id = base_event.get_aggregate_id();
@@ -225,6 +228,7 @@ impl Aggregate for models::BankAccount {
                 self.timestamp = base_event.get_created_at();
                 self.account_type = account_type;
                 self.currency = currency;
+                self.user_id = user_id;
             }
             events::BankAccountEvent::AccountKycApproved {
                 ledger_id,
@@ -431,11 +435,13 @@ mod aggregate_tests {
         BankAccountCommand::OpenAccount {
             id: *ACCOUNT_ID,
             account_type: BankAccountType::Retail,
+            user_id: "user".to_string(),
             currency: Currency::USD
         },
         vec![BankAccountEvent::AccountOpened {
             base_event: create_base_event(*ACCOUNT_ID),
             account_type: BankAccountType::Retail,
+            user_id: "user".to_string(),
             currency: Currency::USD
         }]
     );
@@ -445,6 +451,7 @@ mod aggregate_tests {
         vec![BankAccountEvent::AccountOpened {
             base_event: create_base_event(*ACCOUNT_ID),
             account_type: BankAccountType::Retail,
+            user_id: "user".to_string(),
             currency: Currency::USD
         }],
         BankAccountCommand::ApproveAccount {
@@ -463,6 +470,7 @@ mod aggregate_tests {
             BankAccountEvent::AccountOpened {
                 base_event: create_base_event(*ACCOUNT_ID),
                 account_type: BankAccountType::Retail,
+                user_id: "user".to_string(),
                 currency: Currency::USD
             },
             BankAccountEvent::AccountKycApproved {
@@ -482,6 +490,7 @@ mod aggregate_tests {
             BankAccountEvent::AccountOpened {
                 base_event: create_base_event(*ACCOUNT_ID),
                 account_type: BankAccountType::Retail,
+                user_id: "user".to_string(),
                 currency: Currency::USD
             },
             BankAccountEvent::AccountKycApproved {
