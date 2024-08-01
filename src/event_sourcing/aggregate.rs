@@ -31,11 +31,14 @@ impl Aggregate for models::BankAccount {
         services: &Self::Services,
     ) -> Result<Vec<Self::Event>, Self::Error> {
         match command {
-            BankAccountCommand::OpenAccount { id } => {
+            BankAccountCommand::OpenAccount { id, account_type } => {
                 let mut base_event = BaseEvent::default();
                 base_event.set_aggregate_id(id);
                 base_event.set_created_at(chrono::Utc::now());
-                Ok(vec![events::BankAccountEvent::AccountOpened { base_event }])
+                Ok(vec![events::BankAccountEvent::AccountOpened {
+                    base_event,
+                    account_type,
+                }])
             }
             BankAccountCommand::ApproveAccount { id, ledger_id } => {
                 let command = LedgerCommand::Init {
@@ -190,10 +193,14 @@ impl Aggregate for models::BankAccount {
 
     fn apply(&mut self, event: Self::Event) {
         match event {
-            events::BankAccountEvent::AccountOpened { base_event } => {
+            events::BankAccountEvent::AccountOpened {
+                base_event,
+                account_type,
+            } => {
                 self.id = base_event.get_aggregate_id();
                 self.status = models::BankAccountStatus::Pending;
                 self.timestamp = base_event.get_created_at();
+                self.account_type = account_type;
             }
             events::BankAccountEvent::AccountKycApproved {
                 ledger_id,
@@ -354,7 +361,7 @@ mod aggregate_tests {
         event::{BaseEvent, Event},
         events::BankAccountEvent,
         finance::{JournalEntry, JournalLine, Transaction},
-        models::BankAccount,
+        models::{BankAccount, BankAccountType},
     };
 
     // A test framework that will apply our events and command
@@ -396,16 +403,21 @@ mod aggregate_tests {
     test_case!(
         test_account_creation,
         vec![],
-        BankAccountCommand::OpenAccount { id: *ACCOUNT_ID },
+        BankAccountCommand::OpenAccount {
+            id: *ACCOUNT_ID,
+            account_type: BankAccountType::Retail
+        },
         vec![BankAccountEvent::AccountOpened {
-            base_event: create_base_event(*ACCOUNT_ID)
+            base_event: create_base_event(*ACCOUNT_ID),
+            account_type: BankAccountType::Retail
         }]
     );
 
     test_case!(
         test_account_kyc_approved,
         vec![BankAccountEvent::AccountOpened {
-            base_event: create_base_event(*ACCOUNT_ID)
+            base_event: create_base_event(*ACCOUNT_ID),
+            account_type: BankAccountType::Retail
         }],
         BankAccountCommand::ApproveAccount {
             id: *ACCOUNT_ID,
@@ -421,7 +433,8 @@ mod aggregate_tests {
         test_deposit,
         vec![
             BankAccountEvent::AccountOpened {
-                base_event: create_base_event(*ACCOUNT_ID)
+                base_event: create_base_event(*ACCOUNT_ID),
+                account_type: BankAccountType::Retail
             },
             BankAccountEvent::AccountKycApproved {
                 ledger_id: LEDGER_ID.to_string(),

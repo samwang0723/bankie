@@ -18,10 +18,13 @@ async fn create_bank_account(
     state: ApplicationState,
     account_id: Uuid,
     ledger_id: Uuid,
+    account_type: domain::models::BankAccountType,
 ) -> Result<(), Box<dyn Error>> {
     // execute account opening
-    let opening_command =
-        event_sourcing::command::BankAccountCommand::OpenAccount { id: account_id };
+    let opening_command = event_sourcing::command::BankAccountCommand::OpenAccount {
+        id: account_id,
+        account_type,
+    };
 
     state
         .bank_account
@@ -56,6 +59,7 @@ async fn main() {
         state.clone(),
         Uuid::new_v4(),
         configs::settings::INCOMING_MASTER_BANK_UUID,
+        domain::models::BankAccountType::Master,
     )
     .await
     .unwrap();
@@ -65,14 +69,20 @@ async fn main() {
         state.clone(),
         Uuid::new_v4(),
         configs::settings::OUTGOING_MASTER_BANK_UUID,
+        domain::models::BankAccountType::Master,
     )
     .await
     .unwrap();
 
     // open customer account
-    create_bank_account(state.clone(), account_id, ledger_id)
-        .await
-        .unwrap();
+    create_bank_account(
+        state.clone(),
+        account_id,
+        ledger_id,
+        domain::models::BankAccountType::Retail,
+    )
+    .await
+    .unwrap();
 
     // execute account deposit
     let deposit_command = event_sourcing::command::BankAccountCommand::Deposit {

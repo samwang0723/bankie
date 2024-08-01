@@ -12,10 +12,20 @@ pub enum BankAccountStatus {
     Terminated,
 }
 
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum BankAccountType {
+    #[default]
+    Retail,
+    Master,
+    Institution,
+    Tax,
+}
+
 #[derive(Serialize, Default, Deserialize)]
 pub struct BankAccount {
     pub id: String,
     pub status: BankAccountStatus,
+    pub account_type: BankAccountType,
     pub ledger_id: String,
     pub timestamp: String,
 }
@@ -26,6 +36,7 @@ pub struct BankAccountView {
     pub id: String,
     pub ledger_id: String,
     pub status: BankAccountStatus,
+    pub account_type: BankAccountType,
     pub created_at: String,
     pub updated_at: String,
 }

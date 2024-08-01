@@ -3,9 +3,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{common::money::Money, event_sourcing::event::BaseEvent};
 
+use super::models::BankAccountType;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum BankAccountEvent {
     AccountOpened {
+        account_type: BankAccountType,
         base_event: BaseEvent,
     },
     AccountKycApproved {

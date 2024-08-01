@@ -33,11 +33,15 @@ pub type AccountQuery = GenericQuery<
 impl View<BankAccount> for BankAccountView {
     fn update(&mut self, event: &EventEnvelope<BankAccount>) {
         match &event.payload {
-            BankAccountEvent::AccountOpened { base_event } => {
+            BankAccountEvent::AccountOpened {
+                base_event,
+                account_type,
+            } => {
                 self.id = base_event.get_aggregate_id();
                 self.status = BankAccountStatus::Pending;
                 self.created_at = base_event.get_created_at();
                 self.updated_at = base_event.get_created_at();
+                self.account_type = *account_type;
             }
             BankAccountEvent::AccountKycApproved {
                 ledger_id,
