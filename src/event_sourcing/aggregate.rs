@@ -476,6 +476,25 @@ mod aggregate_tests {
         vec![]
     );
 
+    test_case!(
+        test_withdrawl,
+        vec![
+            BankAccountEvent::AccountOpened {
+                base_event: create_base_event(*ACCOUNT_ID),
+                account_type: BankAccountType::Retail,
+                currency: Currency::USD
+            },
+            BankAccountEvent::AccountKycApproved {
+                ledger_id: LEDGER_ID.to_string(),
+                base_event: create_base_event(*ACCOUNT_ID)
+            }
+        ],
+        BankAccountCommand::Withdrawl {
+            amount: Money::new(dec!(500.0), Currency::USD)
+        },
+        vec![]
+    );
+
     pub struct MockBankAccountServices {
         write_ledger_response: Mutex<Option<Result<(), anyhow::Error>>>,
         write_transaction_response: Mutex<Option<Result<Uuid, anyhow::Error>>>,

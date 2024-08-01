@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO transactions (id, bank_account_id, transaction_reference,\n            transaction_date, amount, currency, description, status, journal_entry_id)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Varchar",
+        "Date",
+        "Numeric",
+        "Bpchar",
+        "Text",
+        "Varchar",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6dd522a787659bc8fc1001766100703ea41d2ffe5081ba2ba8438da018c00ac0"
+}
