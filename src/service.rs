@@ -7,12 +7,12 @@ use uuid::Uuid;
 
 use crate::{
     domain::finance::{JournalEntry, JournalLine, Transaction},
-    event_sourcing::command::BalanceCommand,
+    event_sourcing::command::LedgerCommand,
     repository::adapter::Adapter,
-    state::BalanceLoaderSaver,
+    state::LedgerLoaderSaver,
 };
 
-pub struct MockBalanceServices;
+pub struct MockLedgerServices;
 
 pub struct BankAccountServices {
     pub services: Box<dyn BankAccountApi>,
@@ -27,8 +27,7 @@ impl BankAccountServices {
 // External services must be called during the processing of the command.
 #[async_trait]
 pub trait BankAccountApi: Sync + Send {
-    async fn write_balance(&self, id: String, command: BalanceCommand)
-        -> Result<(), anyhow::Error>;
+    async fn note_ledger(&self, id: String, command: LedgerCommand) -> Result<(), anyhow::Error>;
     async fn create_transaction_with_journal(
         &self,
         transaction: Transaction,
@@ -38,19 +37,15 @@ pub trait BankAccountApi: Sync + Send {
 }
 
 pub struct BankAccountLogic {
-    pub balance: BalanceLoaderSaver,
+    pub ledger: LedgerLoaderSaver,
     pub finance: Arc<Adapter<PgPool>>,
 }
 
 #[async_trait]
 impl BankAccountApi for BankAccountLogic {
-    async fn write_balance(
-        &self,
-        id: String,
-        command: BalanceCommand,
-    ) -> Result<(), anyhow::Error> {
+    async fn note_ledger(&self, id: String, command: LedgerCommand) -> Result<(), anyhow::Error> {
         // Should call ledger commange to write the transaction.
-        self.balance
+        self.ledger
             .cqrs
             .execute(&id, command)
             .await

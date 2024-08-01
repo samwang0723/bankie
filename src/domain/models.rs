@@ -16,7 +16,7 @@ pub enum BankAccountStatus {
 pub struct BankAccount {
     pub id: String,
     pub status: BankAccountStatus,
-    pub balance_id: String,
+    pub ledger_id: String,
     pub timestamp: String,
 }
 
@@ -24,14 +24,14 @@ pub struct BankAccount {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct BankAccountView {
     pub id: String,
-    pub balance_id: String,
+    pub ledger_id: String,
     pub status: BankAccountStatus,
     pub created_at: String,
     pub updated_at: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct Balance {
+pub struct Ledger {
     pub id: String,
     pub account_id: String,
     pub available: Money,
@@ -42,12 +42,12 @@ pub struct Balance {
 
 // The view for a Ledger query
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct BalanceView {
+pub struct LedgerView {
     pub id: String,
     pub account_id: String,
     pub available: Money,
     pub pending: Money,
-    pub current_balance: Money,
+    pub current: Money,
     pub created_at: String,
     pub updated_at: String,
 }

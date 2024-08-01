@@ -36,12 +36,12 @@ impl DatabaseClient for PgPool {
         for journal_line in journal_lines {
             sqlx::query!(
                 r#"
-                INSERT INTO journal_lines (id, journal_entry_id, balance_id, debit_amount, credit_amount, currency, description)
+                INSERT INTO journal_lines (id, journal_entry_id, ledger_id, debit_amount, credit_amount, currency, description)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                 "#,
                 journal_line.id,
                 journal_entry_id,
-                journal_line.balance_id,
+                journal_line.ledger_id,
                 journal_line.debit_amount,
                 journal_line.credit_amount,
                 journal_line.currency,

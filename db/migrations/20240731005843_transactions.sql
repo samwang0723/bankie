@@ -10,7 +10,7 @@ CREATE TABLE journal_entries (
 CREATE TABLE journal_lines (
     id uuid PRIMARY KEY,
     journal_entry_id uuid NOT NULL REFERENCES journal_entries(id),
-    balance_id uuid NOT NULL,
+    ledger_id text NOT NULL REFERENCES ledger_views(view_id),
     debit_amount decimal(19,4) NOT NULL DEFAULT 0,
     credit_amount decimal(19,4) NOT NULL DEFAULT 0,
     currency char(3) NOT NULL,
@@ -34,7 +34,7 @@ CREATE TABLE transactions (
 );
 
 CREATE INDEX idx_journal_lines_journal_entry_id ON journal_lines(journal_entry_id);
-CREATE INDEX idx_journal_lines_balance_id ON journal_lines(balance_id);
+CREATE INDEX idx_journal_lines_ledger_id ON journal_lines(ledger_id);
 CREATE INDEX idx_transactions_bank_account_id ON transactions(bank_account_id);
 CREATE INDEX idx_transactions_transaction_date ON transactions(transaction_date);
 CREATE INDEX idx_transactions_journal_entry_id ON transactions(journal_entry_id);

@@ -4,13 +4,13 @@ use postgres_es::{default_postgress_pool, PostgresCqrs, PostgresViewRepository};
 use sqlx::{Pool, Postgres};
 
 use crate::configs::settings::SETTINGS;
-use crate::domain::models::{Balance, BalanceView, BankAccount, BankAccountView};
-use crate::repository::configs::{configure_balance, configure_bank_account};
+use crate::domain::models::{BankAccount, BankAccountView, Ledger, LedgerView};
+use crate::repository::configs::{configure_bank_account, configure_ledger};
 
 #[derive(Clone)]
 pub struct ApplicationState {
     pub bank_account: BankAccountLoaderSaver,
-    pub balance: BalanceLoaderSaver,
+    pub ledger: LedgerLoaderSaver,
 }
 
 #[derive(Clone)]
@@ -20,9 +20,9 @@ pub struct BankAccountLoaderSaver {
 }
 
 #[derive(Clone)]
-pub struct BalanceLoaderSaver {
-    pub cqrs: Arc<PostgresCqrs<Balance>>,
-    pub query: Arc<PostgresViewRepository<BalanceView, Balance>>,
+pub struct LedgerLoaderSaver {
+    pub cqrs: Arc<PostgresCqrs<Ledger>>,
+    pub query: Arc<PostgresViewRepository<LedgerView, Ledger>>,
 }
 
 pub async fn new_application_state() -> ApplicationState {
@@ -30,8 +30,8 @@ pub async fn new_application_state() -> ApplicationState {
     // - a simply-query prints events to stdout as they are published
     // - `query` stores the current state of the account in a ViewRepository that we can access
     let pool: Pool<Postgres> = default_postgress_pool(&SETTINGS.database.connection_string()).await;
-    let (ledger_cqrs, ledger_query) = configure_balance(pool.clone());
-    let ledger_loader_saver = BalanceLoaderSaver {
+    let (ledger_cqrs, ledger_query) = configure_ledger(pool.clone());
+    let ledger_loader_saver = LedgerLoaderSaver {
         cqrs: ledger_cqrs,
         query: ledger_query,
     };
@@ -42,6 +42,6 @@ pub async fn new_application_state() -> ApplicationState {
             cqrs: bc_cqrs,
             query: bc_query,
         },
-        balance: ledger_loader_saver,
+        ledger: ledger_loader_saver,
     }
 }

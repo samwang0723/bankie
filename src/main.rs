@@ -34,10 +34,9 @@ async fn main() {
     }
 
     // execute account KYC approved
-    let balance_id = Uuid::new_v4();
     let approved_command = event_sourcing::command::BankAccountCommand::ApproveAccount {
         id: account_id,
-        balance_id,
+        ledger_id: Uuid::new_v4(),
     };
     match state
         .bank_account
@@ -91,10 +90,10 @@ async fn main() {
                 println!("Account: {:#?}", account_view);
                 println!("---------");
                 // read the account view
-                match state.balance.query.load(&account_view.balance_id).await {
+                match state.ledger.query.load(&account_view.ledger_id).await {
                     Ok(view) => match view {
-                        None => println!("Balance not found"),
-                        Some(ledger_view) => println!("Balance: {:#?}", ledger_view),
+                        None => println!("Ledger not found"),
+                        Some(ledger_view) => println!("Ledger: {:#?}", ledger_view),
                     },
                     Err(err) => {
                         println!("Error: {:#?}\n", err);

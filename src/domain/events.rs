@@ -9,17 +9,17 @@ pub enum BankAccountEvent {
         base_event: BaseEvent,
     },
     AccountKycApproved {
-        balance_id: String,
+        ledger_id: String,
         base_event: BaseEvent,
     },
     CustomerDepositedCash {
         amount: Money,
-        balance_id: String,
+        ledger_id: String,
         base_event: BaseEvent,
     },
     CustomerWithdrewCash {
         amount: Money,
-        balance_id: String,
+        ledger_id: String,
         base_event: BaseEvent,
     },
 }
@@ -41,11 +41,11 @@ impl DomainEvent for BankAccountEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum BalanceEvent {
-    BalanceInitiated {
+pub enum LedgerEvent {
+    LedgerInitiated {
         base_event: BaseEvent,
     },
-    BalanceChanged {
+    LedgerUpdated {
         amount: Money,
         transaction_id: String,
         transaction_type: String,
@@ -55,11 +55,11 @@ pub enum BalanceEvent {
     },
 }
 
-impl DomainEvent for BalanceEvent {
+impl DomainEvent for LedgerEvent {
     fn event_type(&self) -> String {
         let event_type: &str = match self {
-            BalanceEvent::BalanceInitiated { .. } => "balance.initiated",
-            BalanceEvent::BalanceChanged { .. } => "balance.changed",
+            LedgerEvent::LedgerInitiated { .. } => "ledger.initiated",
+            LedgerEvent::LedgerUpdated { .. } => "ledger.updated",
         };
         event_type.to_string()
     }

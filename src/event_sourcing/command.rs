@@ -5,13 +5,13 @@ use crate::common::money::Money;
 #[derive(Debug)]
 pub enum BankAccountCommand {
     OpenAccount { id: Uuid },
-    ApproveAccount { id: Uuid, balance_id: Uuid },
+    ApproveAccount { id: Uuid, ledger_id: Uuid },
     Deposit { amount: Money },
     Withdrawl { amount: Money },
 }
 
 #[derive(Debug)]
-pub enum BalanceCommand {
+pub enum LedgerCommand {
     Init {
         id: Uuid,
         account_id: Uuid,

@@ -30,7 +30,7 @@ pub struct JournalLine {
     pub id: Uuid,
     #[allow(dead_code)]
     pub journal_entry_id: Option<Uuid>,
-    pub balance_id: Uuid,
+    pub ledger_id: Uuid,
     pub debit_amount: Decimal,
     pub credit_amount: Decimal,
     pub currency: String,
