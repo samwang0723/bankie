@@ -39,7 +39,7 @@ impl Aggregate for models::BankAccount {
             }
             BankAccountCommand::ApproveAccount { id, ledger_id } => {
                 let command = LedgerCommand::Init {
-                    id: ledger_id.clone(),
+                    id: ledger_id,
                     account_id: id,
                 };
                 if services
@@ -81,7 +81,7 @@ impl Aggregate for models::BankAccount {
                     JournalLine {
                         id: Uuid::new_v4(),
                         journal_entry_id: None,
-                        ledger_id: configs::settings::INCOMING_MASTER_BANK_UUID,
+                        ledger_id: configs::settings::INCOMING_MASTER_BANK_UUID.to_string(),
                         credit_amount: Decimal::ZERO,
                         debit_amount: amount.amount,
                         currency: amount.currency.to_string(),
@@ -90,7 +90,7 @@ impl Aggregate for models::BankAccount {
                     JournalLine {
                         id: Uuid::new_v4(),
                         journal_entry_id: None,
-                        ledger_id: Uuid::parse_str(&self.ledger_id).unwrap(),
+                        ledger_id: self.ledger_id.clone(),
                         debit_amount: Decimal::ZERO,
                         credit_amount: amount.amount,
                         currency: amount.currency.to_string(),
@@ -144,7 +144,7 @@ impl Aggregate for models::BankAccount {
                     JournalLine {
                         id: Uuid::new_v4(),
                         journal_entry_id: None,
-                        ledger_id: configs::settings::OUTGOING_MASTER_BANK_UUID,
+                        ledger_id: configs::settings::OUTGOING_MASTER_BANK_UUID.to_string(),
                         debit_amount: Decimal::ZERO,
                         credit_amount: amount.amount,
                         currency: amount.currency.to_string(),
@@ -153,7 +153,7 @@ impl Aggregate for models::BankAccount {
                     JournalLine {
                         id: Uuid::new_v4(),
                         journal_entry_id: None,
-                        ledger_id: Uuid::parse_str(&self.ledger_id).unwrap(),
+                        ledger_id: self.ledger_id.clone(),
                         credit_amount: Decimal::ZERO,
                         debit_amount: amount.amount,
                         currency: amount.currency.to_string(),

@@ -1,7 +1,9 @@
+use std::error::Error;
+
 use common::money::{Currency, Money};
 use cqrs_es::persist::ViewRepository;
 use rust_decimal_macros::dec;
-use state::new_application_state;
+use state::{new_application_state, ApplicationState};
 use uuid::Uuid;
 
 mod common;
@@ -12,75 +14,87 @@ mod repository;
 mod service;
 mod state;
 
+async fn create_bank_account(
+    state: ApplicationState,
+    account_id: Uuid,
+    ledger_id: Uuid,
+) -> Result<(), Box<dyn Error>> {
+    // execute account opening
+    let opening_command =
+        event_sourcing::command::BankAccountCommand::OpenAccount { id: account_id };
+
+    state
+        .bank_account
+        .cqrs
+        .execute(&account_id.to_string(), opening_command)
+        .await?;
+
+    // execute account KYC approved
+    let approved_command = event_sourcing::command::BankAccountCommand::ApproveAccount {
+        id: account_id,
+        ledger_id,
+    };
+
+    state
+        .bank_account
+        .cqrs
+        .execute(&account_id.to_string(), approved_command)
+        .await?;
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().ok();
     let state = new_application_state().await;
     let account_id = Uuid::new_v4();
+    let ledger_id = Uuid::new_v4();
 
-    // execute account opening
-    let opening_command =
-        event_sourcing::command::BankAccountCommand::OpenAccount { id: account_id };
-    match state
-        .bank_account
-        .cqrs
-        .execute(&account_id.to_string(), opening_command)
-        .await
-    {
-        Ok(_) => {}
-        Err(e) => {
-            println!("Error: {:?}", e);
-        }
-    }
+    // open incoming master account
+    create_bank_account(
+        state.clone(),
+        Uuid::new_v4(),
+        configs::settings::INCOMING_MASTER_BANK_UUID,
+    )
+    .await
+    .unwrap();
 
-    // execute account KYC approved
-    let approved_command = event_sourcing::command::BankAccountCommand::ApproveAccount {
-        id: account_id,
-        ledger_id: Uuid::new_v4(),
-    };
-    match state
-        .bank_account
-        .cqrs
-        .execute(&account_id.to_string(), approved_command)
+    // open outgoing master account
+    create_bank_account(
+        state.clone(),
+        Uuid::new_v4(),
+        configs::settings::OUTGOING_MASTER_BANK_UUID,
+    )
+    .await
+    .unwrap();
+
+    // open customer account
+    create_bank_account(state.clone(), account_id, ledger_id)
         .await
-    {
-        Ok(_) => {}
-        Err(e) => {
-            println!("Error: {:?}", e);
-        }
-    }
+        .unwrap();
 
     // execute account deposit
     let deposit_command = event_sourcing::command::BankAccountCommand::Deposit {
         amount: Money::new(dec!(356.43), Currency::USD),
     };
-    match state
+    state
         .bank_account
         .cqrs
         .execute(&account_id.to_string(), deposit_command)
         .await
-    {
-        Ok(_) => {}
-        Err(e) => {
-            println!("Error: {:?}", e);
-        }
-    }
+        .unwrap();
 
     // execute account deposit
     let withdrawal_command = event_sourcing::command::BankAccountCommand::Withdrawl {
         amount: Money::new(dec!(26.23), Currency::USD),
     };
-    match state
+    state
         .bank_account
         .cqrs
         .execute(&account_id.to_string(), withdrawal_command)
         .await
-    {
-        Ok(_) => {}
-        Err(e) => {
-            println!("Error: {:?}", e);
-        }
-    }
+        .unwrap();
 
     // read the account view
     match state.bank_account.query.load(&account_id.to_string()).await {
