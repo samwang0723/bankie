@@ -1,9 +1,8 @@
 use async_trait::async_trait;
-use axum::body::{Bytes, HttpBody};
-use axum::extract::FromRequest;
-use axum::http::{Request, StatusCode};
+use axum::body::Bytes;
+use axum::extract::{FromRequest, Request};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::BoxError;
 use std::collections::HashMap;
 
 use crate::event_sourcing::command::BankAccountCommand;
@@ -15,16 +14,13 @@ pub struct CommandExtractor(pub HashMap<String, String>, pub BankAccountCommand)
 const USER_AGENT_HDR: &str = "User-Agent";
 
 #[async_trait]
-impl<S, B> FromRequest<S, B> for CommandExtractor
+impl<S> FromRequest<S> for CommandExtractor
 where
-    B: HttpBody + Send + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
     S: Send + Sync,
 {
     type Rejection = CommandExtractionError;
 
-    async fn from_request(req: Request<B>, state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         // Here we are including the current date/time, the uri that was called and the user-agent
         // in a HashMap that we will submit as metadata with the command.
         let mut metadata = HashMap::default();

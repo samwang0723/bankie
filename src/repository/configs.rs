@@ -1,4 +1,5 @@
 use cqrs_es::{persist::PersistedEventStore, CqrsFramework, Query};
+use log::error;
 use postgres_es::{PostgresCqrs, PostgresEventRepository, PostgresViewRepository};
 use sqlx::{Pool, Postgres};
 use std::sync::Arc;
@@ -32,7 +33,7 @@ pub fn configure_bank_account(
     // Without a query error handler there will be no indication if an
     // error occurs (e.g., database connection failure, missing columns or table).
     // Consider logging an error or panicking in your own application.
-    account_query.use_error_handler(Box::new(|e| println!("{}", e)));
+    account_query.use_error_handler(Box::new(|e| error!("{}", e)));
 
     // Create and return an event-sourced `CqrsFramework`.
     let queries: Vec<Box<dyn Query<BankAccount>>> =
@@ -69,7 +70,7 @@ pub fn configure_ledger(
     // Without a query error handler there will be no indication if an
     // error occurs (e.g., database connection failure, missing columns or table).
     // Consider logging an error or panicking in your own application.
-    ledger_query.use_error_handler(Box::new(|e| println!("{}", e)));
+    ledger_query.use_error_handler(Box::new(|e| error!("{}", e)));
 
     // Create and return an event-sourced `CqrsFramework`.
     let queries: Vec<Box<dyn Query<Ledger>>> =

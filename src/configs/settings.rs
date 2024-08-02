@@ -1,5 +1,6 @@
 use config::Config;
 use lazy_static::lazy_static;
+use log::info;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -35,13 +36,12 @@ impl Settings {
         let mut cfg = Self::load_from_file(&env);
         Self::customize_from_env(&mut cfg);
 
-        println!("{:?}", cfg);
         cfg
     }
 
     fn load_from_file(env: &str) -> Self {
         let file = format!("config.{}.yaml", env);
-        println!("Loading configuration from: {}", file);
+        info!("Loading configuration from: {}", file);
         let settings = Config::builder()
             .add_source(config::File::with_name(&file))
             .build()
