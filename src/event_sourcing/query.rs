@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use cqrs_es::persist::GenericQuery;
 use cqrs_es::{EventEnvelope, Query, View};
+use log::trace;
 use postgres_es::PostgresViewRepository;
 
 use crate::domain::events::{BankAccountEvent, LedgerEvent};
@@ -13,7 +14,7 @@ pub struct AccountLogging {}
 impl Query<BankAccount> for AccountLogging {
     async fn dispatch(&self, aggregate_id: &str, events: &[EventEnvelope<BankAccount>]) {
         for event in events {
-            println!("{}-{}\n{:#?}", aggregate_id, event.sequence, &event.payload);
+            trace!("{}-{}\n{:#?}", aggregate_id, event.sequence, &event.payload);
         }
     }
 }
@@ -68,7 +69,7 @@ pub struct LedgerLogging {}
 impl Query<Ledger> for LedgerLogging {
     async fn dispatch(&self, aggregate_id: &str, events: &[EventEnvelope<Ledger>]) {
         for event in events {
-            println!("{}-{}\n{:#?}", aggregate_id, event.sequence, &event.payload);
+            trace!("{}-{}\n{:#?}", aggregate_id, event.sequence, &event.payload);
         }
     }
 }

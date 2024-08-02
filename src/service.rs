@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use cqrs_es::persist::ViewRepository;
+use log::error;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -84,7 +85,7 @@ impl BankAccountApi for BankAccountLogic {
     ) -> Result<(), anyhow::Error> {
         match self.bank_account.query.load(&account_id.to_string()).await {
             Ok(view) => match view {
-                None => println!("Account not found"),
+                None => error!("Account not found"),
                 Some(account_view) => {
                     if account_view.status != BankAccountStatus::Approved {
                         return Err(anyhow!("Account is not active"));
@@ -95,7 +96,7 @@ impl BankAccountApi for BankAccountLogic {
 
                     match self.ledger.query.load(&account_view.ledger_id).await {
                         Ok(view) => match view {
-                            None => println!("Ledger not found"),
+                            None => error!("Ledger not found"),
                             Some(ledger_view) => {
                                 if action == LedgerAction::Withdraw
                                     && ledger_view.available < amount
