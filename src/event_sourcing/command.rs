@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
@@ -5,7 +6,7 @@ use crate::{
     domain::models::BankAccountType,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum BankAccountCommand {
     OpenAccount {
         id: Uuid,
@@ -25,7 +26,7 @@ pub enum BankAccountCommand {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum LedgerCommand {
     Init {
         id: Uuid,

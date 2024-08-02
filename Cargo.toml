@@ -9,6 +9,7 @@ postgres-es = "0.4.11"
 async-trait = "0.1.52"
 serde = { version = "1.0", features = ["derive"]}
 serde_derive = "1.0"
+serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
 rust_decimal = "1.35.0"
 rust_decimal_macros = "1.35.0"
@@ -19,6 +20,7 @@ dotenv = "0.15.0"
 chrono = { version = "^0.4.20", default-features = false, features = ["clock"] }
 anyhow = "1"
 rs-snowflake = "0.6"
+axum = "0.6"
 
 [dependencies.uuid]
 version = "1.10.0"
@@ -26,6 +28,7 @@ features = [
     "v4",                # Lets you generate random UUIDs
     "fast-rng",          # Use a faster (but still sufficiently random) RNG
     "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
+    "serde",
 ]
 
 [[bin]]
