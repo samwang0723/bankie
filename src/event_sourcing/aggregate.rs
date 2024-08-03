@@ -49,6 +49,7 @@ impl Aggregate for models::BankAccount {
                 }])
             }
             BankAccountCommand::ApproveAccount { id, ledger_id } => {
+                // Initialize ledger while account being approved
                 let command = LedgerCommand::Init {
                     id: ledger_id,
                     account_id: id,
@@ -62,6 +63,7 @@ impl Aggregate for models::BankAccount {
                     return Err("ledger write failed".into());
                 };
 
+                // Update bank account to be approved state
                 let mut base_event = BaseEvent::default();
                 base_event.set_aggregate_id(id);
                 base_event.set_created_at(chrono::Utc::now());
@@ -71,6 +73,7 @@ impl Aggregate for models::BankAccount {
                 }])
             }
             BankAccountCommand::Deposit { amount } => {
+                // Validate if ledger can do action
                 match services
                     .services
                     .validate(
@@ -83,6 +86,8 @@ impl Aggregate for models::BankAccount {
                     Ok(_) => {}
                     Err(_) => return Err("validation failed".into()),
                 };
+
+                // Create transaction and journal for accounting purpose
                 let transaction = Transaction {
                     id: Uuid::new_v4(),
                     bank_account_id: Uuid::parse_str(&self.id).unwrap(),
@@ -126,6 +131,8 @@ impl Aggregate for models::BankAccount {
                     .await
                 {
                     Ok(transaction_id) => {
+                        // Once get the created transaction, perform ledger note and update
+                        // balance accordingly.
                         let command = LedgerCommand::Credit {
                             id: Uuid::parse_str(&self.ledger_id).unwrap(),
                             account_id: Uuid::parse_str(&self.id).unwrap(),
@@ -382,6 +389,7 @@ impl Aggregate for models::Ledger {
 mod aggregate_tests {
     use async_trait::async_trait;
     use lazy_static::lazy_static;
+    use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
     use std::sync::Mutex;
     use uuid::Uuid;
@@ -390,29 +398,39 @@ mod aggregate_tests {
 
     use crate::{
         common::money::{Currency, Money},
-        service::{BankAccountApi, BankAccountServices},
+        service::{BankAccountApi, BankAccountServices, MockLedgerServices},
     };
 
     use super::{
         command::{BankAccountCommand, LedgerCommand},
         event::{BaseEvent, Event},
-        events::BankAccountEvent,
+        events::{BankAccountEvent, LedgerEvent},
         finance::{JournalEntry, JournalLine, Transaction},
-        models::{BankAccount, BankAccountType, LedgerAction},
+        models::{BankAccount, BankAccountType, Ledger, LedgerAction},
     };
 
     // A test framework that will apply our events and command
     // and verify that the logic works as expected.
     type AccountTestFramework = TestFramework<BankAccount>;
+    type LedgerTestFramework = TestFramework<Ledger>;
 
     lazy_static! {
         static ref LEDGER_ID: Uuid = Uuid::new_v4();
         static ref ACCOUNT_ID: Uuid = Uuid::new_v4();
+        static ref TRANSACTION_ID: Uuid = Uuid::new_v4();
     }
 
     fn create_base_event(uuid: Uuid) -> BaseEvent {
         let mut base_event = BaseEvent::default();
         base_event.set_aggregate_id(uuid);
+        base_event.set_created_at(chrono::Utc::now());
+        base_event
+    }
+
+    fn create_ledger_base_event(uuid: Uuid, parent_id: Uuid) -> BaseEvent {
+        let mut base_event = BaseEvent::default();
+        base_event.set_aggregate_id(uuid);
+        base_event.set_parent_id(parent_id);
         base_event.set_created_at(chrono::Utc::now());
         base_event
     }
@@ -431,6 +449,18 @@ mod aggregate_tests {
             fn $name() {
                 let services = BankAccountServices::new(Box::new(setup_mock_services()));
                 AccountTestFramework::with(services)
+                    .given($given)
+                    .when($command)
+                    .then_expect_events($expected);
+            }
+        };
+    }
+
+    macro_rules! ledger_test_case {
+        ($name:ident, $given:expr, $command:expr, $expected:expr) => {
+            #[test]
+            fn $name() {
+                LedgerTestFramework::with(MockLedgerServices {})
                     .given($given)
                     .when($command)
                     .then_expect_events($expected);
@@ -473,6 +503,18 @@ mod aggregate_tests {
         }]
     );
 
+    ledger_test_case!(
+        test_ledger_init,
+        vec![],
+        LedgerCommand::Init {
+            id: *LEDGER_ID,
+            account_id: *ACCOUNT_ID
+        },
+        vec![LedgerEvent::LedgerInitiated {
+            base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID)
+        }]
+    );
+
     test_case!(
         test_deposit,
         vec![
@@ -493,6 +535,37 @@ mod aggregate_tests {
         vec![]
     );
 
+    ledger_test_case!(
+        test_ledger_deposit,
+        vec![LedgerEvent::LedgerInitiated {
+            base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID)
+        }],
+        LedgerCommand::Credit {
+            id: *LEDGER_ID,
+            account_id: *ACCOUNT_ID,
+            transaction_id: *TRANSACTION_ID,
+            amount: Money::new(dec!(1000.0), Currency::USD),
+        },
+        vec![
+            LedgerEvent::LedgerUpdated {
+                amount: Money::new(dec!(1000.0), Currency::USD),
+                transaction_id: TRANSACTION_ID.to_string(),
+                transaction_type: "credit_hold".to_string(),
+                available_delta: Money::new(Decimal::ZERO, Currency::USD),
+                pending_delta: Money::new(dec!(1000.0), Currency::USD),
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID)
+            },
+            LedgerEvent::LedgerUpdated {
+                amount: Money::new(dec!(1000.0), Currency::USD),
+                transaction_id: TRANSACTION_ID.to_string(),
+                transaction_type: "credit_release".to_string(),
+                pending_delta: Money::new(Decimal::ZERO - dec!(1000.0), Currency::USD),
+                available_delta: Money::new(dec!(1000.0), Currency::USD),
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID)
+            }
+        ]
+    );
+
     test_case!(
         test_withdrawl,
         vec![
@@ -511,6 +584,55 @@ mod aggregate_tests {
             amount: Money::new(dec!(500.0), Currency::USD)
         },
         vec![]
+    );
+
+    ledger_test_case!(
+        test_ledger_withdrawl,
+        vec![
+            LedgerEvent::LedgerInitiated {
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID)
+            },
+            LedgerEvent::LedgerUpdated {
+                amount: Money::new(dec!(1000.0), Currency::USD),
+                transaction_id: TRANSACTION_ID.to_string(),
+                transaction_type: "credit_hold".to_string(),
+                available_delta: Money::new(Decimal::ZERO, Currency::USD),
+                pending_delta: Money::new(dec!(1000.0), Currency::USD),
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID)
+            },
+            LedgerEvent::LedgerUpdated {
+                amount: Money::new(dec!(1000.0), Currency::USD),
+                transaction_id: TRANSACTION_ID.to_string(),
+                transaction_type: "credit_release".to_string(),
+                pending_delta: Money::new(Decimal::ZERO - dec!(1000.0), Currency::USD),
+                available_delta: Money::new(dec!(1000.0), Currency::USD),
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID)
+            }
+        ],
+        LedgerCommand::Debit {
+            id: *LEDGER_ID,
+            account_id: *ACCOUNT_ID,
+            transaction_id: *TRANSACTION_ID,
+            amount: Money::new(dec!(200.0), Currency::USD),
+        },
+        vec![
+            LedgerEvent::LedgerUpdated {
+                amount: Money::new(dec!(200.0), Currency::USD),
+                transaction_id: TRANSACTION_ID.to_string(),
+                transaction_type: "debit_hold".to_string(),
+                available_delta: Money::new(Decimal::ZERO - dec!(200.0), Currency::USD),
+                pending_delta: Money::new(dec!(200.0), Currency::USD),
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID)
+            },
+            LedgerEvent::LedgerUpdated {
+                amount: Money::new(dec!(200.0), Currency::USD),
+                transaction_id: TRANSACTION_ID.to_string(),
+                transaction_type: "debit_release".to_string(),
+                pending_delta: Money::new(Decimal::ZERO - dec!(200.0), Currency::USD),
+                available_delta: Money::new(Decimal::ZERO, Currency::USD),
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID)
+            }
+        ]
     );
 
     pub struct MockBankAccountServices {
