@@ -6,7 +6,7 @@ use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
 
-use crate::configs::settings::SETTINGS;
+use crate::{auth::tenant::update_tenant_profile, configs::settings::SETTINGS};
 
 use super::tenant::create_tenant_profile;
 
@@ -20,6 +20,7 @@ pub struct Claims {
 
     #[serde(rename = "scope")]
     pub scopes: Vec<String>,
+    pub tenant_id: i32,
 }
 
 pub fn generate_secret_key(length: usize) -> String {
@@ -42,6 +43,15 @@ pub async fn generate_jwt(service_id: &str, secret_key: &str) -> Result<String, 
         .expect("valid timestamp")
         .timestamp();
 
+    let pool: Pool<Postgres> = default_postgress_pool(&SETTINGS.database.connection_string()).await;
+    let tenant_id = create_tenant_profile(
+        &pool,
+        service_id,
+        "bank-account:read bank-account:write ledger:read",
+    )
+    .await?;
+    debug!("Tenant ID: {}", tenant_id);
+
     let claims = Claims {
         sub: service_id.to_owned(),
         exp: expiration as usize,
@@ -53,22 +63,14 @@ pub async fn generate_jwt(service_id: &str, secret_key: &str) -> Result<String, 
             "bank-account:write".to_owned(),
             "ledger:read".to_owned(),
         ],
+        tenant_id,
     };
 
     let header = Header::default();
     let encoding_key = EncodingKey::from_secret(secret_key.as_bytes());
-
     let jwt_token = encode(&header, &claims, &encoding_key).unwrap();
-    let pool: Pool<Postgres> = default_postgress_pool(&SETTINGS.database.connection_string()).await;
-    let tenant_id = create_tenant_profile(
-        &pool,
-        service_id,
-        &jwt_token,
-        "active",
-        "bank-account:read bank-account:write ledger:read",
-    )
-    .await?;
-    debug!("Tenant ID: {}", tenant_id);
+
+    update_tenant_profile(&pool, tenant_id, &jwt_token).await?;
 
     Ok(jwt_token)
 }

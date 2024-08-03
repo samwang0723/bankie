@@ -1,12 +1,16 @@
+use std::sync::Arc;
+
 use auth::jwt::{generate_jwt, generate_secret_key};
-use axum::routing::get;
+use auth::middleware::authorize;
 use axum::Router;
+use axum::{middleware, routing::get};
 use clap::Parser;
 use clap_derive::Parser;
 use log::info;
 use route::{bank_account_command_handler, bank_account_query_handler, ledger_query_handler};
 use state::new_application_state;
 use tokio::net::TcpListener;
+use tower_http::add_extension::AddExtensionLayer;
 use tower_http::compression::CompressionLayer;
 
 mod auth;
@@ -64,6 +68,8 @@ async fn main() {
                 )
                 .route("/ledger/:id", get(ledger_query_handler))
                 .layer(comression_layer)
+                .layer(middleware::from_fn(authorize))
+                .layer(AddExtensionLayer::new(Arc::new(state.clone())))
                 .with_state(state);
             // Start the Axum server.
             let listener = TcpListener::bind("0.0.0.0:3030").await.unwrap();

@@ -11,6 +11,7 @@ use crate::repository::configs::{configure_bank_account, configure_ledger};
 pub struct ApplicationState {
     pub bank_account: BankAccountLoaderSaver,
     pub ledger: LedgerLoaderSaver,
+    pub pool: Arc<Pool<Postgres>>,
 }
 
 #[derive(Clone)]
@@ -40,7 +41,7 @@ pub async fn new_application_state() -> ApplicationState {
         cqrs: ledger_cqrs,
         query: ledger_query,
     };
-    let (bc_cqrs, bc_query) = configure_bank_account(pool, ledger_loader_saver.clone());
+    let (bc_cqrs, bc_query) = configure_bank_account(pool.clone(), ledger_loader_saver.clone());
 
     ApplicationState {
         bank_account: BankAccountLoaderSaver {
@@ -48,5 +49,6 @@ pub async fn new_application_state() -> ApplicationState {
             query: bc_query,
         },
         ledger: ledger_loader_saver,
+        pool: Arc::new(pool),
     }
 }

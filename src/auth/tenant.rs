@@ -1,3 +1,4 @@
+use chrono::Local;
 use sqlx::PgPool;
 
 #[allow(dead_code)]
@@ -13,19 +14,15 @@ pub struct Tenant {
 pub async fn create_tenant_profile(
     pool: &PgPool,
     name: &str,
-    jwt: &str,
-    status: &str,
     scope: &str,
 ) -> Result<i32, sqlx::Error> {
     let rec = sqlx::query!(
         r#"
-        INSERT INTO tenants (name, jwt, status, scope)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO tenants (name, status, jwt, scope)
+        VALUES ($1, 'inactive', '', $2)
         RETURNING id
         "#,
         name,
-        jwt,
-        status,
         scope
     )
     .fetch_one(pool)
@@ -34,13 +31,32 @@ pub async fn create_tenant_profile(
     Ok(rec.id)
 }
 
-#[allow(dead_code)]
+pub async fn update_tenant_profile(pool: &PgPool, id: i32, jwt: &str) -> Result<i32, sqlx::Error> {
+    let dt = Local::now();
+    let naive_utc = dt.naive_utc();
+    let rec = sqlx::query!(
+        r#"
+        UPDATE tenants
+        SET jwt = $2, status = 'active', updated_at = $3
+        WHERE id = $1
+        RETURNING id
+        "#,
+        id,
+        jwt,
+        naive_utc
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(rec.id)
+}
+
 pub async fn get_tenant_profile(pool: &PgPool, tenant_id: i32) -> Result<Tenant, sqlx::Error> {
     let rec = sqlx::query!(
         r#"
         SELECT id, name, jwt, status, scope
         FROM tenants
-        WHERE id = $1
+        WHERE id = $1 AND status='active'
         "#,
         tenant_id
     )
