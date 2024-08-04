@@ -34,6 +34,7 @@ impl BankAccountServices {
 #[async_trait]
 pub trait BankAccountApi: Sync + Send {
     async fn note_ledger(&self, id: String, command: LedgerCommand) -> Result<(), anyhow::Error>;
+    async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), anyhow::Error>;
     async fn create_transaction_with_journal(
         &self,
         transaction: Transaction,
@@ -63,6 +64,13 @@ impl BankAccountApi for BankAccountLogic {
             .execute(&id, command)
             .await
             .map_err(|e| anyhow!("Failed to write ledger: {}", e))
+    }
+
+    async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), anyhow::Error> {
+        self.finance
+            .complete_transaction(transaction_id)
+            .await
+            .map_err(|e| anyhow!("Failed to complete transaction: {}", e))
     }
 
     async fn create_transaction_with_journal(

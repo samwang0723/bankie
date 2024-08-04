@@ -6,6 +6,7 @@ use crate::domain::finance::{JournalEntry, JournalLine, Transaction};
 
 #[async_trait]
 pub trait DatabaseClient {
+    async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), Error>;
     async fn create_transaction_with_journal(
         &self,
         transaction: Transaction,
@@ -21,6 +22,10 @@ pub struct Adapter<C: DatabaseClient + Send + Sync> {
 impl<C: DatabaseClient + Send + Sync> Adapter<C> {
     pub fn new(client: C) -> Self {
         Adapter { client }
+    }
+
+    pub async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), Error> {
+        self.client.complete_transaction(transaction_id).await
     }
 
     pub async fn create_transaction_with_journal(

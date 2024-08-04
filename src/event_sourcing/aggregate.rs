@@ -97,7 +97,7 @@ impl Aggregate for models::BankAccount {
                     currency: amount.currency.to_string(),
                     description: None,
                     journal_entry_id: None,
-                    status: "completed".to_string(),
+                    status: "processing".to_string(),
                 };
                 let journal_entry = JournalEntry {
                     id: Uuid::new_v4(),
@@ -147,6 +147,10 @@ impl Aggregate for models::BankAccount {
                         {
                             return Err("ledger write failed".into());
                         };
+                        if (services.services.complete_transaction(transaction_id).await).is_err() {
+                            return Err("transaction complete failed".into());
+                        }
+
                         Ok(vec![])
                     }
                     Err(_) => Err("transaction write failed".into()),
@@ -175,7 +179,7 @@ impl Aggregate for models::BankAccount {
                     currency: amount.currency.to_string(),
                     description: None,
                     journal_entry_id: None,
-                    status: "completed".to_string(),
+                    status: "processing".to_string(),
                 };
                 let journal_entry = JournalEntry {
                     id: Uuid::new_v4(),
@@ -223,6 +227,11 @@ impl Aggregate for models::BankAccount {
                         {
                             return Err("ledger write failed".into());
                         };
+
+                        if (services.services.complete_transaction(transaction_id).await).is_err() {
+                            return Err("transaction complete failed".into());
+                        }
+
                         Ok(vec![])
                     }
                     Err(_) => Err("transaction write failed".into()),
@@ -673,6 +682,10 @@ mod aggregate_tests {
             _command: LedgerCommand,
         ) -> Result<(), anyhow::Error> {
             self.write_ledger_response.lock().unwrap().take().unwrap()
+        }
+
+        async fn complete_transaction(&self, _transaction_id: Uuid) -> Result<(), anyhow::Error> {
+            Ok(())
         }
 
         async fn create_transaction_with_journal(
