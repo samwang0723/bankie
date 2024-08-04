@@ -1,7 +1,7 @@
 use config::Config;
 use lazy_static::lazy_static;
-use log::info;
 use serde::Deserialize;
+use tracing::info;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Deserialize)]

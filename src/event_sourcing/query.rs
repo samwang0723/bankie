@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use cqrs_es::persist::GenericQuery;
 use cqrs_es::{EventEnvelope, Query, View};
-use log::trace;
 use postgres_es::PostgresViewRepository;
+use tracing::trace;
 
 use crate::domain::events::{BankAccountEvent, LedgerEvent};
 use crate::domain::models::{BankAccount, BankAccountStatus, BankAccountView, Ledger, LedgerView};

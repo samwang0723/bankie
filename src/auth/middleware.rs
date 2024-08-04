@@ -2,7 +2,7 @@ use std::{ops::Deref, sync::Arc};
 
 use axum::{body::Body, extract::Request, http::StatusCode, middleware::Next, response::Response};
 use jsonwebtoken::{decode, DecodingKey, TokenData, Validation};
-use log::debug;
+use tracing::debug;
 
 use crate::{auth::tenant::get_tenant_profile, state::ApplicationState};
 
@@ -16,12 +16,10 @@ pub async fn authorize(mut req: Request, next: Next) -> Result<Response<Body>, S
     };
     let mut header = auth_header.split_whitespace();
     let (_bearer, token) = (header.next(), header.next());
-    debug!("Token: {:?}", token);
     let token_data = match decode_jwt(token.unwrap().to_string()) {
         Ok(data) => data,
         Err(_) => return Err(StatusCode::UNAUTHORIZED),
     };
-    debug!("Token data: {:?}", token_data.claims);
     let state = req.extensions().get::<Arc<ApplicationState>>().unwrap();
     match get_tenant_profile(Arc::clone(&state.pool).deref(), token_data.claims.tenant_id).await {
         Ok(tenant) => {
@@ -35,7 +33,6 @@ pub async fn authorize(mut req: Request, next: Next) -> Result<Response<Body>, S
 
 pub fn decode_jwt(jwt_token: String) -> Result<TokenData<Claims>, StatusCode> {
     if let Ok(secret_key) = std::env::var("JWT_SECRET") {
-        debug!("Secret key: {:?}", secret_key);
         let mut validation = Validation::default();
         validation.set_audience(&["service"]);
         let result: Result<TokenData<Claims>, StatusCode> = decode(

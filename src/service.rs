@@ -3,8 +3,8 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use cqrs_es::persist::ViewRepository;
-use log::error;
 use sqlx::PgPool;
+use tracing::error;
 use uuid::Uuid;
 
 use crate::{

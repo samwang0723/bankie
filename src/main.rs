@@ -8,12 +8,13 @@ use axum::{middleware, routing::get};
 use clap::Parser;
 use clap_derive::Parser;
 use common::money::Currency;
-use log::info;
 use route::{bank_account_command_handler, bank_account_query_handler, ledger_query_handler};
 use state::{new_application_state, ApplicationState};
 use tokio::net::TcpListener;
 use tower_http::add_extension::AddExtensionLayer;
 use tower_http::compression::CompressionLayer;
+use tower_http::trace::TraceLayer;
+use tracing::info;
 use uuid::Uuid;
 
 mod auth;
@@ -74,7 +75,7 @@ async fn configure_master_account(
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().ok();
-    env_logger::init();
+    tracing_subscriber::fmt::init();
 
     let args = Args::parse();
     match args.mode.as_str() {
@@ -125,9 +126,10 @@ async fn main() {
                     get(bank_account_query_handler).post(bank_account_command_handler),
                 )
                 .route("/ledger/:id", get(ledger_query_handler))
-                .layer(comression_layer)
                 .layer(middleware::from_fn(authorize))
                 .layer(AddExtensionLayer::new(Arc::new(state.clone())))
+                .layer(comression_layer)
+                .layer(TraceLayer::new_for_http())
                 .with_state(state);
             // Start the Axum server.
             let listener = TcpListener::bind("0.0.0.0:3030").await.unwrap();

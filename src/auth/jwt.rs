@@ -1,10 +1,10 @@
 use chrono::{Duration, Utc};
 use jsonwebtoken::{encode, EncodingKey, Header};
-use log::debug;
 use postgres_es::default_postgress_pool;
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
+use tracing::debug;
 
 use crate::{auth::tenant::update_tenant_profile, configs::settings::SETTINGS};
 

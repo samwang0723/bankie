@@ -1,8 +1,8 @@
 use cqrs_es::{persist::PersistedEventStore, CqrsFramework, Query};
-use log::error;
 use postgres_es::{PostgresCqrs, PostgresEventRepository, PostgresViewRepository};
 use sqlx::{Pool, Postgres};
 use std::sync::Arc;
+use tracing::error;
 
 use crate::{
     domain::models::*,
