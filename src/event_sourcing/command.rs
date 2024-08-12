@@ -17,6 +17,7 @@ pub enum BankAccountCommand {
     },
     ApproveAccount {
         id: Uuid,
+        #[serde(skip_deserializing)]
         ledger_id: Uuid,
     },
     Deposit {

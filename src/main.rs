@@ -67,11 +67,11 @@ async fn main() {
             let comression_layer: CompressionLayer = CompressionLayer::new();
             let router = Router::new()
                 .route(
-                    "/bank_account/:id",
+                    "/v1/bank_account/:id",
                     get(bank_account_query_handler).post(bank_account_command_handler),
                 )
-                .route("/ledger/:id", get(ledger_query_handler))
-                .route("/house_account/:id", post(house_account_create_handler))
+                .route("/v1/ledger/:id", get(ledger_query_handler))
+                .route("/v1/house_account/:id", post(house_account_create_handler))
                 .layer(middleware::from_fn(authorize))
                 .layer(AddExtensionLayer::new(Arc::new(state.clone())))
                 .layer(comression_layer)

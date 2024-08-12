@@ -4,6 +4,7 @@ use axum::extract::{FromRequest, Request};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use std::collections::HashMap;
+use uuid::Uuid;
 
 use crate::event_sourcing::command::BankAccountCommand;
 
@@ -34,7 +35,12 @@ where
 
         // Parse and deserialize the request body as the command payload.
         let body = Bytes::from_request(req, state).await?;
-        let command: BankAccountCommand = serde_json::from_slice(body.as_ref())?;
+        let mut command: BankAccountCommand = serde_json::from_slice(body.as_ref())?;
+
+        // Generate ledger_id instead of bringing in from external
+        if let BankAccountCommand::ApproveAccount { id: _, ledger_id } = &mut command {
+            *ledger_id = Uuid::new_v4();
+        }
         Ok(CommandExtractor(metadata, command))
     }
 }
