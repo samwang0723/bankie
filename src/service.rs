@@ -8,7 +8,7 @@ use tracing::error;
 use uuid::Uuid;
 
 use crate::{
-    common::money::Money,
+    common::money::{Currency, Money},
     domain::{
         finance::{JournalEntry, JournalLine, Transaction},
         models::{BankAccountStatus, LedgerAction},
@@ -33,6 +33,7 @@ impl BankAccountServices {
 // External services must be called during the processing of the command.
 #[async_trait]
 pub trait BankAccountApi: Sync + Send {
+    async fn get_house_account(&self, currency: Currency) -> Result<String, anyhow::Error>;
     async fn note_ledger(&self, id: String, command: LedgerCommand) -> Result<(), anyhow::Error>;
     async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), anyhow::Error>;
     async fn create_transaction_with_journal(
@@ -125,5 +126,12 @@ impl BankAccountApi for BankAccountLogic {
         };
 
         Ok(())
+    }
+
+    async fn get_house_account(&self, currency: Currency) -> Result<String, anyhow::Error> {
+        self.finance
+            .get_house_account(currency)
+            .await
+            .map_err(|e| anyhow!("Failed to get house account: {}", e))
     }
 }

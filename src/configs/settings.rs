@@ -2,7 +2,6 @@ use config::Config;
 use lazy_static::lazy_static;
 use serde::Deserialize;
 use tracing::info;
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Settings {
@@ -18,13 +17,6 @@ pub struct DatabaseSettings {
     #[serde(skip_deserializing)]
     pub dbpasswd: String,
 }
-
-pub const INCOMING_MASTER_BANK_UUID: Uuid = Uuid::from_bytes([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-]);
-pub const OUTGOING_MASTER_BANK_UUID: Uuid = Uuid::from_bytes([
-    0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-]);
 
 lazy_static! {
     pub static ref SETTINGS: Settings = Settings::new();

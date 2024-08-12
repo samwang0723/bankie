@@ -1,3 +1,4 @@
+use crate::common::money::Currency;
 use crate::domain::finance::{JournalEntry, JournalLine, Transaction};
 use crate::domain::models::HouseAccount;
 
@@ -110,5 +111,21 @@ impl DatabaseClient for PgPool {
         .execute(self)
         .await?;
         Ok(())
+    }
+
+    async fn get_house_account(&self, currency: Currency) -> Result<String, Error> {
+        let house_account_id = sqlx::query!(
+            r#"
+            SELECT ledger_id
+            FROM house_accounts
+            WHERE currency = $1
+            "#,
+            currency.to_string()
+        )
+        .fetch_one(self)
+        .await?
+        .ledger_id;
+
+        Ok(house_account_id)
     }
 }

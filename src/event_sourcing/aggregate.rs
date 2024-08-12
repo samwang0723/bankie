@@ -8,9 +8,9 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::common::money::{Currency, Money};
+use crate::domain::*;
 use crate::service::{BankAccountServices, MockLedgerServices};
 use crate::{common, event_sourcing::*};
-use crate::{configs, domain::*};
 
 #[async_trait]
 impl Aggregate for models::BankAccount {
@@ -73,6 +73,12 @@ impl Aggregate for models::BankAccount {
                 }])
             }
             BankAccountCommand::Deposit { amount } => {
+                let house_account_ledger =
+                    match services.services.get_house_account(amount.currency).await {
+                        Ok(id) => id,
+                        Err(_) => return Err("house account not found".into()),
+                    };
+
                 // Validate if ledger can do action
                 match services
                     .services
@@ -109,7 +115,7 @@ impl Aggregate for models::BankAccount {
                     JournalLine {
                         id: Uuid::new_v4(),
                         journal_entry_id: None,
-                        ledger_id: configs::settings::INCOMING_MASTER_BANK_UUID.to_string(),
+                        ledger_id: house_account_ledger,
                         credit_amount: Decimal::ZERO,
                         debit_amount: amount.amount,
                         currency: amount.currency.to_string(),
@@ -157,6 +163,12 @@ impl Aggregate for models::BankAccount {
                 }
             }
             BankAccountCommand::Withdrawl { amount } => {
+                let house_account_ledger =
+                    match services.services.get_house_account(amount.currency).await {
+                        Ok(id) => id,
+                        Err(_) => return Err("house account not found".into()),
+                    };
+
                 match services
                     .services
                     .validate(
@@ -191,7 +203,7 @@ impl Aggregate for models::BankAccount {
                     JournalLine {
                         id: Uuid::new_v4(),
                         journal_entry_id: None,
-                        ledger_id: configs::settings::OUTGOING_MASTER_BANK_UUID.to_string(),
+                        ledger_id: house_account_ledger,
                         debit_amount: Decimal::ZERO,
                         credit_amount: amount.amount,
                         currency: amount.currency.to_string(),
@@ -708,6 +720,10 @@ mod aggregate_tests {
             _amount: Money,
         ) -> Result<(), anyhow::Error> {
             self.validate_response.lock().unwrap().take().unwrap()
+        }
+
+        async fn get_house_account(&self, _currency: Currency) -> Result<String, anyhow::Error> {
+            Ok(Uuid::new_v4().to_string())
         }
     }
 }
