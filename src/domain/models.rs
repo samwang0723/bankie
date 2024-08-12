@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::common::money::{Currency, Money};
 
@@ -37,6 +38,17 @@ pub struct BankAccount {
     pub ledger_id: String,
     pub user_id: String,
     pub timestamp: String,
+}
+
+#[derive(Serialize, Default, Deserialize)]
+pub struct HouseAccount {
+    pub id: Uuid,
+    pub status: String,
+    pub account_number: String,
+    pub account_name: String,
+    pub account_type: String,
+    pub ledger_id: String,
+    pub currency: Currency,
 }
 
 // The view for a BankAccount query

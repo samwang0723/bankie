@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use sqlx::Error;
 use uuid::Uuid;
 
-use crate::domain::finance::{JournalEntry, JournalLine, Transaction};
+use crate::domain::{
+    finance::{JournalEntry, JournalLine, Transaction},
+    models::HouseAccount,
+};
 
 #[async_trait]
 pub trait DatabaseClient {
@@ -13,6 +16,7 @@ pub trait DatabaseClient {
         journal_entry: JournalEntry,
         journal_lines: Vec<JournalLine>,
     ) -> Result<Uuid, Error>;
+    async fn create_house_account(&self, account: HouseAccount) -> Result<(), Error>;
 }
 
 pub struct Adapter<C: DatabaseClient + Send + Sync> {
@@ -37,5 +41,9 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
         self.client
             .create_transaction_with_journal(transaction, journal_entry, journal_lines)
             .await
+    }
+
+    pub async fn create_house_account(&self, account: HouseAccount) -> Result<(), Error> {
+        self.client.create_house_account(account).await
     }
 }

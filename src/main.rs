@@ -7,7 +7,11 @@ use axum::Router;
 use axum::{middleware, routing::get};
 use clap::Parser;
 use clap_derive::Parser;
+use common::account::generate_bank_account_number;
 use common::money::Currency;
+use domain::models::HouseAccount;
+use event_sourcing::command::LedgerCommand;
+use repository::adapter::DatabaseClient;
 use route::{bank_account_command_handler, bank_account_query_handler, ledger_query_handler};
 use state::{new_application_state, ApplicationState};
 use tokio::net::TcpListener;
@@ -40,35 +44,31 @@ struct Args {
     service: Option<String>,
 }
 
-async fn configure_master_account(
-    state: ApplicationState,
-    account_id: Uuid,
-    ledger_id: Uuid,
-    account_type: domain::models::BankAccountType,
-    currency: Currency,
-) -> Result<(), Box<dyn Error>> {
-    // execute account opening
-    let opening_command = event_sourcing::command::BankAccountCommand::OpenAccount {
-        id: account_id,
-        account_type,
-        user_id: "".to_string(),
-        currency,
-    };
+async fn configure_master_account(state: ApplicationState) -> Result<(), Box<dyn Error>> {
+    let client = Arc::clone(&state.pool);
+    let ledger_id = Uuid::new_v4();
+    let account_id = Uuid::new_v4();
     state
-        .bank_account
+        .ledger
         .cqrs
-        .execute(&account_id.to_string(), opening_command)
+        .execute(
+            &ledger_id.to_string(),
+            LedgerCommand::Init {
+                id: ledger_id,
+                account_id,
+            },
+        )
         .await?;
-    // execute account KYC approved
-    let approved_command = event_sourcing::command::BankAccountCommand::ApproveAccount {
+    let house_account = HouseAccount {
         id: account_id,
-        ledger_id,
+        account_name: "Master USD Account".to_string(),
+        account_type: "Retail".to_string(),
+        account_number: generate_bank_account_number(10),
+        ledger_id: ledger_id.to_string(),
+        currency: Currency::USD,
+        status: "active".to_string(),
     };
-    state
-        .bank_account
-        .cqrs
-        .execute(&account_id.to_string(), approved_command)
-        .await?;
+    client.create_house_account(house_account).await?;
     Ok(())
 }
 
@@ -94,25 +94,7 @@ async fn main() {
         "configure_master" => {
             let state = new_application_state().await;
             // open incoming master account
-            configure_master_account(
-                state.clone(),
-                Uuid::new_v4(),
-                configs::settings::INCOMING_MASTER_BANK_UUID,
-                domain::models::BankAccountType::Master,
-                Currency::USD,
-            )
-            .await
-            .unwrap();
-            // open outgoing master account
-            configure_master_account(
-                state.clone(),
-                Uuid::new_v4(),
-                configs::settings::OUTGOING_MASTER_BANK_UUID,
-                domain::models::BankAccountType::Master,
-                Currency::USD,
-            )
-            .await
-            .unwrap();
+            configure_master_account(state.clone()).await.unwrap();
         }
         "server" => {
             let state = new_application_state().await;

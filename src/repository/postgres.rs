@@ -1,4 +1,5 @@
 use crate::domain::finance::{JournalEntry, JournalLine, Transaction};
+use crate::domain::models::HouseAccount;
 
 use super::adapter::DatabaseClient;
 use async_trait::async_trait;
@@ -90,5 +91,24 @@ impl DatabaseClient for PgPool {
         tx.commit().await?;
 
         Ok(transaction_id)
+    }
+
+    async fn create_house_account(&self, account: HouseAccount) -> Result<(), Error> {
+        sqlx::query!(
+            r#"
+            INSERT INTO house_accounts (id, account_number, account_name, account_type, ledger_id, currency, status)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "#,
+            account.id,
+            account.account_number,
+            account.account_name,
+            account.account_type,
+            account.ledger_id,
+            account.currency.to_string(),
+            account.status
+        )
+        .execute(self)
+        .await?;
+        Ok(())
     }
 }
