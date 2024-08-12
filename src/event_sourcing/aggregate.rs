@@ -35,6 +35,7 @@ impl Aggregate for models::BankAccount {
             BankAccountCommand::OpenAccount {
                 id,
                 account_type,
+                kind,
                 user_id,
                 currency,
             } => {
@@ -44,6 +45,7 @@ impl Aggregate for models::BankAccount {
                 Ok(vec![events::BankAccountEvent::AccountOpened {
                     base_event,
                     account_type,
+                    kind,
                     user_id,
                     currency,
                 }])
@@ -257,6 +259,7 @@ impl Aggregate for models::BankAccount {
             events::BankAccountEvent::AccountOpened {
                 base_event,
                 account_type,
+                kind,
                 user_id,
                 currency,
             } => {
@@ -264,6 +267,7 @@ impl Aggregate for models::BankAccount {
                 self.status = models::BankAccountStatus::Pending;
                 self.timestamp = base_event.get_created_at();
                 self.account_type = account_type;
+                self.kind = kind;
                 self.currency = currency;
                 self.user_id = user_id;
             }
@@ -427,7 +431,7 @@ mod aggregate_tests {
         event::{BaseEvent, Event},
         events::{BankAccountEvent, LedgerEvent},
         finance::{JournalEntry, JournalLine, Transaction},
-        models::{BankAccount, BankAccountType, Ledger, LedgerAction},
+        models::{BankAccount, BankAccountKind, BankAccountType, Ledger, LedgerAction},
     };
 
     // A test framework that will apply our events and command
@@ -495,12 +499,14 @@ mod aggregate_tests {
         BankAccountCommand::OpenAccount {
             id: *ACCOUNT_ID,
             account_type: BankAccountType::Retail,
+            kind: BankAccountKind::Checking,
             user_id: "user".to_string(),
             currency: Currency::USD
         },
         vec![BankAccountEvent::AccountOpened {
             base_event: create_base_event(*ACCOUNT_ID),
             account_type: BankAccountType::Retail,
+            kind: BankAccountKind::Checking,
             user_id: "user".to_string(),
             currency: Currency::USD
         }]
@@ -511,6 +517,7 @@ mod aggregate_tests {
         vec![BankAccountEvent::AccountOpened {
             base_event: create_base_event(*ACCOUNT_ID),
             account_type: BankAccountType::Retail,
+            kind: BankAccountKind::Checking,
             user_id: "user".to_string(),
             currency: Currency::USD
         }],
@@ -542,6 +549,7 @@ mod aggregate_tests {
             BankAccountEvent::AccountOpened {
                 base_event: create_base_event(*ACCOUNT_ID),
                 account_type: BankAccountType::Retail,
+                kind: BankAccountKind::Checking,
                 user_id: "user".to_string(),
                 currency: Currency::USD
             },
@@ -593,6 +601,7 @@ mod aggregate_tests {
             BankAccountEvent::AccountOpened {
                 base_event: create_base_event(*ACCOUNT_ID),
                 account_type: BankAccountType::Retail,
+                kind: BankAccountKind::Checking,
                 user_id: "user".to_string(),
                 currency: Currency::USD
             },

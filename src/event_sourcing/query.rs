@@ -37,6 +37,7 @@ impl View<BankAccount> for BankAccountView {
             BankAccountEvent::AccountOpened {
                 base_event,
                 account_type,
+                kind,
                 user_id,
                 currency,
             } => {
@@ -45,6 +46,7 @@ impl View<BankAccount> for BankAccountView {
                 self.created_at = base_event.get_created_at();
                 self.updated_at = base_event.get_created_at();
                 self.account_type = *account_type;
+                self.kind = *kind;
                 self.currency = *currency;
                 self.user_id = user_id.clone();
             }

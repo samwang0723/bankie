@@ -17,9 +17,16 @@ pub enum BankAccountStatus {
 pub enum BankAccountType {
     #[default]
     Retail,
-    Master,
     Institution,
     Tax,
+}
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum BankAccountKind {
+    #[default]
+    Checking,
+    Interest,
+    Yield,
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -34,6 +41,7 @@ pub struct BankAccount {
     pub id: String,
     pub status: BankAccountStatus,
     pub account_type: BankAccountType,
+    pub kind: BankAccountKind,
     pub currency: Currency,
     pub ledger_id: String,
     pub user_id: String,
@@ -44,9 +52,11 @@ pub struct BankAccount {
 pub struct HouseAccount {
     pub id: Uuid,
     pub status: String,
+    #[serde(skip_deserializing)]
     pub account_number: String,
     pub account_name: String,
     pub account_type: String,
+    #[serde(skip_deserializing)]
     pub ledger_id: String,
     pub currency: Currency,
 }
@@ -59,6 +69,7 @@ pub struct BankAccountView {
     pub user_id: String,
     pub status: BankAccountStatus,
     pub account_type: BankAccountType,
+    pub kind: BankAccountKind,
     pub currency: Currency,
     pub created_at: String,
     pub updated_at: String,

@@ -1,25 +1,20 @@
-use std::error::Error;
-use std::sync::Arc;
-
 use auth::jwt::{generate_jwt, generate_secret_key};
 use auth::middleware::authorize;
 use axum::Router;
-use axum::{middleware, routing::get};
+use axum::{middleware, routing::get, routing::post};
 use clap::Parser;
 use clap_derive::Parser;
-use common::account::generate_bank_account_number;
-use common::money::Currency;
-use domain::models::HouseAccount;
-use event_sourcing::command::LedgerCommand;
-use repository::adapter::DatabaseClient;
-use route::{bank_account_command_handler, bank_account_query_handler, ledger_query_handler};
-use state::{new_application_state, ApplicationState};
+use route::{
+    bank_account_command_handler, bank_account_query_handler, house_account_create_handler,
+    ledger_query_handler,
+};
+use state::new_application_state;
+use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::add_extension::AddExtensionLayer;
 use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
 use tracing::info;
-use uuid::Uuid;
 
 mod auth;
 mod command;
@@ -27,6 +22,7 @@ mod common;
 mod configs;
 mod domain;
 mod event_sourcing;
+mod house_account;
 mod repository;
 mod route;
 mod service;
@@ -42,34 +38,6 @@ struct Args {
     /// Service ID for JWT token
     #[arg(short, long)]
     service: Option<String>,
-}
-
-async fn configure_master_account(state: ApplicationState) -> Result<(), Box<dyn Error>> {
-    let client = Arc::clone(&state.pool);
-    let ledger_id = Uuid::new_v4();
-    let account_id = Uuid::new_v4();
-    state
-        .ledger
-        .cqrs
-        .execute(
-            &ledger_id.to_string(),
-            LedgerCommand::Init {
-                id: ledger_id,
-                account_id,
-            },
-        )
-        .await?;
-    let house_account = HouseAccount {
-        id: account_id,
-        account_name: "Master USD Account".to_string(),
-        account_type: "Retail".to_string(),
-        account_number: generate_bank_account_number(10),
-        ledger_id: ledger_id.to_string(),
-        currency: Currency::USD,
-        status: "active".to_string(),
-    };
-    client.create_house_account(house_account).await?;
-    Ok(())
 }
 
 #[tokio::main]
@@ -91,11 +59,6 @@ async fn main() {
                 }
             }
         }
-        "configure_master" => {
-            let state = new_application_state().await;
-            // open incoming master account
-            configure_master_account(state.clone()).await.unwrap();
-        }
         "server" => {
             let state = new_application_state().await;
             // Configure the Axum routes and services.
@@ -108,6 +71,7 @@ async fn main() {
                     get(bank_account_query_handler).post(bank_account_command_handler),
                 )
                 .route("/ledger/:id", get(ledger_query_handler))
+                .route("/house_account/:id", post(house_account_create_handler))
                 .layer(middleware::from_fn(authorize))
                 .layer(AddExtensionLayer::new(Arc::new(state.clone())))
                 .layer(comression_layer)
