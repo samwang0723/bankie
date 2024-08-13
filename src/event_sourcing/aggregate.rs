@@ -5,7 +5,6 @@ use event::{BaseEvent, Event};
 use finance::{JournalEntry, JournalLine, Transaction};
 use models::LedgerAction;
 use rust_decimal::Decimal;
-use tracing::debug;
 use uuid::Uuid;
 
 use crate::common::money::Money;
@@ -429,7 +428,6 @@ impl Aggregate for models::Ledger {
             } => {
                 self.id = base_event.get_aggregate_id();
                 self.amount = amount;
-                debug!("{:?} {:?}", self.available, available_delta);
                 self.available = self.available + available_delta;
                 self.pending = self.pending + pending_delta;
                 self.account_id = base_event.get_parent_id();
