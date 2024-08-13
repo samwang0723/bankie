@@ -133,6 +133,8 @@ impl DatabaseClient for PgPool {
             SELECT ledger_id
             FROM house_accounts
             WHERE currency = $1
+            AND status='active'
+            LIMIT 1
             "#,
             currency.to_string()
         )
