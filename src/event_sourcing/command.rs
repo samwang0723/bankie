@@ -33,6 +33,7 @@ pub enum LedgerCommand {
     Init {
         id: Uuid,
         account_id: Uuid,
+        amount: Money,
     },
     Credit {
         id: Uuid,

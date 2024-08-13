@@ -10,6 +10,20 @@ use uuid::Uuid;
 
 #[async_trait]
 impl DatabaseClient for PgPool {
+    async fn fail_transaction(&self, transaction_id: Uuid) -> Result<(), Error> {
+        sqlx::query!(
+            r#"
+            UPDATE transactions
+            SET status = 'failed', updated_at = NOW()
+            WHERE id = $1
+            "#,
+            transaction_id,
+        )
+        .execute(self)
+        .await?;
+        Ok(())
+    }
+
     async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), Error> {
         sqlx::query!(
             r#"

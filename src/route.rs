@@ -2,6 +2,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::command::CommandExtractor;
+use crate::common::money::Money;
 use crate::event_sourcing::command::LedgerCommand;
 use crate::house_account::HouseAccountExtractor;
 use crate::repository::adapter::DatabaseClient;
@@ -13,6 +14,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use cqrs_es::persist::ViewRepository;
+use rust_decimal::Decimal;
 use tracing::error;
 use uuid::Uuid;
 
@@ -91,6 +93,7 @@ pub async fn house_account_create_handler(
             LedgerCommand::Init {
                 id: ledger_id,
                 account_id: Uuid::from_str(&id).unwrap(),
+                amount: Money::new(Decimal::ZERO, house_account.currency),
             },
         )
         .await

@@ -52,6 +52,7 @@ impl DomainEvent for BankAccountEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum LedgerEvent {
     LedgerInitiated {
+        amount: Money,
         base_event: BaseEvent,
     },
     LedgerUpdated {

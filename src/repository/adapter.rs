@@ -12,6 +12,7 @@ use crate::{
 
 #[async_trait]
 pub trait DatabaseClient {
+    async fn fail_transaction(&self, transaction_id: Uuid) -> Result<(), Error>;
     async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), Error>;
     async fn create_transaction_with_journal(
         &self,
@@ -36,6 +37,10 @@ pub struct Adapter<C: DatabaseClient + Send + Sync> {
 impl<C: DatabaseClient + Send + Sync> Adapter<C> {
     pub fn new(client: C) -> Self {
         Adapter { client }
+    }
+
+    pub async fn fail_transaction(&self, transaction_id: Uuid) -> Result<(), Error> {
+        self.client.fail_transaction(transaction_id).await
     }
 
     pub async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), Error> {

@@ -5,9 +5,10 @@ use event::{BaseEvent, Event};
 use finance::{JournalEntry, JournalLine, Transaction};
 use models::LedgerAction;
 use rust_decimal::Decimal;
+use tracing::debug;
 use uuid::Uuid;
 
-use crate::common::money::{Currency, Money};
+use crate::common::money::Money;
 use crate::domain::*;
 use crate::service::{BankAccountServices, MockLedgerServices};
 use crate::{common, event_sourcing::*};
@@ -65,10 +66,15 @@ impl Aggregate for models::BankAccount {
                 }])
             }
             BankAccountCommand::ApproveAccount { id, ledger_id } => {
+                let bank_account = match services.services.get_bank_account(id).await {
+                    Ok(account) => account,
+                    Err(_) => return Err("account not found".into()),
+                };
                 // Initialize ledger while account being approved
                 let command = LedgerCommand::Init {
                     id: ledger_id,
                     account_id: id,
+                    amount: Money::new(Decimal::ZERO, bank_account.currency),
                 };
                 if services
                     .services
@@ -167,15 +173,18 @@ impl Aggregate for models::BankAccount {
                             .await
                             .is_err()
                         {
+                            if (services.services.fail_transaction(transaction_id).await).is_err() {
+                                return Err("transaction update failed".into());
+                            }
                             return Err("ledger write failed".into());
                         };
                         if (services.services.complete_transaction(transaction_id).await).is_err() {
-                            return Err("transaction complete failed".into());
+                            return Err("transaction update failed".into());
                         }
 
                         Ok(vec![])
                     }
-                    Err(_) => Err("transaction write failed".into()),
+                    Err(_) => Err("transaction update failed".into()),
                 }
             }
             BankAccountCommand::Withdrawl { amount } => {
@@ -253,16 +262,19 @@ impl Aggregate for models::BankAccount {
                             .await
                             .is_err()
                         {
+                            if (services.services.fail_transaction(transaction_id).await).is_err() {
+                                return Err("transaction update failed".into());
+                            }
                             return Err("ledger write failed".into());
                         };
 
                         if (services.services.complete_transaction(transaction_id).await).is_err() {
-                            return Err("transaction complete failed".into());
+                            return Err("transaction update failed".into());
                         }
 
                         Ok(vec![])
                     }
-                    Err(_) => Err("transaction write failed".into()),
+                    Err(_) => Err("transaction update failed".into()),
                 }
             }
         }
@@ -322,12 +334,17 @@ impl Aggregate for models::Ledger {
         _services: &Self::Services,
     ) -> Result<Vec<Self::Event>, Self::Error> {
         match command {
-            LedgerCommand::Init { id, account_id } => {
+            LedgerCommand::Init {
+                id,
+                account_id,
+                amount,
+            } => {
                 let mut base_event = BaseEvent::default();
                 base_event.set_aggregate_id(id);
                 base_event.set_parent_id(account_id);
                 base_event.set_created_at(chrono::Utc::now());
                 Ok(vec![events::LedgerEvent::LedgerInitiated {
+                    amount,
                     base_event: base_event.clone(),
                 }])
             }
@@ -346,16 +363,16 @@ impl Aggregate for models::Ledger {
                         amount,
                         transaction_id: transaction_id.to_string(),
                         transaction_type: "debit_hold".to_string(),
-                        available_delta: Money::new(Decimal::ZERO - amount.amount, Currency::USD),
-                        pending_delta: Money::new(amount.amount, Currency::USD),
+                        available_delta: Money::new(Decimal::ZERO - amount.amount, amount.currency),
+                        pending_delta: Money::new(amount.amount, amount.currency),
                         base_event: base_event.clone(),
                     },
                     events::LedgerEvent::LedgerUpdated {
                         amount,
                         transaction_id: transaction_id.to_string(),
                         transaction_type: "debit_release".to_string(),
-                        available_delta: Money::new(Decimal::ZERO, Currency::USD),
-                        pending_delta: Money::new(Decimal::ZERO - amount.amount, Currency::USD),
+                        available_delta: Money::new(Decimal::ZERO, amount.currency),
+                        pending_delta: Money::new(Decimal::ZERO - amount.amount, amount.currency),
                         base_event,
                     },
                 ])
@@ -375,16 +392,16 @@ impl Aggregate for models::Ledger {
                         amount,
                         transaction_id: transaction_id.to_string(),
                         transaction_type: "credit_hold".to_string(),
-                        available_delta: Money::new(Decimal::ZERO, Currency::USD),
-                        pending_delta: Money::new(amount.amount, Currency::USD),
+                        available_delta: Money::new(Decimal::ZERO, amount.currency),
+                        pending_delta: Money::new(amount.amount, amount.currency),
                         base_event: base_event.clone(),
                     },
                     events::LedgerEvent::LedgerUpdated {
                         amount,
                         transaction_id: transaction_id.to_string(),
                         transaction_type: "credit_release".to_string(),
-                        available_delta: Money::new(amount.amount, Currency::USD),
-                        pending_delta: Money::new(Decimal::ZERO - amount.amount, Currency::USD),
+                        available_delta: Money::new(amount.amount, amount.currency),
+                        pending_delta: Money::new(Decimal::ZERO - amount.amount, amount.currency),
                         base_event,
                     },
                 ])
@@ -394,12 +411,12 @@ impl Aggregate for models::Ledger {
 
     fn apply(&mut self, event: Self::Event) {
         match event {
-            events::LedgerEvent::LedgerInitiated { base_event } => {
+            events::LedgerEvent::LedgerInitiated { base_event, amount } => {
                 self.id = base_event.get_aggregate_id();
                 self.account_id = base_event.get_parent_id();
-                self.amount = Money::new(Decimal::ZERO, Currency::USD);
-                self.available = Money::new(Decimal::ZERO, Currency::USD);
-                self.pending = Money::new(Decimal::ZERO, Currency::USD);
+                self.amount = amount;
+                self.available = amount;
+                self.pending = Money::new(Decimal::ZERO, amount.currency);
                 self.timestamp = base_event.get_created_at();
             }
             events::LedgerEvent::LedgerUpdated {
@@ -412,6 +429,7 @@ impl Aggregate for models::Ledger {
             } => {
                 self.id = base_event.get_aggregate_id();
                 self.amount = amount;
+                debug!("{:?} {:?}", self.available, available_delta);
                 self.available = self.available + available_delta;
                 self.pending = self.pending + pending_delta;
                 self.account_id = base_event.get_parent_id();
@@ -445,7 +463,9 @@ mod aggregate_tests {
         event::{BaseEvent, Event},
         events::{BankAccountEvent, LedgerEvent},
         finance::{JournalEntry, JournalLine, Transaction},
-        models::{BankAccount, BankAccountKind, BankAccountType, Ledger, LedgerAction},
+        models::{
+            BankAccount, BankAccountKind, BankAccountType, BankAccountView, Ledger, LedgerAction,
+        },
     };
 
     // A test framework that will apply our events and command
@@ -550,9 +570,11 @@ mod aggregate_tests {
         vec![],
         LedgerCommand::Init {
             id: *LEDGER_ID,
-            account_id: *ACCOUNT_ID
+            account_id: *ACCOUNT_ID,
+            amount: Money::new(dec!(1000.0), Currency::USD),
         },
         vec![LedgerEvent::LedgerInitiated {
+            amount: Money::new(dec!(1000.0), Currency::USD),
             base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID)
         }]
     );
@@ -581,6 +603,7 @@ mod aggregate_tests {
     ledger_test_case!(
         test_ledger_deposit,
         vec![LedgerEvent::LedgerInitiated {
+            amount: Money::new(dec!(1000.0), Currency::USD),
             base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID)
         }],
         LedgerCommand::Credit {
@@ -634,6 +657,7 @@ mod aggregate_tests {
         test_ledger_withdrawl,
         vec![
             LedgerEvent::LedgerInitiated {
+                amount: Money::new(dec!(1000.0), Currency::USD),
                 base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID)
             },
             LedgerEvent::LedgerUpdated {
@@ -723,6 +747,10 @@ mod aggregate_tests {
             Ok(())
         }
 
+        async fn fail_transaction(&self, _transaction_id: Uuid) -> Result<(), anyhow::Error> {
+            Ok(())
+        }
+
         async fn create_transaction_with_journal(
             &self,
             _transaction: Transaction,
@@ -757,6 +785,13 @@ mod aggregate_tests {
             _kind: BankAccountKind,
         ) -> Result<bool, anyhow::Error> {
             Ok(true)
+        }
+
+        async fn get_bank_account(
+            &self,
+            _account_id: Uuid,
+        ) -> Result<BankAccountView, anyhow::Error> {
+            Ok(BankAccountView::default())
         }
     }
 }
