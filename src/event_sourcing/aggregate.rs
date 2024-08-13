@@ -39,6 +39,20 @@ impl Aggregate for models::BankAccount {
                 user_id,
                 currency,
             } => {
+                // Validate if can open bank account
+                match services
+                    .services
+                    .validate_account_creation(id, user_id.clone(), currency, kind)
+                    .await
+                {
+                    Ok(valid) => {
+                        if !valid {
+                            return Err("validation failed".into());
+                        }
+                    }
+                    Err(_) => return Err("validation failed".into()),
+                };
+
                 let mut base_event = BaseEvent::default();
                 base_event.set_aggregate_id(id);
                 base_event.set_created_at(chrono::Utc::now());
@@ -733,6 +747,16 @@ mod aggregate_tests {
 
         async fn get_house_account(&self, _currency: Currency) -> Result<String, anyhow::Error> {
             Ok(Uuid::new_v4().to_string())
+        }
+
+        async fn validate_account_creation(
+            &self,
+            _account_id: Uuid,
+            _user_id: String,
+            _currency: Currency,
+            _kind: BankAccountKind,
+        ) -> Result<bool, anyhow::Error> {
+            Ok(true)
         }
     }
 }

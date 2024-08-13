@@ -1,6 +1,6 @@
 use crate::common::money::Currency;
 use crate::domain::finance::{JournalEntry, JournalLine, Transaction};
-use crate::domain::models::HouseAccount;
+use crate::domain::models::{BankAccountKind, HouseAccount};
 
 use super::adapter::DatabaseClient;
 use async_trait::async_trait;
@@ -127,5 +127,34 @@ impl DatabaseClient for PgPool {
         .ledger_id;
 
         Ok(house_account_id)
+    }
+
+    async fn validate_bank_account_exists(
+        &self,
+        user_id: String,
+        currency: Currency,
+        kind: BankAccountKind,
+    ) -> Result<bool, Error> {
+        let count = sqlx::query!(
+            r#"
+            select count(1) as total from bank_account_views
+            where payload->>'user_id'=$1
+            and payload->>'currency'=$2
+            and payload->>'kind'=$3
+            and payload->>'status' IN ('Pending', 'Approved', 'Freeze');
+            "#,
+            user_id,
+            currency.to_string(),
+            kind.to_string()
+        )
+        .fetch_one(self)
+        .await?
+        .total;
+
+        if count.map_or(false, |value| value != 0) {
+            Ok(false)
+        } else {
+            Ok(true)
+        }
     }
 }

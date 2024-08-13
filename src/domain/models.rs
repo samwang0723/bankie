@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use uuid::Uuid;
 
 use crate::common::money::{Currency, Money};
@@ -27,6 +28,16 @@ pub enum BankAccountKind {
     Checking,
     Interest,
     Yield,
+}
+
+impl fmt::Display for BankAccountKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BankAccountKind::Checking => write!(f, "Checking"),
+            BankAccountKind::Interest => write!(f, "Interest"),
+            BankAccountKind::Yield => write!(f, "Yield"),
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]

@@ -11,7 +11,7 @@ use crate::{
     common::money::{Currency, Money},
     domain::{
         finance::{JournalEntry, JournalLine, Transaction},
-        models::{BankAccountStatus, LedgerAction},
+        models::{BankAccountKind, BankAccountStatus, LedgerAction},
     },
     event_sourcing::command::LedgerCommand,
     repository::adapter::Adapter,
@@ -48,6 +48,13 @@ pub trait BankAccountApi: Sync + Send {
         action: LedgerAction,
         amount: Money,
     ) -> Result<(), anyhow::Error>;
+    async fn validate_account_creation(
+        &self,
+        account_id: Uuid,
+        user_id: String,
+        currency: Currency,
+        kind: BankAccountKind,
+    ) -> Result<bool, anyhow::Error>;
 }
 
 pub struct BankAccountLogic {
@@ -133,5 +140,25 @@ impl BankAccountApi for BankAccountLogic {
             .get_house_account(currency)
             .await
             .map_err(|e| anyhow!("Failed to get house account: {}", e))
+    }
+
+    async fn validate_account_creation(
+        &self,
+        account_id: Uuid,
+        user_id: String,
+        currency: Currency,
+        kind: BankAccountKind,
+    ) -> Result<bool, anyhow::Error> {
+        match self.bank_account.query.load(&account_id.to_string()).await {
+            Ok(view) => match view {
+                None => self
+                    .finance
+                    .validate_bank_account_exists(user_id, currency, kind)
+                    .await
+                    .map_err(|e| anyhow!("Failed to validate: {}", e)),
+                Some(_) => Err(anyhow!("Account duplicated")),
+            },
+            Err(err) => Err(err.into()),
+        }
     }
 }

@@ -6,7 +6,7 @@ use crate::{
     common::money::Currency,
     domain::{
         finance::{JournalEntry, JournalLine, Transaction},
-        models::HouseAccount,
+        models::{BankAccountKind, HouseAccount},
     },
 };
 
@@ -21,6 +21,12 @@ pub trait DatabaseClient {
     ) -> Result<Uuid, Error>;
     async fn create_house_account(&self, account: HouseAccount) -> Result<(), Error>;
     async fn get_house_account(&self, currency: Currency) -> Result<String, Error>;
+    async fn validate_bank_account_exists(
+        &self,
+        user_id: String,
+        currency: Currency,
+        kind: BankAccountKind,
+    ) -> Result<bool, Error>;
 }
 
 pub struct Adapter<C: DatabaseClient + Send + Sync> {
@@ -53,5 +59,16 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
 
     pub async fn get_house_account(&self, currency: Currency) -> Result<String, Error> {
         self.client.get_house_account(currency).await
+    }
+
+    pub async fn validate_bank_account_exists(
+        &self,
+        user_id: String,
+        currency: Currency,
+        kind: BankAccountKind,
+    ) -> Result<bool, Error> {
+        self.client
+            .validate_bank_account_exists(user_id, currency, kind)
+            .await
     }
 }
