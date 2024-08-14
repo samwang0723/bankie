@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT ledger_id\n            FROM house_accounts\n            WHERE currency = $1\n            AND status='active'\n            LIMIT 1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ledger_id",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bpchar"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7f62062cac1e308ac1ec0fb57f0ec69ab781ccd20d1a35fca45c4258b3e33848"
+}

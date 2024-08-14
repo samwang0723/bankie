@@ -6,12 +6,13 @@ use crate::{
     event_sourcing::event::BaseEvent,
 };
 
-use super::models::BankAccountType;
+use super::models::{BankAccountKind, BankAccountType};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum BankAccountEvent {
     AccountOpened {
         account_type: BankAccountType,
+        kind: BankAccountKind,
         currency: Currency,
         user_id: String,
         base_event: BaseEvent,
@@ -51,6 +52,7 @@ impl DomainEvent for BankAccountEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum LedgerEvent {
     LedgerInitiated {
+        amount: Money,
         base_event: BaseEvent,
     },
     LedgerUpdated {

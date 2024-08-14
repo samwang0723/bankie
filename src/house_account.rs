@@ -4,22 +4,22 @@ use axum::extract::{FromRequest, Request};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use std::collections::HashMap;
-use uuid::Uuid;
 
-use crate::event_sourcing::command::BankAccountCommand;
+use crate::common::account::generate_bank_account_number;
+use crate::domain::models::HouseAccount;
 
 // This is a custom Axum extension that builds metadata from the inbound request
-// and parses and deserializes the body as the command payload.
-pub struct CommandExtractor(pub HashMap<String, String>, pub BankAccountCommand);
+// and parses and deserializes the body as the house account payload.
+pub struct HouseAccountExtractor(pub HashMap<String, String>, pub HouseAccount);
 
 const USER_AGENT_HDR: &str = "User-Agent";
 
 #[async_trait]
-impl<S> FromRequest<S> for CommandExtractor
+impl<S> FromRequest<S> for HouseAccountExtractor
 where
     S: Send + Sync,
 {
-    type Rejection = CommandExtractionError;
+    type Rejection = HouseAccountExtractionError;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         // Here we are including the current date/time, the uri that was called and the user-agent
@@ -35,36 +35,32 @@ where
 
         // Parse and deserialize the request body as the command payload.
         let body = Bytes::from_request(req, state).await?;
-        let mut command: BankAccountCommand = serde_json::from_slice(body.as_ref())?;
-
-        // Generate ledger_id instead of bringing in from external
-        if let BankAccountCommand::ApproveAccount { id: _, ledger_id } = &mut command {
-            *ledger_id = Uuid::new_v4();
-        }
-        Ok(CommandExtractor(metadata, command))
+        let mut house_account: HouseAccount = serde_json::from_slice(body.as_ref())?;
+        house_account.account_number = generate_bank_account_number(10);
+        Ok(HouseAccountExtractor(metadata, house_account))
     }
 }
 
-pub struct CommandExtractionError;
+pub struct HouseAccountExtractionError;
 
-impl IntoResponse for CommandExtractionError {
+impl IntoResponse for HouseAccountExtractionError {
     fn into_response(self) -> Response {
         (
             StatusCode::BAD_REQUEST,
-            "command could not be read".to_string(),
+            "house_account could not be read".to_string(),
         )
             .into_response()
     }
 }
 
-impl From<axum::extract::rejection::BytesRejection> for CommandExtractionError {
+impl From<axum::extract::rejection::BytesRejection> for HouseAccountExtractionError {
     fn from(_: axum::extract::rejection::BytesRejection) -> Self {
-        CommandExtractionError
+        HouseAccountExtractionError
     }
 }
 
-impl From<serde_json::Error> for CommandExtractionError {
+impl From<serde_json::Error> for HouseAccountExtractionError {
     fn from(_: serde_json::Error) -> Self {
-        CommandExtractionError
+        HouseAccountExtractionError
     }
 }

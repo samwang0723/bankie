@@ -8,10 +8,10 @@ use tracing::error;
 use uuid::Uuid;
 
 use crate::{
-    common::money::Money,
+    common::money::{Currency, Money},
     domain::{
         finance::{JournalEntry, JournalLine, Transaction},
-        models::{BankAccountStatus, LedgerAction},
+        models::{BankAccountKind, BankAccountStatus, BankAccountView, LedgerAction},
     },
     event_sourcing::command::LedgerCommand,
     repository::adapter::Adapter,
@@ -33,7 +33,9 @@ impl BankAccountServices {
 // External services must be called during the processing of the command.
 #[async_trait]
 pub trait BankAccountApi: Sync + Send {
+    async fn get_house_account(&self, currency: Currency) -> Result<String, anyhow::Error>;
     async fn note_ledger(&self, id: String, command: LedgerCommand) -> Result<(), anyhow::Error>;
+    async fn fail_transaction(&self, transaction_id: Uuid) -> Result<(), anyhow::Error>;
     async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), anyhow::Error>;
     async fn create_transaction_with_journal(
         &self,
@@ -47,6 +49,14 @@ pub trait BankAccountApi: Sync + Send {
         action: LedgerAction,
         amount: Money,
     ) -> Result<(), anyhow::Error>;
+    async fn validate_account_creation(
+        &self,
+        account_id: Uuid,
+        user_id: String,
+        currency: Currency,
+        kind: BankAccountKind,
+    ) -> Result<bool, anyhow::Error>;
+    async fn get_bank_account(&self, account_id: Uuid) -> Result<BankAccountView, anyhow::Error>;
 }
 
 pub struct BankAccountLogic {
@@ -66,11 +76,18 @@ impl BankAccountApi for BankAccountLogic {
             .map_err(|e| anyhow!("Failed to write ledger: {}", e))
     }
 
+    async fn fail_transaction(&self, transaction_id: Uuid) -> Result<(), anyhow::Error> {
+        self.finance
+            .complete_transaction(transaction_id)
+            .await
+            .map_err(|e| anyhow!("Failed to update transaction: {}", e))
+    }
+
     async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), anyhow::Error> {
         self.finance
             .complete_transaction(transaction_id)
             .await
-            .map_err(|e| anyhow!("Failed to complete transaction: {}", e))
+            .map_err(|e| anyhow!("Failed to update transaction: {}", e))
     }
 
     async fn create_transaction_with_journal(
@@ -125,5 +142,42 @@ impl BankAccountApi for BankAccountLogic {
         };
 
         Ok(())
+    }
+
+    async fn get_house_account(&self, currency: Currency) -> Result<String, anyhow::Error> {
+        self.finance
+            .get_house_account(currency)
+            .await
+            .map_err(|e| anyhow!("Failed to get house account: {}", e))
+    }
+
+    async fn validate_account_creation(
+        &self,
+        account_id: Uuid,
+        user_id: String,
+        currency: Currency,
+        kind: BankAccountKind,
+    ) -> Result<bool, anyhow::Error> {
+        match self.bank_account.query.load(&account_id.to_string()).await {
+            Ok(view) => match view {
+                None => self
+                    .finance
+                    .validate_bank_account_exists(user_id, currency, kind)
+                    .await
+                    .map_err(|e| anyhow!("Failed to validate: {}", e)),
+                Some(_) => Err(anyhow!("Account duplicated")),
+            },
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    async fn get_bank_account(&self, account_id: Uuid) -> Result<BankAccountView, anyhow::Error> {
+        match self.bank_account.query.load(&account_id.to_string()).await {
+            Ok(view) => match view {
+                None => Err(anyhow!("Account not found")),
+                Some(account_view) => Ok(account_view),
+            },
+            Err(err) => Err(err.into()),
+        }
     }
 }

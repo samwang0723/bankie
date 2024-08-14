@@ -2,8 +2,10 @@ use async_trait::async_trait;
 use cqrs_es::persist::GenericQuery;
 use cqrs_es::{EventEnvelope, Query, View};
 use postgres_es::PostgresViewRepository;
+use rust_decimal::Decimal;
 use tracing::trace;
 
+use crate::common::money::Money;
 use crate::domain::events::{BankAccountEvent, LedgerEvent};
 use crate::domain::models::{BankAccount, BankAccountStatus, BankAccountView, Ledger, LedgerView};
 use crate::event_sourcing::event::Event;
@@ -37,6 +39,7 @@ impl View<BankAccount> for BankAccountView {
             BankAccountEvent::AccountOpened {
                 base_event,
                 account_type,
+                kind,
                 user_id,
                 currency,
             } => {
@@ -45,6 +48,7 @@ impl View<BankAccount> for BankAccountView {
                 self.created_at = base_event.get_created_at();
                 self.updated_at = base_event.get_created_at();
                 self.account_type = *account_type;
+                self.kind = *kind;
                 self.currency = *currency;
                 self.user_id = user_id.clone();
             }
@@ -83,11 +87,14 @@ pub type LedgerQuery = GenericQuery<PostgresViewRepository<LedgerView, Ledger>, 
 impl View<Ledger> for LedgerView {
     fn update(&mut self, event: &EventEnvelope<Ledger>) {
         match &event.payload {
-            LedgerEvent::LedgerInitiated { base_event } => {
+            LedgerEvent::LedgerInitiated { base_event, amount } => {
                 self.id = base_event.get_aggregate_id();
                 self.account_id = base_event.get_parent_id();
                 self.created_at = base_event.get_created_at();
                 self.updated_at = base_event.get_created_at();
+                self.available = *amount;
+                self.pending = Money::new(Decimal::ZERO, amount.currency);
+                self.current = *amount;
             }
             LedgerEvent::LedgerUpdated {
                 amount: _,

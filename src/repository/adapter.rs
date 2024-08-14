@@ -2,10 +2,17 @@ use async_trait::async_trait;
 use sqlx::Error;
 use uuid::Uuid;
 
-use crate::domain::finance::{JournalEntry, JournalLine, Transaction};
+use crate::{
+    common::money::Currency,
+    domain::{
+        finance::{JournalEntry, JournalLine, Transaction},
+        models::{BankAccountKind, HouseAccount},
+    },
+};
 
 #[async_trait]
 pub trait DatabaseClient {
+    async fn fail_transaction(&self, transaction_id: Uuid) -> Result<(), Error>;
     async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), Error>;
     async fn create_transaction_with_journal(
         &self,
@@ -13,6 +20,14 @@ pub trait DatabaseClient {
         journal_entry: JournalEntry,
         journal_lines: Vec<JournalLine>,
     ) -> Result<Uuid, Error>;
+    async fn create_house_account(&self, account: HouseAccount) -> Result<(), Error>;
+    async fn get_house_account(&self, currency: Currency) -> Result<String, Error>;
+    async fn validate_bank_account_exists(
+        &self,
+        user_id: String,
+        currency: Currency,
+        kind: BankAccountKind,
+    ) -> Result<bool, Error>;
 }
 
 pub struct Adapter<C: DatabaseClient + Send + Sync> {
@@ -22,6 +37,10 @@ pub struct Adapter<C: DatabaseClient + Send + Sync> {
 impl<C: DatabaseClient + Send + Sync> Adapter<C> {
     pub fn new(client: C) -> Self {
         Adapter { client }
+    }
+
+    pub async fn fail_transaction(&self, transaction_id: Uuid) -> Result<(), Error> {
+        self.client.fail_transaction(transaction_id).await
     }
 
     pub async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), Error> {
@@ -36,6 +55,25 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
     ) -> Result<Uuid, Error> {
         self.client
             .create_transaction_with_journal(transaction, journal_entry, journal_lines)
+            .await
+    }
+
+    pub async fn create_house_account(&self, account: HouseAccount) -> Result<(), Error> {
+        self.client.create_house_account(account).await
+    }
+
+    pub async fn get_house_account(&self, currency: Currency) -> Result<String, Error> {
+        self.client.get_house_account(currency).await
+    }
+
+    pub async fn validate_bank_account_exists(
+        &self,
+        user_id: String,
+        currency: Currency,
+        kind: BankAccountKind,
+    ) -> Result<bool, Error> {
+        self.client
+            .validate_bank_account_exists(user_id, currency, kind)
             .await
     }
 }
