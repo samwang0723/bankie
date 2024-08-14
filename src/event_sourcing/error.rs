@@ -1,3 +1,4 @@
+use anyhow::Error;
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug)]
@@ -14,6 +15,12 @@ impl std::error::Error for BankAccountError {}
 impl From<&str> for BankAccountError {
     fn from(message: &str) -> Self {
         BankAccountError(message.to_string())
+    }
+}
+
+impl From<Error> for BankAccountError {
+    fn from(err: Error) -> Self {
+        BankAccountError(err.to_string())
     }
 }
 

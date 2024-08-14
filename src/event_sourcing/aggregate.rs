@@ -47,10 +47,10 @@ impl Aggregate for models::BankAccount {
                 {
                     Ok(valid) => {
                         if !valid {
-                            return Err("validation failed".into());
+                            return Err("Validation failed".into());
                         }
                     }
-                    Err(_) => return Err("validation failed".into()),
+                    Err(err) => return Err(err.into()),
                 };
 
                 let mut base_event = BaseEvent::default();

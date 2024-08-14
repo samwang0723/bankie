@@ -134,6 +134,7 @@ impl DatabaseClient for PgPool {
             FROM house_accounts
             WHERE currency = $1
             AND status='active'
+            AND account_type='House'
             LIMIT 1
             "#,
             currency.to_string()
