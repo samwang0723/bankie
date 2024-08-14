@@ -1,2 +1,2 @@
 ALTER TABLE house_accounts
-ADD CONSTRAINT unique_currency_status UNIQUE (currency, status);
+ADD CONSTRAINT unique_account_type_currency_status UNIQUE (account_type, currency, status);

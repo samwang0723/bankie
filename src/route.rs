@@ -1,4 +1,3 @@
-use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::command::CommandExtractor;
@@ -97,7 +96,6 @@ pub async fn ledger_query_handler(
 
 pub async fn house_account_create_handler(
     Extension(tenant_id): Extension<i32>,
-    Path(id): Path<String>,
     State(state): State<ApplicationState>,
     HouseAccountExtractor(_metadata, house_account): HouseAccountExtractor,
 ) -> Response {
@@ -110,7 +108,7 @@ pub async fn house_account_create_handler(
             &ledger_id.to_string(),
             LedgerCommand::Init {
                 id: ledger_id,
-                account_id: Uuid::from_str(&id).unwrap(),
+                account_id: house_account.id,
                 amount: Money::new(Decimal::ZERO, house_account.currency),
             },
         )
