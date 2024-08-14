@@ -9,6 +9,7 @@ use crate::{
 #[derive(Debug, Serialize, Deserialize)]
 pub enum BankAccountCommand {
     OpenAccount {
+        #[serde(skip_deserializing)]
         id: Uuid,
         account_type: BankAccountType,
         kind: BankAccountKind,
@@ -21,9 +22,11 @@ pub enum BankAccountCommand {
         ledger_id: Uuid,
     },
     Deposit {
+        id: Uuid,
         amount: Money,
     },
     Withdrawl {
+        id: Uuid,
         amount: Money,
     },
 }

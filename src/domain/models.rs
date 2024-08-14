@@ -61,6 +61,7 @@ pub struct BankAccount {
 
 #[derive(Serialize, Default, Deserialize)]
 pub struct HouseAccount {
+    #[serde(skip_deserializing)]
     pub id: Uuid,
     pub status: String,
     #[serde(skip_deserializing)]

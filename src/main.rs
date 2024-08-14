@@ -66,10 +66,8 @@ async fn main() {
             // distinguishes whether the call is a command or a query.
             let comression_layer: CompressionLayer = CompressionLayer::new();
             let router = Router::new()
-                .route(
-                    "/v1/bank_account/:id",
-                    get(bank_account_query_handler).post(bank_account_command_handler),
-                )
+                .route("/v1/bank_account/:id", get(bank_account_query_handler))
+                .route("/v1/bank_account", post(bank_account_command_handler))
                 .route("/v1/ledger/:id", get(ledger_query_handler))
                 .route("/v1/house_account/:id", post(house_account_create_handler))
                 .layer(middleware::from_fn(authorize))

@@ -4,6 +4,7 @@ use axum::extract::{FromRequest, Request};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use std::collections::HashMap;
+use uuid::Uuid;
 
 use crate::common::account::generate_bank_account_number;
 use crate::domain::models::HouseAccount;
@@ -36,6 +37,7 @@ where
         // Parse and deserialize the request body as the command payload.
         let body = Bytes::from_request(req, state).await?;
         let mut house_account: HouseAccount = serde_json::from_slice(body.as_ref())?;
+        house_account.id = Uuid::new_v4();
         house_account.account_number = generate_bank_account_number(10);
         Ok(HouseAccountExtractor(metadata, house_account))
     }

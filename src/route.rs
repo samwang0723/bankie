@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::command::CommandExtractor;
 use crate::common::money::Money;
-use crate::event_sourcing::command::LedgerCommand;
+use crate::event_sourcing::command::{BankAccountCommand, LedgerCommand};
 use crate::house_account::HouseAccountExtractor;
 use crate::repository::adapter::DatabaseClient;
 use crate::state::ApplicationState;
@@ -15,6 +15,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use cqrs_es::persist::ViewRepository;
 use rust_decimal::Decimal;
+use serde_json::json;
 use tracing::error;
 use uuid::Uuid;
 
@@ -29,7 +30,11 @@ pub async fn bank_account_query_handler(
         Ok(view) => view,
         Err(err) => {
             error!("Error: {:#?}, with tenant_id: {}\n", err, tenant_id);
-            return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": err.to_string()})),
+            )
+                .into_response();
         }
     };
     match view {
@@ -41,20 +46,29 @@ pub async fn bank_account_query_handler(
 // Serves as our command endpoint to make changes in a `BankAccount` aggregate.
 pub async fn bank_account_command_handler(
     Extension(tenant_id): Extension<i32>,
-    Path(id): Path<String>,
     State(state): State<ApplicationState>,
     CommandExtractor(metadata, command): CommandExtractor,
 ) -> Response {
+    let result = match &command {
+        BankAccountCommand::OpenAccount { id, .. } => (StatusCode::CREATED, id.to_string()),
+        BankAccountCommand::ApproveAccount { id, .. } => (StatusCode::OK, id.to_string()),
+        BankAccountCommand::Deposit { id, .. } => (StatusCode::OK, id.to_string()),
+        BankAccountCommand::Withdrawl { id, .. } => (StatusCode::OK, id.to_string()),
+    };
     match state
         .bank_account
         .cqrs
-        .execute_with_metadata(&id, command, metadata)
+        .execute_with_metadata(&result.1, command, metadata)
         .await
     {
-        Ok(_) => StatusCode::CREATED.into_response(),
+        Ok(_) => (result.0, Json(json!({"id": result.1}))).into_response(),
         Err(err) => {
             error!("Error: {:#?}, with tenant_id: {}\n", err, tenant_id);
-            (StatusCode::BAD_REQUEST, err.to_string()).into_response()
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": err.to_string()})),
+            )
+                .into_response()
         }
     }
 }
@@ -68,7 +82,11 @@ pub async fn ledger_query_handler(
         Ok(view) => view,
         Err(err) => {
             error!("Error: {:#?}, with tenant_id: {}\n", err, tenant_id);
-            return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": err.to_string()})),
+            )
+                .into_response();
         }
     };
     match view {
@@ -102,17 +120,28 @@ pub async fn house_account_create_handler(
             let mut house_account = house_account;
             house_account.ledger_id = ledger_id.to_string();
 
+            let house_account_id = house_account.id.to_string();
             match client.create_house_account(house_account).await {
-                Ok(_) => StatusCode::CREATED.into_response(),
+                Ok(_) => {
+                    (StatusCode::CREATED, Json(json!({ "id": house_account_id}))).into_response()
+                }
                 Err(err) => {
                     error!("Error: {:#?}, with tenant_id: {}\n", err, tenant_id);
-                    (StatusCode::BAD_REQUEST, err.to_string()).into_response()
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({ "error": err.to_string()})),
+                    )
+                        .into_response()
                 }
             }
         }
         Err(err) => {
             error!("Error: {:#?}, with tenant_id: {}\n", err, tenant_id);
-            (StatusCode::BAD_REQUEST, err.to_string()).into_response()
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": err.to_string()})),
+            )
+                .into_response()
         }
     }
 }

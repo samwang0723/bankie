@@ -93,7 +93,7 @@ impl Aggregate for models::BankAccount {
                     base_event,
                 }])
             }
-            BankAccountCommand::Deposit { amount } => {
+            BankAccountCommand::Deposit { id: _, amount } => {
                 let house_account_ledger =
                     match services.services.get_house_account(amount.currency).await {
                         Ok(id) => id,
@@ -186,7 +186,7 @@ impl Aggregate for models::BankAccount {
                     Err(_) => Err("transaction update failed".into()),
                 }
             }
-            BankAccountCommand::Withdrawl { amount } => {
+            BankAccountCommand::Withdrawl { id: _, amount } => {
                 let house_account_ledger =
                     match services.services.get_house_account(amount.currency).await {
                         Ok(id) => id,
@@ -593,6 +593,7 @@ mod aggregate_tests {
             }
         ],
         BankAccountCommand::Deposit {
+            id: *ACCOUNT_ID,
             amount: Money::new(dec!(1000.0), Currency::USD)
         },
         vec![]
@@ -646,6 +647,7 @@ mod aggregate_tests {
             }
         ],
         BankAccountCommand::Withdrawl {
+            id: *ACCOUNT_ID,
             amount: Money::new(dec!(500.0), Currency::USD)
         },
         vec![]

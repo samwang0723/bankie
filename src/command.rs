@@ -41,6 +41,10 @@ where
         if let BankAccountCommand::ApproveAccount { id: _, ledger_id } = &mut command {
             *ledger_id = Uuid::new_v4();
         }
+        // Generate account id instead of bringing in from external
+        if let BankAccountCommand::OpenAccount { id, .. } = &mut command {
+            *id = Uuid::new_v4();
+        }
         Ok(CommandExtractor(metadata, command))
     }
 }
