@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::sync::Arc;
 
 use crate::command::CommandExtractor;
@@ -15,25 +16,19 @@ use axum::Json;
 use cqrs_es::persist::ViewRepository;
 use rust_decimal::Decimal;
 use serde_json::json;
-use tracing::error;
 use uuid::Uuid;
 
 // Serves as our query endpoint to respond with the materialized `BankAccountView`
 // for the requested account.
 pub async fn bank_account_query_handler(
-    Extension(tenant_id): Extension<i32>,
+    Extension(_tenant_id): Extension<i32>,
     Path(id): Path<String>,
     State(state): State<ApplicationState>,
 ) -> Response {
     let view = match state.bank_account.query.load(&id).await {
         Ok(view) => view,
         Err(err) => {
-            error!("Error: {:#?}, with tenant_id: {}\n", err, tenant_id);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": err.to_string()})),
-            )
-                .into_response();
+            return handle_error(err, StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
     match view {
@@ -44,7 +39,7 @@ pub async fn bank_account_query_handler(
 
 // Serves as our command endpoint to make changes in a `BankAccount` aggregate.
 pub async fn bank_account_command_handler(
-    Extension(tenant_id): Extension<i32>,
+    Extension(_tenant_id): Extension<i32>,
     State(state): State<ApplicationState>,
     CommandExtractor(metadata, command): CommandExtractor,
 ) -> Response {
@@ -61,31 +56,19 @@ pub async fn bank_account_command_handler(
         .await
     {
         Ok(_) => (result.0, Json(json!({"id": result.1}))).into_response(),
-        Err(err) => {
-            error!("Error: {:#?}, with tenant_id: {}\n", err, tenant_id);
-            (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": err.to_string()})),
-            )
-                .into_response()
-        }
+        Err(err) => handle_error(err, StatusCode::BAD_REQUEST),
     }
 }
 
 pub async fn ledger_query_handler(
-    Extension(tenant_id): Extension<i32>,
+    Extension(_tenant_id): Extension<i32>,
     Path(id): Path<String>,
     State(state): State<ApplicationState>,
 ) -> Response {
     let view = match state.ledger.query.load(&id).await {
         Ok(view) => view,
         Err(err) => {
-            error!("Error: {:#?}, with tenant_id: {}\n", err, tenant_id);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": err.to_string()})),
-            )
-                .into_response();
+            return handle_error(err, StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
     match view {
@@ -95,13 +78,14 @@ pub async fn ledger_query_handler(
 }
 
 pub async fn house_account_create_handler(
-    Extension(tenant_id): Extension<i32>,
+    Extension(_tenant_id): Extension<i32>,
     State(state): State<ApplicationState>,
-    HouseAccountExtractor(_metadata, house_account): HouseAccountExtractor,
+    HouseAccountExtractor(_metadata, mut house_account): HouseAccountExtractor,
 ) -> Response {
     let client = Arc::clone(&state.pool);
     let ledger_id = Uuid::new_v4();
-    match state
+
+    if let Err(err) = state
         .ledger
         .cqrs
         .execute(
@@ -114,32 +98,18 @@ pub async fn house_account_create_handler(
         )
         .await
     {
-        Ok(_) => {
-            let mut house_account = house_account;
-            house_account.ledger_id = ledger_id.to_string();
-
-            let house_account_id = house_account.id.to_string();
-            match client.create_house_account(house_account).await {
-                Ok(_) => {
-                    (StatusCode::CREATED, Json(json!({ "id": house_account_id}))).into_response()
-                }
-                Err(err) => {
-                    error!("Error: {:#?}, with tenant_id: {}\n", err, tenant_id);
-                    (
-                        StatusCode::BAD_REQUEST,
-                        Json(json!({ "error": err.to_string()})),
-                    )
-                        .into_response()
-                }
-            }
-        }
-        Err(err) => {
-            error!("Error: {:#?}, with tenant_id: {}\n", err, tenant_id);
-            (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": err.to_string()})),
-            )
-                .into_response()
-        }
+        return handle_error(err, StatusCode::BAD_REQUEST);
     }
+
+    house_account.ledger_id = ledger_id.to_string();
+    let house_account_id = house_account.id.to_string();
+    if let Err(err) = client.create_house_account(house_account).await {
+        return handle_error(err, StatusCode::BAD_REQUEST);
+    }
+
+    (StatusCode::CREATED, Json(json!({ "id": house_account_id}))).into_response()
+}
+
+fn handle_error(err: impl Error, status: StatusCode) -> Response {
+    (status, Json(json!({ "error": err.to_string()}))).into_response()
 }
