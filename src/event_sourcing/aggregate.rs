@@ -2,15 +2,14 @@ use async_trait::async_trait;
 use command::{BankAccountCommand, LedgerCommand};
 use cqrs_es::Aggregate;
 use event::{BaseEvent, Event};
-use finance::{JournalEntry, JournalLine, Transaction};
 use models::LedgerAction;
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::common::money::Money;
 use crate::domain::*;
+use crate::event_sourcing::*;
 use crate::service::{BankAccountServices, MockLedgerServices};
-use crate::{common, event_sourcing::*};
 
 #[async_trait]
 impl Aggregate for models::BankAccount {
@@ -39,23 +38,10 @@ impl Aggregate for models::BankAccount {
                 user_id,
                 currency,
             } => {
-                // Validate if can open bank account
-                match services
-                    .services
-                    .validate_account_creation(id, user_id.clone(), currency, kind)
-                    .await
-                {
-                    Ok(valid) => {
-                        if !valid {
-                            return Err("Validation failed".into());
-                        }
-                    }
-                    Err(err) => return Err(err.into()),
-                };
+                helper::validate_account_creation(services, id, user_id.clone(), currency, kind)
+                    .await?;
 
-                let mut base_event = BaseEvent::default();
-                base_event.set_aggregate_id(id);
-                base_event.set_created_at(chrono::Utc::now());
+                let base_event = helper::create_base_event(id);
                 Ok(vec![events::BankAccountEvent::AccountOpened {
                     base_event,
                     account_type,
@@ -65,218 +51,83 @@ impl Aggregate for models::BankAccount {
                 }])
             }
             BankAccountCommand::ApproveAccount { id, ledger_id } => {
-                let bank_account = match services.services.get_bank_account(id).await {
-                    Ok(account) => account,
-                    Err(_) => return Err("account not found".into()),
-                };
-                // Initialize ledger while account being approved
-                let command = LedgerCommand::Init {
-                    id: ledger_id,
-                    account_id: id,
-                    amount: Money::new(Decimal::ZERO, bank_account.currency),
-                };
-                if services
+                let bank_account = services
                     .services
-                    .note_ledger(ledger_id.to_string(), command)
+                    .get_bank_account(id)
                     .await
-                    .is_err()
-                {
-                    return Err("ledger write failed".into());
-                };
+                    .map_err(|_| "account not found")?;
 
-                // Update bank account to be approved state
-                let mut base_event = BaseEvent::default();
-                base_event.set_aggregate_id(id);
-                base_event.set_created_at(chrono::Utc::now());
+                helper::init_ledger(services, ledger_id, id, bank_account.currency).await?;
+
+                let base_event = helper::create_base_event(id);
                 Ok(vec![events::BankAccountEvent::AccountKycApproved {
                     ledger_id: ledger_id.to_string(),
                     base_event,
                 }])
             }
             BankAccountCommand::Deposit { id: _, amount } => {
-                let house_account = match services.services.get_house_account(amount.currency).await
-                {
-                    Ok(account) => account,
-                    Err(_) => return Err("house account not found".into()),
-                };
-                let house_account_ledger = house_account.ledger_id;
-
-                // Validate if ledger can do action
-                match services
+                let house_account = services
                     .services
-                    .validate(
-                        Uuid::parse_str(&self.id).unwrap(),
-                        LedgerAction::Deposit,
+                    .get_house_account(amount.currency)
+                    .await
+                    .map_err(|_| "house account not found")?;
+
+                helper::validate_ledger_action(self, services, LedgerAction::Deposit, amount)
+                    .await?;
+
+                let transaction_id = helper::create_transaction_with_journal(
+                    self,
+                    services,
+                    amount,
+                    house_account.ledger_id,
+                    LedgerAction::Deposit,
+                )
+                .await?;
+
+                helper::note_ledger_and_complete_transaction(
+                    self,
+                    services,
+                    transaction_id,
+                    LedgerCommand::Credit {
+                        id: Uuid::parse_str(&self.ledger_id).unwrap(),
+                        account_id: Uuid::parse_str(&self.id).unwrap(),
+                        transaction_id,
                         amount,
-                    )
-                    .await
-                {
-                    Ok(_) => {}
-                    Err(_) => return Err("validation failed".into()),
-                };
-
-                // Create transaction and journal for accounting purpose
-                let transaction = Transaction {
-                    id: Uuid::new_v4(),
-                    bank_account_id: Uuid::parse_str(&self.id).unwrap(),
-                    transaction_reference: common::snowflake::generate_transaction_reference("DE"),
-                    transaction_date: chrono::Utc::now().date_naive(),
-                    amount: amount.amount,
-                    currency: amount.currency.to_string(),
-                    description: None,
-                    journal_entry_id: None,
-                    status: "processing".to_string(),
-                };
-                let journal_entry = JournalEntry {
-                    id: Uuid::new_v4(),
-                    entry_date: chrono::Utc::now().date_naive(),
-                    description: None,
-                    status: "posted".to_string(),
-                };
-                let journal_lines = vec![
-                    JournalLine {
-                        id: Uuid::new_v4(),
-                        journal_entry_id: None,
-                        ledger_id: house_account_ledger,
-                        credit_amount: Decimal::ZERO,
-                        debit_amount: amount.amount,
-                        currency: amount.currency.to_string(),
-                        description: None,
                     },
-                    JournalLine {
-                        id: Uuid::new_v4(),
-                        journal_entry_id: None,
-                        ledger_id: self.ledger_id.clone(),
-                        debit_amount: Decimal::ZERO,
-                        credit_amount: amount.amount,
-                        currency: amount.currency.to_string(),
-                        description: None,
-                    },
-                ];
-                match services
-                    .services
-                    .create_transaction_with_journal(transaction, journal_entry, journal_lines)
-                    .await
-                {
-                    Ok(transaction_id) => {
-                        // Once get the created transaction, perform ledger note and update
-                        // balance accordingly.
-                        let command = LedgerCommand::Credit {
-                            id: Uuid::parse_str(&self.ledger_id).unwrap(),
-                            account_id: Uuid::parse_str(&self.id).unwrap(),
-                            transaction_id,
-                            amount,
-                        };
-                        if services
-                            .services
-                            .note_ledger(self.ledger_id.clone(), command)
-                            .await
-                            .is_err()
-                        {
-                            if (services.services.fail_transaction(transaction_id).await).is_err() {
-                                return Err("transaction update failed".into());
-                            }
-                            return Err("ledger write failed".into());
-                        };
-                        if (services.services.complete_transaction(transaction_id).await).is_err() {
-                            return Err("transaction update failed".into());
-                        }
-
-                        Ok(vec![])
-                    }
-                    Err(_) => Err("transaction update failed".into()),
-                }
+                )
+                .await
             }
             BankAccountCommand::Withdrawl { id: _, amount } => {
-                let house_account = match services.services.get_house_account(amount.currency).await
-                {
-                    Ok(account) => account,
-                    Err(_) => return Err("house account not found".into()),
-                };
-                let house_account_ledger = house_account.ledger_id;
-
-                match services
+                let house_account = services
                     .services
-                    .validate(
-                        Uuid::parse_str(&self.id).unwrap(),
-                        LedgerAction::Withdraw,
+                    .get_house_account(amount.currency)
+                    .await
+                    .map_err(|_| "house account not found")?;
+
+                helper::validate_ledger_action(self, services, LedgerAction::Withdraw, amount)
+                    .await?;
+
+                let transaction_id = helper::create_transaction_with_journal(
+                    self,
+                    services,
+                    amount,
+                    house_account.ledger_id,
+                    LedgerAction::Withdraw,
+                )
+                .await?;
+
+                helper::note_ledger_and_complete_transaction(
+                    self,
+                    services,
+                    transaction_id,
+                    LedgerCommand::Debit {
+                        id: Uuid::parse_str(&self.ledger_id).unwrap(),
+                        account_id: Uuid::parse_str(&self.id).unwrap(),
+                        transaction_id,
                         amount,
-                    )
-                    .await
-                {
-                    Ok(_) => {}
-                    Err(_) => return Err("validation failed".into()),
-                };
-
-                let transaction = Transaction {
-                    id: Uuid::new_v4(),
-                    bank_account_id: Uuid::parse_str(&self.id).unwrap(),
-                    transaction_reference: common::snowflake::generate_transaction_reference("WI"),
-                    transaction_date: chrono::Utc::now().date_naive(),
-                    amount: amount.amount,
-                    currency: amount.currency.to_string(),
-                    description: None,
-                    journal_entry_id: None,
-                    status: "processing".to_string(),
-                };
-                let journal_entry = JournalEntry {
-                    id: Uuid::new_v4(),
-                    entry_date: chrono::Utc::now().date_naive(),
-                    description: None,
-                    status: "posted".to_string(),
-                };
-                let journal_lines = vec![
-                    JournalLine {
-                        id: Uuid::new_v4(),
-                        journal_entry_id: None,
-                        ledger_id: house_account_ledger,
-                        debit_amount: Decimal::ZERO,
-                        credit_amount: amount.amount,
-                        currency: amount.currency.to_string(),
-                        description: None,
                     },
-                    JournalLine {
-                        id: Uuid::new_v4(),
-                        journal_entry_id: None,
-                        ledger_id: self.ledger_id.clone(),
-                        credit_amount: Decimal::ZERO,
-                        debit_amount: amount.amount,
-                        currency: amount.currency.to_string(),
-                        description: None,
-                    },
-                ];
-                match services
-                    .services
-                    .create_transaction_with_journal(transaction, journal_entry, journal_lines)
-                    .await
-                {
-                    Ok(transaction_id) => {
-                        let command = LedgerCommand::Debit {
-                            id: Uuid::parse_str(&self.ledger_id).unwrap(),
-                            account_id: Uuid::parse_str(&self.id).unwrap(),
-                            transaction_id,
-                            amount,
-                        };
-                        if services
-                            .services
-                            .note_ledger(self.ledger_id.clone(), command)
-                            .await
-                            .is_err()
-                        {
-                            if (services.services.fail_transaction(transaction_id).await).is_err() {
-                                return Err("transaction update failed".into());
-                            }
-                            return Err("ledger write failed".into());
-                        };
-
-                        if (services.services.complete_transaction(transaction_id).await).is_err() {
-                            return Err("transaction update failed".into());
-                        }
-
-                        Ok(vec![])
-                    }
-                    Err(_) => Err("transaction update failed".into()),
-                }
+                )
+                .await
             }
         }
     }
