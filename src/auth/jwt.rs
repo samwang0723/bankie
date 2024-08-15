@@ -74,3 +74,29 @@ pub async fn generate_jwt(service_id: &str, secret_key: &str) -> Result<String, 
 
     Ok(jwt_token)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_secret_key() {
+        let length = 32;
+        let secret_key = generate_secret_key(length);
+
+        // Check if the generated key has the correct length
+        assert_eq!(secret_key.len(), length, "Secret key length mismatch");
+
+        // Check if the generated key contains only valid characters
+        const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
+                                abcdefghijklmnopqrstuvwxyz\
+                                0123456789)(*&^%$#@!~";
+        for c in secret_key.chars() {
+            assert!(
+                CHARSET.contains(&(c as u8)),
+                "Invalid character in secret key: {}",
+                c
+            );
+        }
+    }
+}

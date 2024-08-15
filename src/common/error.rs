@@ -51,3 +51,65 @@ impl IntoResponse for AppError {
         (status_code, body).into_response()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+    use axum::response::IntoResponse;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_bad_request_error() {
+        let error = AppError::BadRequest("Bad request".into());
+        assert_eq!(error.code(), 400);
+        assert_eq!(error.message(), "Bad request");
+
+        let response = error.into_response();
+        let status = response.status();
+        let body = response.into_body();
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let body_bytes = to_bytes(body, usize::MAX).await.unwrap();
+        let body_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body_json, json!({"code": 400, "message": "Bad request"}));
+    }
+
+    #[tokio::test]
+    async fn test_not_found_error() {
+        let error = AppError::NotFound("Not found".into());
+        assert_eq!(error.code(), 404);
+        assert_eq!(error.message(), "Not found");
+
+        let response = error.into_response();
+        let status = response.status();
+        let body = response.into_body();
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let body_bytes = to_bytes(body, usize::MAX).await.unwrap();
+        let body_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body_json, json!({"code": 404, "message": "Not found"}));
+    }
+
+    #[tokio::test]
+    async fn test_internal_server_error() {
+        let error = AppError::InternalServerError("Internal server error".into());
+        assert_eq!(error.code(), 500);
+        assert_eq!(error.message(), "Internal server error");
+
+        let response = error.into_response();
+        let status = response.status();
+        let body = response.into_body();
+
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+
+        let body_bytes = to_bytes(body, usize::MAX).await.unwrap();
+        let body_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(
+            body_json,
+            json!({"code": 500, "message": "Internal server error"})
+        );
+    }
+}

@@ -49,3 +49,58 @@ pub fn decode_jwt(jwt_token: String) -> Result<TokenData<Claims>, StatusCode> {
         Err(StatusCode::INTERNAL_SERVER_ERROR)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::auth::jwt::generate_secret_key;
+
+    use super::*;
+    use chrono::Utc;
+    use jsonwebtoken::{encode, EncodingKey, Header};
+    use std::env;
+
+    #[tokio::test]
+    async fn test_decode_jwt() {
+        // Set up the environment variable for the secret key
+        let secret_key = generate_secret_key(32);
+        env::set_var("JWT_SECRET", &secret_key);
+
+        // Generate a JWT token
+        let claims = Claims {
+            iss: "bankie".to_owned(),
+            sub: "test_service".to_owned(),
+            aud: "service".to_owned(),
+            exp: (Utc::now().timestamp() + 3600) as usize, // 1 hour expiration
+            iat: Utc::now().timestamp() as usize,
+            scopes: vec![
+                "bank-account:read".to_owned(),
+                "bank-account:write".to_owned(),
+                "ledger:read".to_owned(),
+            ],
+            tenant_id: 1,
+        };
+
+        let header = Header::default();
+        let encoding_key = EncodingKey::from_secret(secret_key.as_bytes());
+        let jwt_token = encode(&header, &claims, &encoding_key).unwrap();
+
+        // Decode the JWT token
+        let result = decode_jwt(jwt_token);
+
+        // Validate the result
+        assert!(result.is_ok(), "JWT decoding failed");
+        let token_data = result.unwrap();
+        let decoded_claims = token_data.claims;
+
+        assert_eq!(decoded_claims.iss, claims.iss, "Issuer mismatch");
+        assert_eq!(decoded_claims.sub, claims.sub, "Subject mismatch");
+        assert_eq!(decoded_claims.aud, claims.aud, "Audience mismatch");
+        assert_eq!(decoded_claims.exp, claims.exp, "Expiration time mismatch");
+        assert_eq!(decoded_claims.iat, claims.iat, "Issued at time mismatch");
+        assert_eq!(decoded_claims.scopes, claims.scopes, "Scopes mismatch");
+        assert_eq!(
+            decoded_claims.tenant_id, claims.tenant_id,
+            "Tenant ID mismatch"
+        );
+    }
+}
