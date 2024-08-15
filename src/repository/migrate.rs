@@ -8,7 +8,7 @@ async fn main() -> Result<(), sqlx::Error> {
     // Create a connection pool
     let pool = PgPoolOptions::new()
         .max_connections(5)
-        .connect("postgres://bankie_app:sample-password@localhost:5432/bankie_main")
+        .connect("postgres://APP_NAME_UND_app:DB_PASSWORD@localhost:5432/APP_NAME_UND_main")
         .await?;
 
     // Specify the path to the migrations directory
