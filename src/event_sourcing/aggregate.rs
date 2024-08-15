@@ -94,11 +94,12 @@ impl Aggregate for models::BankAccount {
                 }])
             }
             BankAccountCommand::Deposit { id: _, amount } => {
-                let house_account_ledger =
-                    match services.services.get_house_account(amount.currency).await {
-                        Ok(id) => id,
-                        Err(_) => return Err("house account not found".into()),
-                    };
+                let house_account = match services.services.get_house_account(amount.currency).await
+                {
+                    Ok(account) => account,
+                    Err(_) => return Err("house account not found".into()),
+                };
+                let house_account_ledger = house_account.ledger_id;
 
                 // Validate if ledger can do action
                 match services
@@ -187,11 +188,12 @@ impl Aggregate for models::BankAccount {
                 }
             }
             BankAccountCommand::Withdrawl { id: _, amount } => {
-                let house_account_ledger =
-                    match services.services.get_house_account(amount.currency).await {
-                        Ok(id) => id,
-                        Err(_) => return Err("house account not found".into()),
-                    };
+                let house_account = match services.services.get_house_account(amount.currency).await
+                {
+                    Ok(account) => account,
+                    Err(_) => return Err("house account not found".into()),
+                };
+                let house_account_ledger = house_account.ledger_id;
 
                 match services
                     .services
@@ -462,7 +464,8 @@ mod aggregate_tests {
         events::{BankAccountEvent, LedgerEvent},
         finance::{JournalEntry, JournalLine, Transaction},
         models::{
-            BankAccount, BankAccountKind, BankAccountType, BankAccountView, Ledger, LedgerAction,
+            BankAccount, BankAccountKind, BankAccountType, BankAccountView, HouseAccount, Ledger,
+            LedgerAction,
         },
     };
 
@@ -773,8 +776,11 @@ mod aggregate_tests {
             self.validate_response.lock().unwrap().take().unwrap()
         }
 
-        async fn get_house_account(&self, _currency: Currency) -> Result<String, anyhow::Error> {
-            Ok(Uuid::new_v4().to_string())
+        async fn get_house_account(
+            &self,
+            _currency: Currency,
+        ) -> Result<HouseAccount, anyhow::Error> {
+            Ok(HouseAccount::default())
         }
 
         async fn validate_account_creation(

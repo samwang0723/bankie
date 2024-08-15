@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, status, account_number, account_name, account_type, ledger_id, currency as \"currency: String\"\n            FROM house_accounts\n            WHERE currency = $1\n            AND status = 'active'\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "account_number",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "account_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "account_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "ledger_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "currency: String",
+        "type_info": "Bpchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bpchar"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "19c157db34be3e52f73975873861b816668ed455e5aae51092fa3c947ae3bd6e"
+}

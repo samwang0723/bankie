@@ -127,23 +127,40 @@ impl DatabaseClient for PgPool {
         Ok(())
     }
 
-    async fn get_house_account(&self, currency: Currency) -> Result<String, Error> {
-        let house_account_id = sqlx::query!(
+    async fn get_house_account(&self, currency: Currency) -> Result<HouseAccount, Error> {
+        let house_account = sqlx::query_as!(
+            HouseAccount,
             r#"
-            SELECT ledger_id
+            SELECT id, status, account_number, account_name, account_type, ledger_id, currency as "currency: String"
             FROM house_accounts
             WHERE currency = $1
-            AND status='active'
-            AND account_type='House'
+            AND status = 'active'
+            AND account_type = 'House'
             LIMIT 1
             "#,
             currency.to_string()
         )
         .fetch_one(self)
-        .await?
-        .ledger_id;
+        .await?;
 
-        Ok(house_account_id)
+        Ok(house_account)
+    }
+
+    async fn get_house_accounts(&self, currency: Currency) -> Result<Vec<HouseAccount>, Error> {
+        let house_accounts = sqlx::query_as!(
+            HouseAccount,
+            r#"
+            SELECT id, status, account_number, account_name, account_type, ledger_id, currency as "currency: String"
+            FROM house_accounts
+            WHERE currency = $1
+            AND status = 'active'
+            "#,
+            currency.to_string()
+        )
+        .fetch_all(self)
+        .await?;
+
+        Ok(house_accounts)
     }
 
     async fn validate_bank_account_exists(

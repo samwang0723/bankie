@@ -59,7 +59,7 @@ pub struct BankAccount {
     pub timestamp: String,
 }
 
-#[derive(Serialize, Default, Deserialize)]
+#[derive(Serialize, Default, Deserialize, sqlx::FromRow)]
 pub struct HouseAccount {
     #[serde(skip_deserializing)]
     pub id: Uuid,

@@ -45,6 +45,12 @@ impl FromStr for Currency {
     }
 }
 
+impl From<String> for Currency {
+    fn from(s: String) -> Self {
+        Currency::from_str(&s).unwrap_or_default()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CurrencyParseError;
 

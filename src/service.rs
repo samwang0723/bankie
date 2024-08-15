@@ -11,7 +11,7 @@ use crate::{
     common::money::{Currency, Money},
     domain::{
         finance::{JournalEntry, JournalLine, Transaction},
-        models::{BankAccountKind, BankAccountStatus, BankAccountView, LedgerAction},
+        models::{BankAccountKind, BankAccountStatus, BankAccountView, HouseAccount, LedgerAction},
     },
     event_sourcing::command::LedgerCommand,
     repository::adapter::Adapter,
@@ -33,7 +33,7 @@ impl BankAccountServices {
 // External services must be called during the processing of the command.
 #[async_trait]
 pub trait BankAccountApi: Sync + Send {
-    async fn get_house_account(&self, currency: Currency) -> Result<String, anyhow::Error>;
+    async fn get_house_account(&self, currency: Currency) -> Result<HouseAccount, anyhow::Error>;
     async fn note_ledger(&self, id: String, command: LedgerCommand) -> Result<(), anyhow::Error>;
     async fn fail_transaction(&self, transaction_id: Uuid) -> Result<(), anyhow::Error>;
     async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), anyhow::Error>;
@@ -144,7 +144,7 @@ impl BankAccountApi for BankAccountLogic {
         Ok(())
     }
 
-    async fn get_house_account(&self, currency: Currency) -> Result<String, anyhow::Error> {
+    async fn get_house_account(&self, currency: Currency) -> Result<HouseAccount, anyhow::Error> {
         self.finance
             .get_house_account(currency)
             .await

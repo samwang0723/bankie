@@ -8,15 +8,21 @@ use crate::house_account::HouseAccountExtractor;
 use crate::repository::adapter::DatabaseClient;
 use crate::state::ApplicationState;
 
-use axum::extract::Extension;
+use axum::extract::{Extension, Query};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use cqrs_es::persist::ViewRepository;
 use rust_decimal::Decimal;
+use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
+
+#[derive(Deserialize)]
+pub struct HouseAccountParams {
+    pub currency: String,
+}
 
 // Serves as our query endpoint to respond with the materialized `BankAccountView`
 // for the requested account.
@@ -74,6 +80,18 @@ pub async fn ledger_query_handler(
     match view {
         None => StatusCode::NOT_FOUND.into_response(),
         Some(account_view) => (StatusCode::OK, Json(account_view)).into_response(),
+    }
+}
+
+pub async fn house_account_query_handler(
+    Extension(_tenant_id): Extension<i32>,
+    State(state): State<ApplicationState>,
+    Query(params): Query<HouseAccountParams>,
+) -> Response {
+    let client = Arc::clone(&state.pool);
+    match client.get_house_accounts(params.currency.into()).await {
+        Ok(accounts) => (StatusCode::OK, Json(accounts)).into_response(),
+        Err(err) => handle_error(err, StatusCode::INTERNAL_SERVER_ERROR),
     }
 }
 

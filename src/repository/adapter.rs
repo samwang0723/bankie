@@ -21,7 +21,8 @@ pub trait DatabaseClient {
         journal_lines: Vec<JournalLine>,
     ) -> Result<Uuid, Error>;
     async fn create_house_account(&self, account: HouseAccount) -> Result<(), Error>;
-    async fn get_house_account(&self, currency: Currency) -> Result<String, Error>;
+    async fn get_house_account(&self, currency: Currency) -> Result<HouseAccount, Error>;
+    async fn get_house_accounts(&self, currency: Currency) -> Result<Vec<HouseAccount>, Error>;
     async fn validate_bank_account_exists(
         &self,
         user_id: String,
@@ -62,8 +63,12 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
         self.client.create_house_account(account).await
     }
 
-    pub async fn get_house_account(&self, currency: Currency) -> Result<String, Error> {
+    pub async fn get_house_account(&self, currency: Currency) -> Result<HouseAccount, Error> {
         self.client.get_house_account(currency).await
+    }
+
+    pub async fn get_house_accounts(&self, currency: Currency) -> Result<Vec<HouseAccount>, Error> {
+        self.client.get_house_accounts(currency).await
     }
 
     pub async fn validate_bank_account_exists(
