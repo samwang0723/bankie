@@ -33,12 +33,12 @@ pub async fn bank_account_query_handler(
 ) -> Response {
     let view = match state.bank_account.query.load(&id).await {
         Ok(view) => view,
-        Err(_) => {
-            return AppError::InternalServerError.into_response();
+        Err(err) => {
+            return AppError::InternalServerError(err.to_string()).into_response();
         }
     };
     match view {
-        None => AppError::NotFound.into_response(),
+        None => AppError::NotFound("Resource Not Found".to_string()).into_response(),
         Some(account_view) => (StatusCode::OK, Json(account_view)).into_response(),
     }
 }
@@ -62,7 +62,7 @@ pub async fn bank_account_command_handler(
         .await
     {
         Ok(_) => (result.0, Json(json!({"id": result.1}))).into_response(),
-        Err(_) => AppError::BadRequest.into_response(),
+        Err(err) => AppError::BadRequest(err.to_string()).into_response(),
     }
 }
 
@@ -73,12 +73,12 @@ pub async fn ledger_query_handler(
 ) -> Response {
     let view = match state.ledger.query.load(&id).await {
         Ok(view) => view,
-        Err(_) => {
-            return AppError::InternalServerError.into_response();
+        Err(err) => {
+            return AppError::InternalServerError(err.to_string()).into_response();
         }
     };
     match view {
-        None => AppError::NotFound.into_response(),
+        None => AppError::NotFound("Resource Not Found".to_string()).into_response(),
         Some(account_view) => (StatusCode::OK, Json(account_view)).into_response(),
     }
 }
@@ -91,7 +91,7 @@ pub async fn house_account_query_handler(
     let client = Arc::clone(&state.pool);
     match client.get_house_accounts(params.currency.into()).await {
         Ok(accounts) => (StatusCode::OK, Json(json!({ "entries": accounts }))).into_response(),
-        Err(_) => AppError::InternalServerError.into_response(),
+        Err(err) => AppError::InternalServerError(err.to_string()).into_response(),
     }
 }
 
@@ -103,7 +103,7 @@ pub async fn house_account_create_handler(
     let client = Arc::clone(&state.pool);
     let ledger_id = Uuid::new_v4();
 
-    if (state
+    if let Err(err) = state
         .ledger
         .cqrs
         .execute(
@@ -114,16 +114,15 @@ pub async fn house_account_create_handler(
                 amount: Money::new(Decimal::ZERO, house_account.currency),
             },
         )
-        .await)
-        .is_err()
+        .await
     {
-        return AppError::BadRequest.into_response();
+        return AppError::BadRequest(err.to_string()).into_response();
     }
 
     house_account.ledger_id = ledger_id.to_string();
     let house_account_id = house_account.id.to_string();
-    if (client.create_house_account(house_account).await).is_err() {
-        return AppError::BadRequest.into_response();
+    if let Err(err) = client.create_house_account(house_account).await {
+        return AppError::BadRequest(err.to_string()).into_response();
     }
 
     (StatusCode::CREATED, Json(json!({ "id": house_account_id}))).into_response()

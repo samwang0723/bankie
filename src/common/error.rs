@@ -8,25 +8,25 @@ use std::fmt;
 
 #[derive(Debug, Serialize)]
 pub enum AppError {
-    BadRequest,
-    NotFound,
-    InternalServerError,
+    BadRequest(String),
+    NotFound(String),
+    InternalServerError(String),
 }
 
 impl AppError {
     fn code(&self) -> u16 {
         match self {
-            AppError::BadRequest => 400,
-            AppError::NotFound => 404,
-            AppError::InternalServerError => 500,
+            AppError::BadRequest(_) => 400,
+            AppError::NotFound(_) => 404,
+            AppError::InternalServerError(_) => 500,
         }
     }
 
     fn message(&self) -> &str {
         match self {
-            AppError::BadRequest => "Bad Request",
-            AppError::NotFound => "Resource Not Found",
-            AppError::InternalServerError => "Internal Server Error",
+            AppError::BadRequest(msg) => msg,
+            AppError::NotFound(msg) => msg,
+            AppError::InternalServerError(msg) => msg,
         }
     }
 }
