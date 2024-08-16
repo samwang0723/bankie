@@ -84,10 +84,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_authorize() {
-        dotenv::dotenv().ok();
-
-        let secret_key = env::var("JWT_SECRET").unwrap();
-        let token = generate_jwt("test_service", &secret_key).await.unwrap();
+        env::set_var("JWT_SECRET", "your_secret_key");
+        let token = generate_jwt("test_service", "your_secret_key")
+            .await
+            .unwrap();
 
         let mut mock_db_client = MockDatabaseClient::new();
         let tenant = Tenant {
@@ -184,7 +184,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_decode_jwt() {
-        dotenv::dotenv().ok();
         // Generate a JWT token
         let claims = Claims {
             iss: "bankie".to_owned(),
@@ -201,8 +200,8 @@ mod tests {
         };
 
         let header = Header::default();
-        let secret_key = env::var("JWT_SECRET").unwrap();
-        let encoding_key = EncodingKey::from_secret(secret_key.as_bytes());
+        env::set_var("JWT_SECRET", "your_secret_key");
+        let encoding_key = EncodingKey::from_secret("your_secret_key".as_bytes());
         let jwt_token = encode(&header, &claims, &encoding_key).unwrap();
 
         // Decode the JWT token
