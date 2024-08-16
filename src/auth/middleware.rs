@@ -107,14 +107,13 @@ mod tests {
         });
 
         // Create a request with the authorization header
-        let mut req = Request::builder()
+        let req = Request::builder()
             .header(
                 axum::http::header::AUTHORIZATION,
                 format!("Bearer {}", token),
             )
             .body(Body::empty())
             .unwrap();
-        req.extensions_mut().insert(state.clone());
 
         let app = Router::new()
             .route("/", axum::routing::get(|| async { "test" }))
@@ -160,14 +159,13 @@ mod tests {
         });
 
         // Create a request with the authorization header
-        let mut req = Request::builder()
+        let req = Request::builder()
             .header(
                 axum::http::header::AUTHORIZATION,
                 format!("Bearer {}", "wrong_token"),
             )
             .body(Body::empty())
             .unwrap();
-        req.extensions_mut().insert(state.clone());
 
         let app = Router::new()
             .route("/", axum::routing::get(|| async { "test" }))
