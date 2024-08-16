@@ -51,11 +51,57 @@ impl Settings {
     }
 }
 
+impl Default for Settings {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DatabaseSettings {
     pub fn connection_string(&self) -> String {
         format!(
             "postgres://{}:{}@{}:{}/{}",
             self.user, self.dbpasswd, self.host, self.port, self.dbname
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+
+    #[test]
+    fn test_load_from_file() {
+        let settings = Settings::new();
+        assert_eq!(settings.database.host, "localhost");
+        assert_eq!(settings.database.port, "5432");
+        assert_eq!(settings.database.user, "bankie_app");
+        assert_eq!(settings.database.dbname, "bankie_main");
+    }
+
+    #[test]
+    fn test_customize_from_env() {
+        env::set_var("DB_PASSWD", "test_password");
+
+        let settings = Settings::new();
+        assert_eq!(settings.database.dbpasswd, "test_password");
+    }
+
+    #[test]
+    fn test_connection_string() {
+        let db_settings = DatabaseSettings {
+            host: "localhost".to_string(),
+            port: "5432".to_string(),
+            user: "test_user".to_string(),
+            dbname: "test_db".to_string(),
+            dbpasswd: "test_password".to_string(),
+        };
+
+        let connection_string = db_settings.connection_string();
+        assert_eq!(
+            connection_string,
+            "postgres://test_user:test_password@localhost:5432/test_db"
+        );
     }
 }

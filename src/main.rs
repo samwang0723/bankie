@@ -8,6 +8,7 @@ use route::{
     bank_account_command_handler, bank_account_query_handler, house_account_create_handler,
     house_account_query_handler, ledger_query_handler,
 };
+use sqlx::PgPool;
 use state::new_application_state;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -73,7 +74,7 @@ async fn main() {
                     "/v1/house_account",
                     get(house_account_query_handler).post(house_account_create_handler),
                 )
-                .layer(middleware::from_fn(authorize))
+                .layer(middleware::from_fn(authorize::<PgPool>))
                 .layer(AddExtensionLayer::new(Arc::new(state.clone())))
                 .layer(comression_layer)
                 .layer(TraceLayer::new_for_http())

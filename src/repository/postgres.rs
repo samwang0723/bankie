@@ -1,9 +1,11 @@
 use crate::common::money::Currency;
 use crate::domain::finance::{JournalEntry, JournalLine, Transaction};
 use crate::domain::models::{BankAccountKind, HouseAccount};
+use crate::domain::tenant::Tenant;
 
 use super::adapter::DatabaseClient;
 use async_trait::async_trait;
+use chrono::Local;
 use sqlx::postgres::PgPool;
 use sqlx::Error;
 use uuid::Uuid;
@@ -190,5 +192,62 @@ impl DatabaseClient for PgPool {
         } else {
             Ok(true)
         }
+    }
+
+    async fn create_tenant_profile(&self, name: &str, scope: &str) -> Result<i32, Error> {
+        let rec = sqlx::query!(
+            r#"
+        INSERT INTO tenants (name, status, jwt, scope)
+        VALUES ($1, 'inactive', '', $2)
+        RETURNING id
+        "#,
+            name,
+            scope
+        )
+        .fetch_one(self)
+        .await?;
+
+        Ok(rec.id)
+    }
+
+    async fn update_tenant_profile(&self, id: i32, jwt: &str) -> Result<i32, Error> {
+        let dt = Local::now();
+        let naive_utc = dt.naive_utc();
+        let rec = sqlx::query!(
+            r#"
+        UPDATE tenants
+        SET jwt = $2, status = 'active', updated_at = $3
+        WHERE id = $1
+        RETURNING id
+        "#,
+            id,
+            jwt,
+            naive_utc
+        )
+        .fetch_one(self)
+        .await?;
+
+        Ok(rec.id)
+    }
+
+    async fn get_tenant_profile(&self, tenant_id: i32) -> Result<Tenant, Error> {
+        let rec = sqlx::query!(
+            r#"
+        SELECT id, name, jwt, status, scope
+        FROM tenants
+        WHERE id = $1 AND status='active'
+        "#,
+            tenant_id
+        )
+        .fetch_one(self)
+        .await?;
+
+        Ok(Tenant {
+            id: rec.id,
+            name: rec.name,
+            jwt: rec.jwt,
+            status: rec.status.expect("no status"),
+            scope: Some(rec.scope.expect("no scope")),
+        })
     }
 }

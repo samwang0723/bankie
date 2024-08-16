@@ -5,7 +5,6 @@ use crate::common::error::AppError;
 use crate::common::money::Money;
 use crate::event_sourcing::command::{BankAccountCommand, LedgerCommand};
 use crate::house_account::HouseAccountExtractor;
-use crate::repository::adapter::DatabaseClient;
 use crate::state::ApplicationState;
 
 use axum::extract::{Extension, Query};
@@ -17,6 +16,7 @@ use cqrs_es::persist::ViewRepository;
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use serde_json::json;
+use sqlx::PgPool;
 use uuid::Uuid;
 
 #[derive(Deserialize)]
@@ -29,9 +29,9 @@ pub struct HouseAccountParams {
 pub async fn bank_account_query_handler(
     Extension(_tenant_id): Extension<i32>,
     Path(id): Path<String>,
-    State(state): State<ApplicationState>,
+    State(state): State<ApplicationState<PgPool>>,
 ) -> Response {
-    let view = match state.bank_account.query.load(&id).await {
+    let view = match state.bank_account.unwrap().query.load(&id).await {
         Ok(view) => view,
         Err(err) => {
             return AppError::InternalServerError(err.to_string()).into_response();
@@ -46,7 +46,7 @@ pub async fn bank_account_query_handler(
 // Serves as our command endpoint to make changes in a `BankAccount` aggregate.
 pub async fn bank_account_command_handler(
     Extension(_tenant_id): Extension<i32>,
-    State(state): State<ApplicationState>,
+    State(state): State<ApplicationState<PgPool>>,
     CommandExtractor(metadata, command): CommandExtractor,
 ) -> Response {
     let result = match &command {
@@ -57,6 +57,7 @@ pub async fn bank_account_command_handler(
     };
     match state
         .bank_account
+        .unwrap()
         .cqrs
         .execute_with_metadata(&result.1, command, metadata)
         .await
@@ -69,9 +70,9 @@ pub async fn bank_account_command_handler(
 pub async fn ledger_query_handler(
     Extension(_tenant_id): Extension<i32>,
     Path(id): Path<String>,
-    State(state): State<ApplicationState>,
+    State(state): State<ApplicationState<PgPool>>,
 ) -> Response {
-    let view = match state.ledger.query.load(&id).await {
+    let view = match state.ledger.unwrap().query.load(&id).await {
         Ok(view) => view,
         Err(err) => {
             return AppError::InternalServerError(err.to_string()).into_response();
@@ -85,10 +86,10 @@ pub async fn ledger_query_handler(
 
 pub async fn house_account_query_handler(
     Extension(_tenant_id): Extension<i32>,
-    State(state): State<ApplicationState>,
+    State(state): State<ApplicationState<PgPool>>,
     Query(params): Query<HouseAccountParams>,
 ) -> Response {
-    let client = Arc::clone(&state.pool);
+    let client = Arc::clone(&state.database);
     match client.get_house_accounts(params.currency.into()).await {
         Ok(accounts) => (StatusCode::OK, Json(json!({ "entries": accounts }))).into_response(),
         Err(err) => AppError::InternalServerError(err.to_string()).into_response(),
@@ -97,14 +98,15 @@ pub async fn house_account_query_handler(
 
 pub async fn house_account_create_handler(
     Extension(_tenant_id): Extension<i32>,
-    State(state): State<ApplicationState>,
+    State(state): State<ApplicationState<PgPool>>,
     HouseAccountExtractor(_metadata, mut house_account): HouseAccountExtractor,
 ) -> Response {
-    let client = Arc::clone(&state.pool);
+    let client = Arc::clone(&state.database);
     let ledger_id = Uuid::new_v4();
 
     if let Err(err) = state
         .ledger
+        .unwrap()
         .cqrs
         .execute(
             &ledger_id.to_string(),

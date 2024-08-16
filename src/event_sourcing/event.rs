@@ -24,9 +24,9 @@ pub trait Event {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BaseEvent {
-    created_at: String,
-    aggregate_id: String,
-    parent_id: String,
+    pub created_at: String,
+    pub aggregate_id: String,
+    pub parent_id: String,
 }
 
 impl Event for BaseEvent {

@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use mockall::automock;
 use sqlx::Error;
 use uuid::Uuid;
 
@@ -7,9 +8,11 @@ use crate::{
     domain::{
         finance::{JournalEntry, JournalLine, Transaction},
         models::{BankAccountKind, HouseAccount},
+        tenant::Tenant,
     },
 };
 
+#[automock]
 #[async_trait]
 pub trait DatabaseClient {
     async fn fail_transaction(&self, transaction_id: Uuid) -> Result<(), Error>;
@@ -29,6 +32,9 @@ pub trait DatabaseClient {
         currency: Currency,
         kind: BankAccountKind,
     ) -> Result<bool, Error>;
+    async fn create_tenant_profile(&self, name: &str, scope: &str) -> Result<i32, Error>;
+    async fn update_tenant_profile(&self, id: i32, jwt: &str) -> Result<i32, Error>;
+    async fn get_tenant_profile(&self, tenant_id: i32) -> Result<Tenant, Error>;
 }
 
 pub struct Adapter<C: DatabaseClient + Send + Sync> {
@@ -80,5 +86,17 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
         self.client
             .validate_bank_account_exists(user_id, currency, kind)
             .await
+    }
+
+    pub async fn create_tenant_profile(&self, name: &str, scope: &str) -> Result<i32, Error> {
+        self.client.create_tenant_profile(name, scope).await
+    }
+
+    pub async fn update_tenant_profile(&self, id: i32, jwt: &str) -> Result<i32, Error> {
+        self.client.update_tenant_profile(id, jwt).await
+    }
+
+    pub async fn get_tenant_profile(&self, tenant_id: i32) -> Result<Tenant, Error> {
+        self.client.get_tenant_profile(tenant_id).await
     }
 }

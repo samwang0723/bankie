@@ -3,12 +3,10 @@ use jsonwebtoken::{encode, EncodingKey, Header};
 use postgres_es::default_postgress_pool;
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
-use sqlx::{Pool, Postgres};
+use sqlx::PgPool;
 use tracing::debug;
 
-use crate::{auth::tenant::update_tenant_profile, configs::settings::SETTINGS};
-
-use super::tenant::create_tenant_profile;
+use crate::{configs::settings::SETTINGS, repository::adapter::Adapter};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -43,13 +41,14 @@ pub async fn generate_jwt(service_id: &str, secret_key: &str) -> Result<String, 
         .expect("valid timestamp")
         .timestamp();
 
-    let pool: Pool<Postgres> = default_postgress_pool(&SETTINGS.database.connection_string()).await;
-    let tenant_id = create_tenant_profile(
-        &pool,
-        service_id,
-        "bank-account:read bank-account:write ledger:read",
-    )
-    .await?;
+    let pool: PgPool = default_postgress_pool(&SETTINGS.database.connection_string()).await;
+    let database = Adapter::new(pool.clone());
+    let tenant_id = database
+        .create_tenant_profile(
+            service_id,
+            "bank-account:read bank-account:write ledger:read",
+        )
+        .await?;
     debug!("Tenant ID: {}", tenant_id);
 
     let claims = Claims {
@@ -70,7 +69,35 @@ pub async fn generate_jwt(service_id: &str, secret_key: &str) -> Result<String, 
     let encoding_key = EncodingKey::from_secret(secret_key.as_bytes());
     let jwt_token = encode(&header, &claims, &encoding_key).unwrap();
 
-    update_tenant_profile(&pool, tenant_id, &jwt_token).await?;
+    database
+        .update_tenant_profile(tenant_id, &jwt_token)
+        .await?;
 
     Ok(jwt_token)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_secret_key() {
+        let length = 32;
+        let secret_key = generate_secret_key(length);
+
+        // Check if the generated key has the correct length
+        assert_eq!(secret_key.len(), length, "Secret key length mismatch");
+
+        // Check if the generated key contains only valid characters
+        const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
+                                abcdefghijklmnopqrstuvwxyz\
+                                0123456789)(*&^%$#@!~";
+        for c in secret_key.chars() {
+            assert!(
+                CHARSET.contains(&(c as u8)),
+                "Invalid character in secret key: {}",
+                c
+            );
+        }
+    }
 }

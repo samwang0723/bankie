@@ -11,3 +11,16 @@ pub fn generate_transaction_reference(prefix: &str) -> String {
     let unique_id = generator.real_time_generate();
     format!("{}{}", prefix, unique_id)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_transaction_reference() {
+        let prefix = "TXN";
+        let result = generate_transaction_reference(prefix);
+        assert!(result.starts_with(prefix));
+        assert!(result.len() > prefix.len());
+    }
+}
