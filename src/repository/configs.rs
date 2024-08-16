@@ -1,6 +1,6 @@
 use cqrs_es::{persist::PersistedEventStore, CqrsFramework, Query};
 use postgres_es::{PostgresCqrs, PostgresEventRepository, PostgresViewRepository};
-use sqlx::{Pool, Postgres};
+use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::error;
 
@@ -14,7 +14,7 @@ use crate::{
 use super::adapter::Adapter;
 
 pub fn configure_bank_account(
-    pool: Pool<Postgres>,
+    pool: PgPool,
     ledger_loader_saver: LedgerLoaderSaver,
 ) -> (
     Arc<PostgresCqrs<BankAccount>>,
@@ -55,7 +55,7 @@ pub fn configure_bank_account(
 }
 
 pub fn configure_ledger(
-    pool: Pool<Postgres>,
+    pool: PgPool,
 ) -> (
     Arc<PostgresCqrs<Ledger>>,
     Arc<PostgresViewRepository<LedgerView, Ledger>>,

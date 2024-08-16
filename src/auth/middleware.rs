@@ -4,11 +4,14 @@ use axum::{body::Body, extract::Request, http::StatusCode, middleware::Next, res
 use jsonwebtoken::{decode, DecodingKey, TokenData, Validation};
 use tracing::debug;
 
-use crate::state::ApplicationState;
+use crate::{repository::adapter::DatabaseClient, state::ApplicationState};
 
 use super::jwt::Claims;
 
-pub async fn authorize(mut req: Request, next: Next) -> Result<Response<Body>, StatusCode> {
+pub async fn authorize<C: DatabaseClient + Send + Sync + 'static>(
+    mut req: Request,
+    next: Next,
+) -> Result<Response<Body>, StatusCode> {
     let auth_header = req.headers_mut().get(axum::http::header::AUTHORIZATION);
     let auth_header = match auth_header {
         Some(header) => header.to_str().map_err(|_| StatusCode::FORBIDDEN)?,
@@ -20,7 +23,11 @@ pub async fn authorize(mut req: Request, next: Next) -> Result<Response<Body>, S
         Ok(data) => data,
         Err(_) => return Err(StatusCode::UNAUTHORIZED),
     };
-    let state = req.extensions().get::<Arc<ApplicationState>>().unwrap();
+
+    let state = match req.extensions().get::<Arc<ApplicationState<C>>>() {
+        Some(state) => state,
+        None => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    };
     match state
         .database
         .get_tenant_profile(token_data.claims.tenant_id)
@@ -56,19 +63,128 @@ pub fn decode_jwt(jwt_token: String) -> Result<TokenData<Claims>, StatusCode> {
 
 #[cfg(test)]
 mod tests {
-    use crate::auth::jwt::generate_secret_key;
+    use crate::{
+        auth::jwt::generate_jwt,
+        domain::tenant::Tenant,
+        repository::adapter::{Adapter, MockDatabaseClient},
+    };
 
     use super::*;
+    use axum::{middleware, Router};
     use chrono::Utc;
     use jsonwebtoken::{encode, EncodingKey, Header};
     use std::env;
+    use tower::ServiceExt;
+
+    impl Clone for MockDatabaseClient {
+        fn clone(&self) -> Self {
+            MockDatabaseClient::new()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_authorize() {
+        dotenv::dotenv().ok();
+
+        let secret_key = env::var("JWT_SECRET").unwrap();
+        let token = generate_jwt("test_service", &secret_key).await.unwrap();
+
+        let mut mock_db_client = MockDatabaseClient::new();
+        let tenant = Tenant {
+            id: 1,
+            name: "test_service".to_string(),
+            jwt: token.clone(),
+            scope: Some("bank-account:read bank-account:write ledger:read".to_string()),
+            status: "active".to_string(),
+        };
+        mock_db_client
+            .expect_get_tenant_profile()
+            .returning(move |_| Ok(tenant.clone()));
+        let state = Arc::new(ApplicationState {
+            database: Arc::new(Adapter::new(mock_db_client)),
+            bank_account: None,
+            ledger: None,
+        });
+
+        // Create a request with the authorization header
+        let mut req = Request::builder()
+            .header(
+                axum::http::header::AUTHORIZATION,
+                format!("Bearer {}", token),
+            )
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut().insert(state.clone());
+
+        let app = Router::new()
+            .route("/", axum::routing::get(|| async { "test" }))
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                authorize::<MockDatabaseClient>,
+            ))
+            .with_state(state);
+
+        let response = app.clone().oneshot(req).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_missing_header() {
+        // Create a mock request without the Authorization header
+        let req = Request::builder().body(Body::empty()).unwrap();
+        let app = Router::new()
+            .route("/", axum::routing::post(|| async { "test" }))
+            .layer(middleware::from_fn(authorize::<MockDatabaseClient>));
+        let response = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_wrong_jwt() {
+        let mut mock_db_client = MockDatabaseClient::new();
+        let tenant = Tenant {
+            id: 1,
+            name: "test_service".to_string(),
+            jwt: "correct_token".to_string(),
+            scope: Some("bank-account:read bank-account:write ledger:read".to_string()),
+            status: "active".to_string(),
+        };
+        mock_db_client
+            .expect_get_tenant_profile()
+            .returning(move |_| Ok(tenant.clone()));
+        let state = Arc::new(ApplicationState {
+            database: Arc::new(Adapter::new(mock_db_client)),
+            bank_account: None,
+            ledger: None,
+        });
+
+        // Create a request with the authorization header
+        let mut req = Request::builder()
+            .header(
+                axum::http::header::AUTHORIZATION,
+                format!("Bearer {}", "wrong_token"),
+            )
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut().insert(state.clone());
+
+        let app = Router::new()
+            .route("/", axum::routing::get(|| async { "test" }))
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                authorize::<MockDatabaseClient>,
+            ))
+            .with_state(state);
+
+        let response = app.clone().oneshot(req).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
 
     #[tokio::test]
     async fn test_decode_jwt() {
-        // Set up the environment variable for the secret key
-        let secret_key = generate_secret_key(32);
-        env::set_var("JWT_SECRET", &secret_key);
-
+        dotenv::dotenv().ok();
         // Generate a JWT token
         let claims = Claims {
             iss: "bankie".to_owned(),
@@ -85,6 +201,7 @@ mod tests {
         };
 
         let header = Header::default();
+        let secret_key = env::var("JWT_SECRET").unwrap();
         let encoding_key = EncodingKey::from_secret(secret_key.as_bytes());
         let jwt_token = encode(&header, &claims, &encoding_key).unwrap();
 

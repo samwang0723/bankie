@@ -3,7 +3,7 @@ use jsonwebtoken::{encode, EncodingKey, Header};
 use postgres_es::default_postgress_pool;
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
-use sqlx::{Pool, Postgres};
+use sqlx::PgPool;
 use tracing::debug;
 
 use crate::{configs::settings::SETTINGS, repository::adapter::Adapter};
@@ -41,7 +41,7 @@ pub async fn generate_jwt(service_id: &str, secret_key: &str) -> Result<String, 
         .expect("valid timestamp")
         .timestamp();
 
-    let pool: Pool<Postgres> = default_postgress_pool(&SETTINGS.database.connection_string()).await;
+    let pool: PgPool = default_postgress_pool(&SETTINGS.database.connection_string()).await;
     let database = Adapter::new(pool.clone());
     let tenant_id = database
         .create_tenant_profile(

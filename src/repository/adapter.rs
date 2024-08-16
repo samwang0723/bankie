@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use mockall::automock;
 use sqlx::Error;
 use uuid::Uuid;
 
@@ -11,6 +12,7 @@ use crate::{
     },
 };
 
+#[automock]
 #[async_trait]
 pub trait DatabaseClient {
     async fn fail_transaction(&self, transaction_id: Uuid) -> Result<(), Error>;
