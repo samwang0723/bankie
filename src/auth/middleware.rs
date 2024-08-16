@@ -1,10 +1,10 @@
-use std::{ops::Deref, sync::Arc};
+use std::sync::Arc;
 
 use axum::{body::Body, extract::Request, http::StatusCode, middleware::Next, response::Response};
 use jsonwebtoken::{decode, DecodingKey, TokenData, Validation};
 use tracing::debug;
 
-use crate::{auth::tenant::get_tenant_profile, state::ApplicationState};
+use crate::state::ApplicationState;
 
 use super::jwt::Claims;
 
@@ -21,7 +21,11 @@ pub async fn authorize(mut req: Request, next: Next) -> Result<Response<Body>, S
         Err(_) => return Err(StatusCode::UNAUTHORIZED),
     };
     let state = req.extensions().get::<Arc<ApplicationState>>().unwrap();
-    match get_tenant_profile(Arc::clone(&state.pool).deref(), token_data.claims.tenant_id).await {
+    match state
+        .database
+        .get_tenant_profile(token_data.claims.tenant_id)
+        .await
+    {
         Ok(tenant) => {
             debug!("Tenant: {:?}", tenant);
             req.extensions_mut().insert(tenant.id);

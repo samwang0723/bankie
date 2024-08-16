@@ -6,9 +6,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
 use tracing::debug;
 
-use crate::{auth::tenant::update_tenant_profile, configs::settings::SETTINGS};
-
-use super::tenant::create_tenant_profile;
+use crate::{configs::settings::SETTINGS, repository::adapter::Adapter};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -44,12 +42,13 @@ pub async fn generate_jwt(service_id: &str, secret_key: &str) -> Result<String, 
         .timestamp();
 
     let pool: Pool<Postgres> = default_postgress_pool(&SETTINGS.database.connection_string()).await;
-    let tenant_id = create_tenant_profile(
-        &pool,
-        service_id,
-        "bank-account:read bank-account:write ledger:read",
-    )
-    .await?;
+    let database = Adapter::new(pool.clone());
+    let tenant_id = database
+        .create_tenant_profile(
+            service_id,
+            "bank-account:read bank-account:write ledger:read",
+        )
+        .await?;
     debug!("Tenant ID: {}", tenant_id);
 
     let claims = Claims {
@@ -70,7 +69,9 @@ pub async fn generate_jwt(service_id: &str, secret_key: &str) -> Result<String, 
     let encoding_key = EncodingKey::from_secret(secret_key.as_bytes());
     let jwt_token = encode(&header, &claims, &encoding_key).unwrap();
 
-    update_tenant_profile(&pool, tenant_id, &jwt_token).await?;
+    database
+        .update_tenant_profile(tenant_id, &jwt_token)
+        .await?;
 
     Ok(jwt_token)
 }

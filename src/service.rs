@@ -62,7 +62,7 @@ pub trait BankAccountApi: Sync + Send {
 pub struct BankAccountLogic {
     pub bank_account: BankAccountLoader,
     pub ledger: LedgerLoaderSaver,
-    pub finance: Arc<Adapter<PgPool>>,
+    pub database: Arc<Adapter<PgPool>>,
 }
 
 #[async_trait]
@@ -77,14 +77,14 @@ impl BankAccountApi for BankAccountLogic {
     }
 
     async fn fail_transaction(&self, transaction_id: Uuid) -> Result<(), anyhow::Error> {
-        self.finance
+        self.database
             .complete_transaction(transaction_id)
             .await
             .map_err(|e| anyhow!("Failed to update transaction: {}", e))
     }
 
     async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), anyhow::Error> {
-        self.finance
+        self.database
             .complete_transaction(transaction_id)
             .await
             .map_err(|e| anyhow!("Failed to update transaction: {}", e))
@@ -96,7 +96,7 @@ impl BankAccountApi for BankAccountLogic {
         journal_entry: JournalEntry,
         journal_lines: Vec<JournalLine>,
     ) -> Result<Uuid, anyhow::Error> {
-        self.finance
+        self.database
             .create_transaction_with_journal(transaction, journal_entry, journal_lines)
             .await
             .map_err(|e| anyhow!("Failed to write transaction: {}", e))
@@ -145,7 +145,7 @@ impl BankAccountApi for BankAccountLogic {
     }
 
     async fn get_house_account(&self, currency: Currency) -> Result<HouseAccount, anyhow::Error> {
-        self.finance
+        self.database
             .get_house_account(currency)
             .await
             .map_err(|e| anyhow!("Failed to get house account: {}", e))
@@ -161,7 +161,7 @@ impl BankAccountApi for BankAccountLogic {
         match self.bank_account.query.load(&account_id.to_string()).await {
             Ok(view) => match view {
                 None => self
-                    .finance
+                    .database
                     .validate_bank_account_exists(user_id, currency, kind)
                     .await
                     .map_err(|e| anyhow!("Failed to validate: {}", e)),

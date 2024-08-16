@@ -5,13 +5,14 @@ use sqlx::{Pool, Postgres};
 
 use crate::configs::settings::SETTINGS;
 use crate::domain::models::{BankAccount, BankAccountView, Ledger, LedgerView};
+use crate::repository::adapter::Adapter;
 use crate::repository::configs::{configure_bank_account, configure_ledger};
 
 #[derive(Clone)]
 pub struct ApplicationState {
     pub bank_account: BankAccountLoaderSaver,
     pub ledger: LedgerLoaderSaver,
-    pub pool: Arc<Pool<Postgres>>,
+    pub database: Arc<Adapter<Pool<Postgres>>>,
 }
 
 #[derive(Clone)]
@@ -49,6 +50,6 @@ pub async fn new_application_state() -> ApplicationState {
             query: bc_query,
         },
         ledger: ledger_loader_saver,
-        pool: Arc::new(pool),
+        database: Arc::new(Adapter::new(pool)),
     }
 }

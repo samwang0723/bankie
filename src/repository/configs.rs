@@ -43,7 +43,7 @@ pub fn configure_bank_account(
             query: Arc::clone(&account_view_repo),
         },
         ledger: ledger_loader_saver,
-        finance: Arc::new(Adapter::new(pool.clone())),
+        database: Arc::new(Adapter::new(pool.clone())),
     }));
 
     let repo = PostgresEventRepository::new(pool)

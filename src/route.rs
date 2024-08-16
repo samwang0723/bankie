@@ -5,7 +5,6 @@ use crate::common::error::AppError;
 use crate::common::money::Money;
 use crate::event_sourcing::command::{BankAccountCommand, LedgerCommand};
 use crate::house_account::HouseAccountExtractor;
-use crate::repository::adapter::DatabaseClient;
 use crate::state::ApplicationState;
 
 use axum::extract::{Extension, Query};
@@ -88,7 +87,7 @@ pub async fn house_account_query_handler(
     State(state): State<ApplicationState>,
     Query(params): Query<HouseAccountParams>,
 ) -> Response {
-    let client = Arc::clone(&state.pool);
+    let client = Arc::clone(&state.database);
     match client.get_house_accounts(params.currency.into()).await {
         Ok(accounts) => (StatusCode::OK, Json(json!({ "entries": accounts }))).into_response(),
         Err(err) => AppError::InternalServerError(err.to_string()).into_response(),
@@ -100,7 +99,7 @@ pub async fn house_account_create_handler(
     State(state): State<ApplicationState>,
     HouseAccountExtractor(_metadata, mut house_account): HouseAccountExtractor,
 ) -> Response {
-    let client = Arc::clone(&state.pool);
+    let client = Arc::clone(&state.database);
     let ledger_id = Uuid::new_v4();
 
     if let Err(err) = state
