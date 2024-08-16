@@ -64,14 +64,13 @@ pub fn decode_jwt(jwt_token: String) -> Result<TokenData<Claims>, StatusCode> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        auth::jwt::generate_jwt,
         domain::tenant::Tenant,
         repository::adapter::{Adapter, MockDatabaseClient},
     };
 
     use super::*;
     use axum::{middleware, Router};
-    use chrono::Utc;
+    use chrono::{Duration, Utc};
     use jsonwebtoken::{encode, EncodingKey, Header};
     use std::env;
     use tower::ServiceExt;
@@ -85,9 +84,28 @@ mod tests {
     #[tokio::test]
     async fn test_authorize() {
         env::set_var("JWT_SECRET", "your_secret_key");
-        let token = generate_jwt("test_service", "your_secret_key")
-            .await
-            .unwrap();
+        let expiration = Utc::now()
+            .checked_add_signed(Duration::days(365))
+            .expect("valid timestamp")
+            .timestamp();
+
+        let claims = Claims {
+            sub: "test_service".to_string(),
+            exp: expiration as usize,
+            iat: Utc::now().timestamp() as usize,
+            iss: "bankie".to_owned(),
+            aud: "service".to_owned(),
+            scopes: vec![
+                "bank-account:read".to_owned(),
+                "bank-account:write".to_owned(),
+                "ledger:read".to_owned(),
+            ],
+            tenant_id: 1,
+        };
+
+        let header = Header::default();
+        let encoding_key = EncodingKey::from_secret("your_secret_key".as_bytes());
+        let token = encode(&header, &claims, &encoding_key).unwrap();
 
         let mut mock_db_client = MockDatabaseClient::new();
         let tenant = Tenant {
@@ -107,13 +125,14 @@ mod tests {
         });
 
         // Create a request with the authorization header
-        let req = Request::builder()
+        let mut req = Request::builder()
             .header(
                 axum::http::header::AUTHORIZATION,
                 format!("Bearer {}", token),
             )
             .body(Body::empty())
             .unwrap();
+        req.extensions_mut().insert(state.clone());
 
         let app = Router::new()
             .route("/", axum::routing::get(|| async { "test" }))
@@ -159,13 +178,14 @@ mod tests {
         });
 
         // Create a request with the authorization header
-        let req = Request::builder()
+        let mut req = Request::builder()
             .header(
                 axum::http::header::AUTHORIZATION,
                 format!("Bearer {}", "wrong_token"),
             )
             .body(Body::empty())
             .unwrap();
+        req.extensions_mut().insert(state.clone());
 
         let app = Router::new()
             .route("/", axum::routing::get(|| async { "test" }))
