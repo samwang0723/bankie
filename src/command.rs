@@ -145,6 +145,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_approve_account_extractor() {
+        // Create a mock request
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"
+                {
+                    "ApproveAccount": {
+                        "id": "b9aa777c-0868-48ac-9c49-eff869b437d7"
+                    }
+                }
+                "#,
+            ))
+            .unwrap();
+
+        // Mock state
+        let state = ();
+
+        // Call the from_request method
+        let result = CommandExtractor::from_request(request, &state).await;
+
+        // Verify the result
+        match result {
+            Ok(extractor) => {
+                let CommandExtractor(metadata, command) = extractor;
+
+                // Check metadata
+                assert_eq!(metadata.get("uri").unwrap(), "/test-uri");
+                assert_eq!(metadata.get(USER_AGENT_HDR).unwrap(), "test-agent");
+
+                // Check fields
+                if let BankAccountCommand::ApproveAccount { id, ledger_id } = command {
+                    assert_eq!(
+                        id,
+                        Uuid::parse_str("b9aa777c-0868-48ac-9c49-eff869b437d7").unwrap()
+                    );
+                    assert!(!ledger_id.is_nil());
+                } else {
+                    panic!("Invalid command");
+                }
+            }
+            Err(_) => panic!("Extraction failed"),
+        }
+    }
+
+    #[tokio::test]
     async fn test_command_extractor_invalid_body() {
         // Create a mock request with invalid body
         let request = Request::builder()
