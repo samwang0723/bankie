@@ -1,11 +1,13 @@
-use crate::common::money::Currency;
-use crate::domain::finance::{JournalEntry, JournalLine, Transaction};
-use crate::domain::models::{BankAccountKind, HouseAccount};
+use crate::common::money::{Currency, Money};
+use crate::domain::finance::{JournalEntry, JournalLine, Outbox, Transaction};
+use crate::domain::models::{BankAccountKind, HouseAccount, LedgerAction};
 use crate::domain::tenant::Tenant;
+use crate::event_sourcing::command::LedgerCommand;
 
 use super::adapter::DatabaseClient;
 use async_trait::async_trait;
 use chrono::Local;
+use serde_json::to_value;
 use sqlx::postgres::PgPool;
 use sqlx::Error;
 use uuid::Uuid;
@@ -27,6 +29,8 @@ impl DatabaseClient for PgPool {
     }
 
     async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), Error> {
+        let mut tx = self.begin().await?;
+
         sqlx::query!(
             r#"
             UPDATE transactions
@@ -35,14 +39,29 @@ impl DatabaseClient for PgPool {
             "#,
             transaction_id,
         )
-        .execute(self)
+        .execute(&mut *tx)
         .await?;
+
+        sqlx::query!(
+            r#"
+            UPDATE outbox
+            SET processed = true, processed_at = NOW()
+            WHERE transaction_id = $1
+            "#,
+            transaction_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
         Ok(())
     }
 
     async fn create_transaction_with_journal(
         &self,
         transaction: Transaction,
+        ledger_id: String,
         journal_entry: JournalEntry,
         journal_lines: Vec<JournalLine>,
     ) -> Result<Uuid, Error> {
@@ -87,8 +106,8 @@ impl DatabaseClient for PgPool {
         let transaction_id = sqlx::query!(
             r#"
             INSERT INTO transactions (id, bank_account_id, transaction_reference,
-            transaction_date, amount, currency, description, status, journal_entry_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            transaction_date, amount, currency, description, metadata, status, journal_entry_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING id
             "#,
             transaction.id,
@@ -98,12 +117,47 @@ impl DatabaseClient for PgPool {
             transaction.amount,
             transaction.currency,
             transaction.description,
+            transaction.metadata,
             transaction.status,
             journal_entry_id
         )
         .fetch_one(&mut *tx)
         .await?
         .id;
+
+        // Insert Outbox
+        let transaction_type = transaction.transaction_type();
+        let event_type = if transaction_type == LedgerAction::Deposit {
+            "LedgerCommand::Credit"
+        } else {
+            "LedgerCommand::Debit"
+        };
+        let cmd = if transaction_type == LedgerAction::Deposit {
+            LedgerCommand::Credit {
+                id: Uuid::parse_str(&ledger_id).unwrap(),
+                account_id: transaction.bank_account_id,
+                transaction_id,
+                amount: Money::new(transaction.amount, Currency::from(transaction.currency)),
+            }
+        } else {
+            LedgerCommand::Debit {
+                id: Uuid::parse_str(&ledger_id).unwrap(),
+                account_id: transaction.bank_account_id,
+                transaction_id,
+                amount: Money::new(transaction.amount, Currency::from(transaction.currency)),
+            }
+        };
+        sqlx::query!(
+            r#"
+            INSERT INTO outbox (transaction_id, event_type, payload)
+            VALUES ($1, $2, $3)
+            "#,
+            transaction_id,
+            event_type,
+            to_value(&cmd).unwrap(),
+        )
+        .execute(&mut *tx)
+        .await?;
 
         tx.commit().await?;
 
@@ -197,10 +251,10 @@ impl DatabaseClient for PgPool {
     async fn create_tenant_profile(&self, name: &str, scope: &str) -> Result<i32, Error> {
         let rec = sqlx::query!(
             r#"
-        INSERT INTO tenants (name, status, jwt, scope)
-        VALUES ($1, 'inactive', '', $2)
-        RETURNING id
-        "#,
+            INSERT INTO tenants (name, status, jwt, scope)
+            VALUES ($1, 'inactive', '', $2)
+            RETURNING id
+            "#,
             name,
             scope
         )
@@ -215,11 +269,11 @@ impl DatabaseClient for PgPool {
         let naive_utc = dt.naive_utc();
         let rec = sqlx::query!(
             r#"
-        UPDATE tenants
-        SET jwt = $2, status = 'active', updated_at = $3
-        WHERE id = $1
-        RETURNING id
-        "#,
+            UPDATE tenants
+            SET jwt = $2, status = 'active', updated_at = $3
+            WHERE id = $1
+            RETURNING id
+            "#,
             id,
             jwt,
             naive_utc
@@ -233,10 +287,10 @@ impl DatabaseClient for PgPool {
     async fn get_tenant_profile(&self, tenant_id: i32) -> Result<Tenant, Error> {
         let rec = sqlx::query!(
             r#"
-        SELECT id, name, jwt, status, scope
-        FROM tenants
-        WHERE id = $1 AND status='active'
-        "#,
+            SELECT id, name, jwt, status, scope
+            FROM tenants
+            WHERE id = $1 AND status='active'
+            "#,
             tenant_id
         )
         .fetch_one(self)
@@ -249,5 +303,22 @@ impl DatabaseClient for PgPool {
             status: rec.status.expect("no status"),
             scope: Some(rec.scope.expect("no scope")),
         })
+    }
+
+    async fn fetch_unprocessed_outbox(&self) -> Result<Vec<Outbox>, Error> {
+        let outbox = sqlx::query_as!(
+            Outbox,
+            r#"
+            SELECT id, transaction_id, event_type, payload, processed
+            FROM outbox
+            WHERE processed = false
+            ORDER BY created_at ASC
+            LIMIT 100
+            "#,
+        )
+        .fetch_all(self)
+        .await?;
+
+        Ok(outbox)
     }
 }

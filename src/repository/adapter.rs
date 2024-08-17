@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::{
     common::money::Currency,
     domain::{
-        finance::{JournalEntry, JournalLine, Transaction},
+        finance::{JournalEntry, JournalLine, Outbox, Transaction},
         models::{BankAccountKind, HouseAccount},
         tenant::Tenant,
     },
@@ -20,6 +20,7 @@ pub trait DatabaseClient {
     async fn create_transaction_with_journal(
         &self,
         transaction: Transaction,
+        ledger_id: String,
         journal_entry: JournalEntry,
         journal_lines: Vec<JournalLine>,
     ) -> Result<Uuid, Error>;
@@ -35,6 +36,7 @@ pub trait DatabaseClient {
     async fn create_tenant_profile(&self, name: &str, scope: &str) -> Result<i32, Error>;
     async fn update_tenant_profile(&self, id: i32, jwt: &str) -> Result<i32, Error>;
     async fn get_tenant_profile(&self, tenant_id: i32) -> Result<Tenant, Error>;
+    async fn fetch_unprocessed_outbox(&self) -> Result<Vec<Outbox>, Error>;
 }
 
 pub struct Adapter<C: DatabaseClient + Send + Sync> {
@@ -57,11 +59,12 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
     pub async fn create_transaction_with_journal(
         &self,
         transaction: Transaction,
+        ledger_id: String,
         journal_entry: JournalEntry,
         journal_lines: Vec<JournalLine>,
     ) -> Result<Uuid, Error> {
         self.client
-            .create_transaction_with_journal(transaction, journal_entry, journal_lines)
+            .create_transaction_with_journal(transaction, ledger_id, journal_entry, journal_lines)
             .await
     }
 
@@ -98,5 +101,9 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
 
     pub async fn get_tenant_profile(&self, tenant_id: i32) -> Result<Tenant, Error> {
         self.client.get_tenant_profile(tenant_id).await
+    }
+
+    pub async fn fetch_unprocessed_outbox(&self) -> Result<Vec<Outbox>, Error> {
+        self.client.fetch_unprocessed_outbox().await
     }
 }

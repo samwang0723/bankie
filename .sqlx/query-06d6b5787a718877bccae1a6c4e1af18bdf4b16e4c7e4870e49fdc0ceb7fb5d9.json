@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        INSERT INTO tenants (name, status, jwt, scope)\n        VALUES ($1, 'inactive', '', $2)\n        RETURNING id\n        ",
+  "query": "\n            INSERT INTO tenants (name, status, jwt, scope)\n            VALUES ($1, 'inactive', '', $2)\n            RETURNING id\n            ",
   "describe": {
     "columns": [
       {
@@ -19,5 +19,5 @@
       false
     ]
   },
-  "hash": "1a9e514d416dc9960543032169c175ddd0610f2f14ba268bcb3732badb5e6de5"
+  "hash": "06d6b5787a718877bccae1a6c4e1af18bdf4b16e4c7e4870e49fdc0ceb7fb5d9"
 }

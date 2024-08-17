@@ -4,6 +4,7 @@ use axum::Router;
 use axum::{middleware, routing::get, routing::post};
 use clap::Parser;
 use clap_derive::Parser;
+use job::create_ledger_job;
 use route::{
     bank_account_command_handler, bank_account_query_handler, house_account_create_handler,
     house_account_query_handler, ledger_query_handler,
@@ -12,6 +13,7 @@ use sqlx::PgPool;
 use state::new_application_state;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio_cron_scheduler::JobScheduler;
 use tower_http::add_extension::AddExtensionLayer;
 use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
@@ -24,6 +26,7 @@ mod configs;
 mod domain;
 mod event_sourcing;
 mod house_account;
+mod job;
 mod repository;
 mod route;
 mod service;
@@ -62,6 +65,13 @@ async fn main() {
         }
         "server" => {
             let state = new_application_state().await;
+
+            // Add cron job for update ledger from outbox events
+            let sched = JobScheduler::new().await.unwrap();
+            let job = create_ledger_job(state.clone()).await.unwrap();
+            sched.add(job).await.unwrap();
+            sched.start().await.unwrap();
+
             // Configure the Axum routes and services.
             // For this example a single logical endpoint is used and the HTTP method
             // distinguishes whether the call is a command or a query.

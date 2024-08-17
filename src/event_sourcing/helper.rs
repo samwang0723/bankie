@@ -1,6 +1,6 @@
 use command::LedgerCommand;
 use event::{BaseEvent, Event};
-use finance::{JournalEntry, JournalLine, Transaction};
+use finance::{JournalEntry, JournalLine, Transaction, TRANS_DEPOSIT, TRANS_WITHDRAWAL};
 use models::{BankAccount, BankAccountKind, LedgerAction};
 use rust_decimal::Decimal;
 use uuid::Uuid;
@@ -72,14 +72,19 @@ pub async fn create_transaction_with_journal(
     house_account_ledger: String,
     action_type: LedgerAction,
 ) -> Result<Uuid, error::BankAccountError> {
+    let key = match action_type {
+        LedgerAction::Deposit => TRANS_DEPOSIT,
+        LedgerAction::Withdraw => TRANS_WITHDRAWAL,
+    };
     let transaction = Transaction {
         id: Uuid::new_v4(),
         bank_account_id: Uuid::parse_str(&bank_account.id).unwrap(),
-        transaction_reference: common::snowflake::generate_transaction_reference("DE"),
+        transaction_reference: common::snowflake::generate_transaction_reference(key),
         transaction_date: chrono::Utc::now().date_naive(),
         amount: amount.amount,
         currency: amount.currency.to_string(),
         description: None,
+        metadata: serde_json::Value::Null,
         journal_entry_id: None,
         status: "processing".to_string(),
     };
@@ -120,34 +125,12 @@ pub async fn create_transaction_with_journal(
     let journal_lines = vec![house_account_journal_line, user_account_journal_line];
     services
         .services
-        .create_transaction_with_journal(transaction, journal_entry, journal_lines)
+        .create_transaction_with_journal(
+            transaction,
+            bank_account.ledger_id.clone(),
+            journal_entry,
+            journal_lines,
+        )
         .await
         .map_err(|_| "transaction update failed".into())
-}
-
-pub async fn note_ledger_and_complete_transaction(
-    bank_account: &BankAccount,
-    services: &BankAccountServices,
-    transaction_id: Uuid,
-    command: LedgerCommand,
-) -> Result<Vec<events::BankAccountEvent>, error::BankAccountError> {
-    if services
-        .services
-        .note_ledger(bank_account.ledger_id.clone(), command)
-        .await
-        .is_err()
-    {
-        services
-            .services
-            .fail_transaction(transaction_id)
-            .await
-            .map_err(|_| "transaction update failed")?;
-        return Err("ledger write failed".into());
-    }
-    services
-        .services
-        .complete_transaction(transaction_id)
-        .await
-        .map_err(|_| "transaction update failed")?;
-    Ok(vec![])
 }
