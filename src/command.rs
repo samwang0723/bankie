@@ -72,3 +72,94 @@ impl From<serde_json::Error> for CommandExtractionError {
         CommandExtractionError
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        common::money::Currency,
+        domain::models::{BankAccountKind, BankAccountType},
+    };
+
+    use super::*;
+    use axum::{
+        body::Body,
+        extract::FromRequest,
+        http::{header::USER_AGENT, Request},
+    };
+
+    #[tokio::test]
+    async fn test_open_account_extractor() {
+        // Create a mock request
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"
+                {
+                    "OpenAccount": {
+                        "account_type": "Retail",
+                        "kind": "Interest",
+                        "currency": "TWD",
+                        "user_id": "b9aa777c-0868-48ac-9c49-eff869b437d7"
+                    }
+                }
+                "#,
+            ))
+            .unwrap();
+
+        // Mock state
+        let state = ();
+
+        // Call the from_request method
+        let result = CommandExtractor::from_request(request, &state).await;
+
+        // Verify the result
+        match result {
+            Ok(extractor) => {
+                let CommandExtractor(metadata, command) = extractor;
+
+                // Check metadata
+                assert_eq!(metadata.get("uri").unwrap(), "/test-uri");
+                assert_eq!(metadata.get(USER_AGENT_HDR).unwrap(), "test-agent");
+
+                // Check fields
+                if let BankAccountCommand::OpenAccount {
+                    id,
+                    account_type,
+                    kind,
+                    user_id,
+                    currency,
+                } = command
+                {
+                    assert!(!id.is_nil());
+                    assert_eq!(account_type, BankAccountType::Retail);
+                    assert_eq!(currency, Currency::TWD);
+                    assert_eq!(user_id, "b9aa777c-0868-48ac-9c49-eff869b437d7".to_string());
+                    assert_eq!(kind, BankAccountKind::Interest);
+                } else {
+                    panic!("Invalid command");
+                }
+            }
+            Err(_) => panic!("Extraction failed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_command_extractor_invalid_body() {
+        // Create a mock request with invalid body
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(r#"{"invalid": "body"}"#))
+            .unwrap();
+
+        // Mock state
+        let state = ();
+
+        // Call the from_request method
+        let result = CommandExtractor::from_request(request, &state).await;
+
+        // Verify the result
+        assert!(result.is_err());
+    }
+}
