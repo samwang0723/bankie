@@ -234,7 +234,7 @@ mod aggregate_tests {
     );
 
     ledger_test_case!(
-        test_ledger_withdrawl,
+        test_ledger_withdrawal,
         vec![
             LedgerEvent::LedgerInitiated {
                 amount: Money::new(dec!(1000.0), Currency::USD),

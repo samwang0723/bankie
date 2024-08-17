@@ -93,7 +93,7 @@ impl Aggregate for models::BankAccount {
                 )
                 .await
             }
-            BankAccountCommand::Withdrawl { id: _, amount } => {
+            BankAccountCommand::Withdrawal { id: _, amount } => {
                 let house_account = services
                     .services
                     .get_house_account(amount.currency)
@@ -290,7 +290,7 @@ mod aggregate_tests {
     );
 
     test_case!(
-        test_withdrawl,
+        test_withdrawal,
         vec![
             BankAccountEvent::AccountOpened {
                 base_event: create_base_event(*ACCOUNT_ID),
@@ -304,7 +304,7 @@ mod aggregate_tests {
                 base_event: create_base_event(*ACCOUNT_ID)
             }
         ],
-        BankAccountCommand::Withdrawl {
+        BankAccountCommand::Withdrawal {
             id: *ACCOUNT_ID,
             amount: Money::new(dec!(500.0), Currency::USD)
         },

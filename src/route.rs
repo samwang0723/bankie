@@ -53,7 +53,7 @@ pub async fn bank_account_command_handler(
         BankAccountCommand::OpenAccount { id, .. } => (StatusCode::CREATED, id.to_string()),
         BankAccountCommand::ApproveAccount { id, .. } => (StatusCode::OK, id.to_string()),
         BankAccountCommand::Deposit { id, .. } => (StatusCode::OK, id.to_string()),
-        BankAccountCommand::Withdrawl { id, .. } => (StatusCode::OK, id.to_string()),
+        BankAccountCommand::Withdrawal { id, .. } => (StatusCode::OK, id.to_string()),
     };
     match state
         .bank_account

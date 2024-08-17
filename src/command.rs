@@ -86,6 +86,7 @@ mod tests {
         extract::FromRequest,
         http::{header::USER_AGENT, Request},
     };
+    use rust_decimal_macros::dec;
 
     #[tokio::test]
     async fn test_open_account_extractor() {
@@ -183,6 +184,110 @@ mod tests {
                         Uuid::parse_str("b9aa777c-0868-48ac-9c49-eff869b437d7").unwrap()
                     );
                     assert!(!ledger_id.is_nil());
+                } else {
+                    panic!("Invalid command");
+                }
+            }
+            Err(_) => panic!("Extraction failed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_deposit_extractor() {
+        // Create a mock request
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"
+                {
+                    "Deposit": {
+                        "id": "b9aa777c-0868-48ac-9c49-eff869b437d7",
+                        "amount": {
+                            "currency": "USD",
+                            "amount": 100
+                        }
+                    }
+                }
+                "#,
+            ))
+            .unwrap();
+
+        // Mock state
+        let state = ();
+
+        // Call the from_request method
+        let result = CommandExtractor::from_request(request, &state).await;
+
+        // Verify the result
+        match result {
+            Ok(extractor) => {
+                let CommandExtractor(metadata, command) = extractor;
+
+                // Check metadata
+                assert_eq!(metadata.get("uri").unwrap(), "/test-uri");
+                assert_eq!(metadata.get(USER_AGENT_HDR).unwrap(), "test-agent");
+
+                // Check fields
+                if let BankAccountCommand::Deposit { id, amount } = command {
+                    assert_eq!(
+                        id,
+                        Uuid::parse_str("b9aa777c-0868-48ac-9c49-eff869b437d7").unwrap()
+                    );
+                    assert_eq!(amount.currency, Currency::USD);
+                    assert_eq!(amount.amount, dec!(100));
+                } else {
+                    panic!("Invalid command");
+                }
+            }
+            Err(_) => panic!("Extraction failed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_withdrawal_extractor() {
+        // Create a mock request
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"
+                {
+                    "Withdrawal": {
+                        "id": "b9aa777c-0868-48ac-9c49-eff869b437d7",
+                        "amount": {
+                            "currency": "USD",
+                            "amount": 100
+                        }
+                    }
+                }
+                "#,
+            ))
+            .unwrap();
+
+        // Mock state
+        let state = ();
+
+        // Call the from_request method
+        let result = CommandExtractor::from_request(request, &state).await;
+
+        // Verify the result
+        match result {
+            Ok(extractor) => {
+                let CommandExtractor(metadata, command) = extractor;
+
+                // Check metadata
+                assert_eq!(metadata.get("uri").unwrap(), "/test-uri");
+                assert_eq!(metadata.get(USER_AGENT_HDR).unwrap(), "test-agent");
+
+                // Check fields
+                if let BankAccountCommand::Withdrawal { id, amount } = command {
+                    assert_eq!(
+                        id,
+                        Uuid::parse_str("b9aa777c-0868-48ac-9c49-eff869b437d7").unwrap()
+                    );
+                    assert_eq!(amount.currency, Currency::USD);
+                    assert_eq!(amount.amount, dec!(100));
                 } else {
                     panic!("Invalid command");
                 }

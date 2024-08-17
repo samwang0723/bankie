@@ -25,7 +25,7 @@ pub enum BankAccountCommand {
         id: Uuid,
         amount: Money,
     },
-    Withdrawl {
+    Withdrawal {
         id: Uuid,
         amount: Money,
     },
