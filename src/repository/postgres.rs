@@ -15,6 +15,8 @@ use uuid::Uuid;
 #[async_trait]
 impl DatabaseClient for PgPool {
     async fn fail_transaction(&self, transaction_id: Uuid) -> Result<(), Error> {
+        let mut tx = self.begin().await?;
+
         sqlx::query!(
             r#"
             UPDATE transactions
@@ -23,8 +25,21 @@ impl DatabaseClient for PgPool {
             "#,
             transaction_id,
         )
-        .execute(self)
+        .execute(&mut *tx)
         .await?;
+
+        sqlx::query!(
+            r#"
+            DELETE FROM outbox
+            WHERE transaction_id = $1
+            "#,
+            transaction_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
         Ok(())
     }
 
