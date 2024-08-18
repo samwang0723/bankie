@@ -3,3 +3,6 @@ database:
   port: "5432"
   user: "bankie_app"
   dbname: "bankie_main"
+redis:
+  host: "localhost"
+  port: "6379"

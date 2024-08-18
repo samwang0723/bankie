@@ -122,6 +122,7 @@ mod tests {
             database: Arc::new(Adapter::new(mock_db_client)),
             bank_account: None,
             ledger: None,
+            cache: None,
         });
 
         // Create a request with the authorization header
@@ -175,6 +176,7 @@ mod tests {
             database: Arc::new(Adapter::new(mock_db_client)),
             bank_account: None,
             ledger: None,
+            cache: None,
         });
 
         // Create a request with the authorization header

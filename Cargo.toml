@@ -41,6 +41,12 @@ features = [
     "serde",
 ]
 
+[dependencies.redis]
+version = "*"
+features = [
+  "tokio-comp"
+]
+
 [[bin]]
 name = "bankie"
 path = "src/main.rs"

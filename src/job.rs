@@ -11,6 +11,7 @@ use crate::{
     common::money::{Currency, Money},
     domain::finance::Outbox,
     event_sourcing::command::LedgerCommand,
+    repository::redis::{acquire_lock, release_lock, LOCK_KEY, LOCK_TIMEOUT},
     state::{ApplicationState, LedgerLoaderSaver},
 };
 
@@ -18,9 +19,14 @@ pub async fn create_ledger_job(state: ApplicationState<PgPool>) -> Result<Job, J
     Job::new_async("1/10 * * * * *", move |_uuid, _l| {
         let db = state.database.clone();
         let ledger = state.ledger.clone().unwrap();
+        let cache = state.cache.clone().unwrap();
         Box::pin(async move {
             match db.fetch_unprocessed_outbox().await {
                 Ok(events) => {
+                    // acquire lock
+                    let identifier = acquire_lock(&cache, LOCK_KEY, LOCK_TIMEOUT).await.unwrap();
+
+                    // process events
                     for event in events {
                         info!("Processing event: {:?}", event);
                         match process_event(event, &ledger).await {
@@ -35,6 +41,9 @@ pub async fn create_ledger_job(state: ApplicationState<PgPool>) -> Result<Job, J
                             }
                         }
                     }
+
+                    // release lock
+                    release_lock(&cache, LOCK_KEY, &identifier).await;
                 }
                 Err(e) => {
                     error!("Error fetching events: {:?}", e);

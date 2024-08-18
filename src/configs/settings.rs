@@ -6,6 +6,7 @@ use tracing::info;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Settings {
     pub database: DatabaseSettings,
+    pub redis: RedisSettings,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -16,6 +17,12 @@ pub struct DatabaseSettings {
     pub dbname: String,
     #[serde(skip_deserializing)]
     pub dbpasswd: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RedisSettings {
+    pub host: String,
+    pub port: String,
 }
 
 lazy_static! {
@@ -66,6 +73,12 @@ impl DatabaseSettings {
     }
 }
 
+impl RedisSettings {
+    pub fn connection_string(&self) -> String {
+        format!("redis://{}:{}", self.host, self.port)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -78,6 +91,8 @@ mod tests {
         assert_eq!(settings.database.port, "5432");
         assert_eq!(settings.database.user, "bankie_app");
         assert_eq!(settings.database.dbname, "bankie_main");
+        assert_eq!(settings.redis.host, "localhost");
+        assert_eq!(settings.redis.port, "6379");
     }
 
     #[test]
@@ -89,7 +104,7 @@ mod tests {
     }
 
     #[test]
-    fn test_connection_string() {
+    fn test_database_connection_string() {
         let db_settings = DatabaseSettings {
             host: "localhost".to_string(),
             port: "5432".to_string(),
@@ -103,5 +118,16 @@ mod tests {
             connection_string,
             "postgres://test_user:test_password@localhost:5432/test_db"
         );
+    }
+
+    #[test]
+    fn test_redis_connection_string() {
+        let redis_settings = RedisSettings {
+            host: "localhost".to_string(),
+            port: "6379".to_string(),
+        };
+
+        let connection_string = redis_settings.connection_string();
+        assert_eq!(connection_string, "redis://localhost:6379");
     }
 }

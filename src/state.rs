@@ -13,6 +13,7 @@ pub struct ApplicationState<C: DatabaseClient + Send + Sync> {
     pub bank_account: Option<BankAccountLoaderSaver>,
     pub ledger: Option<LedgerLoaderSaver>,
     pub database: Arc<Adapter<C>>,
+    pub cache: Option<Arc<redis::Client>>,
 }
 
 #[derive(Clone)]
@@ -44,6 +45,8 @@ pub async fn new_application_state() -> ApplicationState<PgPool> {
     };
     let (bc_cqrs, bc_query) = configure_bank_account(pool.clone(), ledger_loader_saver.clone());
 
+    let cache = redis::Client::open(SETTINGS.redis.connection_string()).unwrap();
+
     ApplicationState {
         bank_account: Some(BankAccountLoaderSaver {
             cqrs: bc_cqrs,
@@ -51,5 +54,6 @@ pub async fn new_application_state() -> ApplicationState<PgPool> {
         }),
         ledger: Some(ledger_loader_saver),
         database: Arc::new(Adapter::new(pool)),
+        cache: Some(Arc::new(cache)),
     }
 }
