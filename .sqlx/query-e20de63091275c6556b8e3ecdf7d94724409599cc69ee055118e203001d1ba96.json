@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        UPDATE tenants\n        SET jwt = $2, status = 'active', updated_at = $3\n        WHERE id = $1\n        RETURNING id\n        ",
+  "query": "\n            UPDATE tenants\n            SET jwt = $2, status = 'active', updated_at = $3\n            WHERE id = $1\n            RETURNING id\n            ",
   "describe": {
     "columns": [
       {
@@ -20,5 +20,5 @@
       false
     ]
   },
-  "hash": "999f74e79b3126427420070615f45f37ff3ee7d3e822eab17b46ea004be7a98d"
+  "hash": "e20de63091275c6556b8e3ecdf7d94724409599cc69ee055118e203001d1ba96"
 }

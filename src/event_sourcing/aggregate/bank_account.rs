@@ -1,9 +1,8 @@
 use async_trait::async_trait;
-use command::{BankAccountCommand, LedgerCommand};
+use command::BankAccountCommand;
 use cqrs_es::Aggregate;
 use event::Event;
 use models::LedgerAction;
-use uuid::Uuid;
 
 use crate::domain::*;
 use crate::event_sourcing::*;
@@ -71,7 +70,7 @@ impl Aggregate for models::BankAccount {
                 helper::validate_ledger_action(self, services, LedgerAction::Deposit, amount)
                     .await?;
 
-                let transaction_id = helper::create_transaction_with_journal(
+                helper::create_transaction_with_journal(
                     self,
                     services,
                     amount,
@@ -80,18 +79,7 @@ impl Aggregate for models::BankAccount {
                 )
                 .await?;
 
-                helper::note_ledger_and_complete_transaction(
-                    self,
-                    services,
-                    transaction_id,
-                    LedgerCommand::Credit {
-                        id: Uuid::parse_str(&self.ledger_id).unwrap(),
-                        account_id: Uuid::parse_str(&self.id).unwrap(),
-                        transaction_id,
-                        amount,
-                    },
-                )
-                .await
+                Ok(vec![])
             }
             BankAccountCommand::Withdrawal { id: _, amount } => {
                 let house_account = services
@@ -103,7 +91,9 @@ impl Aggregate for models::BankAccount {
                 helper::validate_ledger_action(self, services, LedgerAction::Withdraw, amount)
                     .await?;
 
-                let transaction_id = helper::create_transaction_with_journal(
+                // Here we create transaction and journal. with outbox record
+                // support, later on have job to credit/debit ledger.
+                helper::create_transaction_with_journal(
                     self,
                     services,
                     amount,
@@ -112,18 +102,7 @@ impl Aggregate for models::BankAccount {
                 )
                 .await?;
 
-                helper::note_ledger_and_complete_transaction(
-                    self,
-                    services,
-                    transaction_id,
-                    LedgerCommand::Debit {
-                        id: Uuid::parse_str(&self.ledger_id).unwrap(),
-                        account_id: Uuid::parse_str(&self.id).unwrap(),
-                        transaction_id,
-                        amount,
-                    },
-                )
-                .await
+                Ok(vec![])
             }
         }
     }
@@ -351,17 +330,10 @@ mod aggregate_tests {
             self.write_ledger_response.lock().unwrap().take().unwrap()
         }
 
-        async fn complete_transaction(&self, _transaction_id: Uuid) -> Result<(), anyhow::Error> {
-            Ok(())
-        }
-
-        async fn fail_transaction(&self, _transaction_id: Uuid) -> Result<(), anyhow::Error> {
-            Ok(())
-        }
-
         async fn create_transaction_with_journal(
             &self,
             _transaction: Transaction,
+            _ledger_id: String,
             _journal_entry: JournalEntry,
             _journal_lines: Vec<JournalLine>,
         ) -> Result<Uuid, anyhow::Error> {

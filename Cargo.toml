@@ -30,6 +30,7 @@ clap_derive = "4.5"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 mockall = "0.10"
+tokio-cron-scheduler = { version = "*", features = ["signal"] }
 
 [dependencies.uuid]
 version = "1.10.0"
@@ -38,6 +39,12 @@ features = [
     "fast-rng",          # Use a faster (but still sufficiently random) RNG
     "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
     "serde",
+]
+
+[dependencies.redis]
+version = "*"
+features = [
+  "tokio-comp"
 ]
 
 [[bin]]

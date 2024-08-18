@@ -35,11 +35,10 @@ impl BankAccountServices {
 pub trait BankAccountApi: Sync + Send {
     async fn get_house_account(&self, currency: Currency) -> Result<HouseAccount, anyhow::Error>;
     async fn note_ledger(&self, id: String, command: LedgerCommand) -> Result<(), anyhow::Error>;
-    async fn fail_transaction(&self, transaction_id: Uuid) -> Result<(), anyhow::Error>;
-    async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), anyhow::Error>;
     async fn create_transaction_with_journal(
         &self,
         transaction: Transaction,
+        ledger_id: String,
         journal_entry: JournalEntry,
         journal_lines: Vec<JournalLine>,
     ) -> Result<Uuid, anyhow::Error>;
@@ -76,28 +75,15 @@ impl BankAccountApi for BankAccountLogic {
             .map_err(|e| anyhow!("Failed to write ledger: {}", e))
     }
 
-    async fn fail_transaction(&self, transaction_id: Uuid) -> Result<(), anyhow::Error> {
-        self.database
-            .complete_transaction(transaction_id)
-            .await
-            .map_err(|e| anyhow!("Failed to update transaction: {}", e))
-    }
-
-    async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), anyhow::Error> {
-        self.database
-            .complete_transaction(transaction_id)
-            .await
-            .map_err(|e| anyhow!("Failed to update transaction: {}", e))
-    }
-
     async fn create_transaction_with_journal(
         &self,
         transaction: Transaction,
+        ledger_id: String,
         journal_entry: JournalEntry,
         journal_lines: Vec<JournalLine>,
     ) -> Result<Uuid, anyhow::Error> {
         self.database
-            .create_transaction_with_journal(transaction, journal_entry, journal_lines)
+            .create_transaction_with_journal(transaction, ledger_id, journal_entry, journal_lines)
             .await
             .map_err(|e| anyhow!("Failed to write transaction: {}", e))
     }
