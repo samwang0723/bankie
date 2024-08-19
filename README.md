@@ -33,3 +33,12 @@ cargo run --bin bankie -- --mode server
 
 ### Update logging level
 Make sure you have ENV variable `RUST_LOG=info`, level has trace, debug, info, warning, error.
+
+### Concurrency testing
+It is critical to make sure the ledger system will not be messup with large amount
+of concurrenct request, in this Bankie system we leverage channel to achieve that.
+Also providing a way to do pressure testing.
+
+```bash
+make over-withdrawn-test
+```

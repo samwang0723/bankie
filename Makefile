@@ -30,7 +30,7 @@ test:
 # overdrawn test #
 ##################
 # Make sure to start local environment and use k6 to pressure testing
-overdrawn-test:
+over-withdrawn-test:
 	k6 run concurrent_tests/test.js
 
 ########
