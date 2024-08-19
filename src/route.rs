@@ -5,7 +5,7 @@ use crate::common::error::AppError;
 use crate::common::money::Money;
 use crate::event_sourcing::command::{BankAccountCommand, LedgerCommand};
 use crate::house_account::HouseAccountExtractor;
-use crate::state::ApplicationState;
+use crate::SharedState;
 
 use axum::extract::{Extension, Query};
 use axum::extract::{Path, State};
@@ -16,7 +16,6 @@ use cqrs_es::persist::ViewRepository;
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use serde_json::json;
-use sqlx::PgPool;
 use uuid::Uuid;
 
 #[derive(Deserialize)]
@@ -29,9 +28,10 @@ pub struct HouseAccountParams {
 pub async fn bank_account_query_handler(
     Extension(_tenant_id): Extension<i32>,
     Path(id): Path<String>,
-    State(state): State<ApplicationState<PgPool>>,
+    State(state): State<SharedState>,
 ) -> Response {
-    let view = match state.bank_account.unwrap().query.load(&id).await {
+    let bank_account = &state.bank_account.clone().unwrap();
+    let view = match bank_account.query.load(&id).await {
         Ok(view) => view,
         Err(err) => {
             return AppError::InternalServerError(err.to_string()).into_response();
@@ -46,8 +46,8 @@ pub async fn bank_account_query_handler(
 // Serves as our command endpoint to make changes in a `BankAccount` aggregate.
 pub async fn bank_account_command_handler(
     Extension(_tenant_id): Extension<i32>,
-    State(state): State<ApplicationState<PgPool>>,
-    CommandExtractor(metadata, command): CommandExtractor,
+    State(state): State<SharedState>,
+    CommandExtractor(_metadata, command): CommandExtractor,
 ) -> Response {
     let result = match &command {
         BankAccountCommand::OpenAccount { id, .. } => (StatusCode::CREATED, id.to_string()),
@@ -55,24 +55,23 @@ pub async fn bank_account_command_handler(
         BankAccountCommand::Deposit { id, .. } => (StatusCode::OK, id.to_string()),
         BankAccountCommand::Withdrawal { id, .. } => (StatusCode::OK, id.to_string()),
     };
-    match state
-        .bank_account
-        .unwrap()
-        .cqrs
-        .execute_with_metadata(&result.1, command, metadata)
-        .await
-    {
-        Ok(_) => (result.0, Json(json!({"id": result.1}))).into_response(),
-        Err(err) => AppError::BadRequest(err.to_string()).into_response(),
+    if let Some(command_sender) = &state.command_sender {
+        match command_sender.send(command) {
+            Ok(_) => (result.0, Json(json!({"id": result.1}))).into_response(),
+            Err(err) => AppError::BadRequest(err.to_string()).into_response(),
+        }
+    } else {
+        AppError::InternalServerError("Command Sender not found".to_string()).into_response()
     }
 }
 
 pub async fn ledger_query_handler(
     Extension(_tenant_id): Extension<i32>,
     Path(id): Path<String>,
-    State(state): State<ApplicationState<PgPool>>,
+    State(state): State<SharedState>,
 ) -> Response {
-    let view = match state.ledger.unwrap().query.load(&id).await {
+    let ledger = &state.ledger.clone().unwrap();
+    let view = match ledger.query.load(&id).await {
         Ok(view) => view,
         Err(err) => {
             return AppError::InternalServerError(err.to_string()).into_response();
@@ -86,7 +85,7 @@ pub async fn ledger_query_handler(
 
 pub async fn house_account_query_handler(
     Extension(_tenant_id): Extension<i32>,
-    State(state): State<ApplicationState<PgPool>>,
+    State(state): State<SharedState>,
     Query(params): Query<HouseAccountParams>,
 ) -> Response {
     let client = Arc::clone(&state.database);
@@ -98,15 +97,13 @@ pub async fn house_account_query_handler(
 
 pub async fn house_account_create_handler(
     Extension(_tenant_id): Extension<i32>,
-    State(state): State<ApplicationState<PgPool>>,
+    State(state): State<SharedState>,
     HouseAccountExtractor(_metadata, mut house_account): HouseAccountExtractor,
 ) -> Response {
-    let client = Arc::clone(&state.database);
+    let client = &state.database.clone();
     let ledger_id = Uuid::new_v4();
-
-    if let Err(err) = state
-        .ledger
-        .unwrap()
+    let ledger = &state.ledger.clone().unwrap();
+    if let Err(err) = ledger
         .cqrs
         .execute(
             &ledger_id.to_string(),

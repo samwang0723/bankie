@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 use anyhow::{anyhow, Context};
 use rust_decimal::Decimal;
@@ -15,7 +15,9 @@ use crate::{
     state::{ApplicationState, LedgerLoaderSaver},
 };
 
-pub async fn create_ledger_job(state: ApplicationState<PgPool>) -> Result<Job, JobSchedulerError> {
+pub async fn create_ledger_job(
+    state: Arc<ApplicationState<PgPool>>,
+) -> Result<Job, JobSchedulerError> {
     Job::new_async("1/10 * * * * *", move |_uuid, _l| {
         let db = state.database.clone();
         let ledger = state.ledger.clone().unwrap();

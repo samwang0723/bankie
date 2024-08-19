@@ -2,11 +2,14 @@ use std::sync::Arc;
 
 use postgres_es::{default_postgress_pool, PostgresCqrs, PostgresViewRepository};
 use sqlx::PgPool;
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::configs::settings::SETTINGS;
 use crate::domain::models::{BankAccount, BankAccountView, Ledger, LedgerView};
+use crate::event_sourcing::command::BankAccountCommand;
 use crate::repository::adapter::{Adapter, DatabaseClient};
 use crate::repository::configs::{configure_bank_account, configure_ledger};
+use crate::SharedState;
 
 #[derive(Clone)]
 pub struct ApplicationState<C: DatabaseClient + Send + Sync> {
@@ -14,6 +17,7 @@ pub struct ApplicationState<C: DatabaseClient + Send + Sync> {
     pub ledger: Option<LedgerLoaderSaver>,
     pub database: Arc<Adapter<C>>,
     pub cache: Option<Arc<redis::Client>>,
+    pub command_sender: Option<Arc<UnboundedSender<BankAccountCommand>>>,
 }
 
 impl<C: DatabaseClient + Send + Sync> ApplicationState<C> {
@@ -23,6 +27,7 @@ impl<C: DatabaseClient + Send + Sync> ApplicationState<C> {
             ledger: None,
             database: Arc::new(database),
             cache: None,
+            command_sender: None,
         }
     }
 
@@ -38,6 +43,11 @@ impl<C: DatabaseClient + Send + Sync> ApplicationState<C> {
 
     pub fn with_ledger(mut self, ledger: LedgerLoaderSaver) -> Self {
         self.ledger = Some(ledger);
+        self
+    }
+
+    pub fn with_command_sender(mut self, sender: UnboundedSender<BankAccountCommand>) -> Self {
+        self.command_sender = Some(Arc::new(sender));
         self
     }
 }
@@ -59,7 +69,7 @@ pub struct LedgerLoaderSaver {
     pub query: Arc<PostgresViewRepository<LedgerView, Ledger>>,
 }
 
-pub async fn new_application_state() -> ApplicationState<PgPool> {
+pub async fn new_application_state(tx: UnboundedSender<BankAccountCommand>) -> SharedState {
     // Configure the CQRS framework, backed by a Postgres database, along with two queries:
     // - a simply-query prints events to stdout as they are published
     // - `query` stores the current state of the account in a ViewRepository that we can access
@@ -73,11 +83,14 @@ pub async fn new_application_state() -> ApplicationState<PgPool> {
 
     let cache = redis::Client::open(SETTINGS.redis.connection_string()).unwrap();
 
-    ApplicationState::<PgPool>::new(Adapter::new(pool))
-        .with_cache(cache)
-        .with_bank_account(BankAccountLoaderSaver {
-            cqrs: bc_cqrs,
-            query: bc_query,
-        })
-        .with_ledger(ledger_loader_saver)
+    Arc::new(
+        ApplicationState::<PgPool>::new(Adapter::new(pool))
+            .with_cache(cache)
+            .with_bank_account(BankAccountLoaderSaver {
+                cqrs: bc_cqrs,
+                query: bc_query,
+            })
+            .with_ledger(ledger_loader_saver)
+            .with_command_sender(tx),
+    )
 }

@@ -4,15 +4,18 @@ use axum::Router;
 use axum::{middleware, routing::get, routing::post};
 use clap::Parser;
 use clap_derive::Parser;
+use event_sourcing::command::BankAccountCommand;
 use job::create_ledger_job;
 use route::{
     bank_account_command_handler, bank_account_query_handler, house_account_create_handler,
     house_account_query_handler, ledger_query_handler,
 };
 use sqlx::PgPool;
-use state::new_application_state;
+use state::{new_application_state, ApplicationState};
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::task;
 use tokio_cron_scheduler::JobScheduler;
 use tower_http::add_extension::AddExtensionLayer;
 use tower_http::compression::CompressionLayer;
@@ -44,6 +47,24 @@ struct Args {
     service: Option<String>,
 }
 
+// Wrap ApplicationState in Arc for thread-safe sharing
+type SharedState = Arc<ApplicationState<PgPool>>;
+
+async fn process_commands(state: SharedState, mut rx: mpsc::UnboundedReceiver<BankAccountCommand>) {
+    while let Some(command) = rx.recv().await {
+        info!("Processing command: {:?}", command);
+        let id = match &command {
+            BankAccountCommand::OpenAccount { id, .. } => id,
+            BankAccountCommand::ApproveAccount { id, .. } => id,
+            BankAccountCommand::Deposit { id, .. } => id,
+            BankAccountCommand::Withdrawal { id, .. } => id,
+        };
+        if let Some(bank_account) = &state.bank_account {
+            let _ = bank_account.cqrs.execute(&id.to_string(), command).await;
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().ok();
@@ -64,7 +85,18 @@ async fn main() {
             }
         }
         "server" => {
-            let state = new_application_state().await;
+            let (tx, rx): (
+                UnboundedSender<BankAccountCommand>,
+                UnboundedReceiver<BankAccountCommand>,
+            ) = mpsc::unbounded_channel();
+            let state = new_application_state(tx).await;
+
+            // Clone Arc for the background task
+            let command_state = state.clone();
+            // Spawn a background task to process commands
+            task::spawn(async move {
+                process_commands(command_state, rx).await;
+            });
 
             // Add cron job for update ledger from outbox events
             let sched = JobScheduler::new().await.unwrap();
@@ -85,7 +117,7 @@ async fn main() {
                     get(house_account_query_handler).post(house_account_create_handler),
                 )
                 .layer(middleware::from_fn(authorize::<PgPool>))
-                .layer(AddExtensionLayer::new(Arc::new(state.clone())))
+                .layer(AddExtensionLayer::new(state.clone()))
                 .layer(comression_layer)
                 .layer(TraceLayer::new_for_http())
                 .with_state(state);
