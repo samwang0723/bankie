@@ -26,6 +26,13 @@ test:
 	cargo test -- --nocapture
 	cargo llvm-cov nextest
 
+##################
+# overdrawn test #
+##################
+# Make sure to start local environment and use k6 to pressure testing
+overdrawn-test:
+	k6 run concurrent_tests/test.js
+
 ########
 # lint #
 ########

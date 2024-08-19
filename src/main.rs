@@ -20,7 +20,7 @@ use tokio_cron_scheduler::JobScheduler;
 use tower_http::add_extension::AddExtensionLayer;
 use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
-use tracing::info;
+use tracing::{error, info};
 
 mod auth;
 mod command;
@@ -58,9 +58,17 @@ async fn process_commands(state: SharedState, mut rx: mpsc::UnboundedReceiver<Ba
             BankAccountCommand::ApproveAccount { id, .. } => id,
             BankAccountCommand::Deposit { id, .. } => id,
             BankAccountCommand::Withdrawal { id, .. } => id,
-        };
+        }
+        .to_string();
         if let Some(bank_account) = &state.bank_account {
-            let _ = bank_account.cqrs.execute(&id.to_string(), command).await;
+            match bank_account.cqrs.execute(&id, command).await {
+                Ok(_) => {
+                    info!("Command processed successfully: {}", id);
+                }
+                Err(e) => {
+                    error!("Error processing command: {:?}", e);
+                }
+            }
         }
     }
 }
