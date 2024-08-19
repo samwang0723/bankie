@@ -56,7 +56,7 @@ pub async fn create_ledger_job(state: ApplicationState<PgPool>) -> Result<Job, J
 async fn process_event(event: Outbox, ledger: &LedgerLoaderSaver) -> Result<Uuid, anyhow::Error> {
     let key = match event.event_type.as_str() {
         "LedgerCommand::Credit" => "Credit",
-        "LedgerCommand::Debit" => "Debit",
+        "LedgerCommand::Debit" => "DebitRelease",
         _ => panic!("Unknown event type: {}", event.event_type),
     };
     let payload = event.payload;
@@ -95,7 +95,7 @@ async fn process_event(event: Outbox, ledger: &LedgerLoaderSaver) -> Result<Uuid
             transaction_id,
             amount,
         },
-        "LedgerCommand::Debit" => LedgerCommand::Debit {
+        "LedgerCommand::Debit" => LedgerCommand::DebitRelease {
             id,
             account_id,
             transaction_id,

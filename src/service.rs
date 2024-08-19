@@ -56,6 +56,13 @@ pub trait BankAccountApi: Sync + Send {
         kind: BankAccountKind,
     ) -> Result<bool, anyhow::Error>;
     async fn get_bank_account(&self, account_id: Uuid) -> Result<BankAccountView, anyhow::Error>;
+    async fn debit_hold(
+        &self,
+        account_id: Uuid,
+        ledger_id: Uuid,
+        transaction_id: Uuid,
+        amount: Money,
+    ) -> Result<(), anyhow::Error>;
 }
 
 pub struct BankAccountLogic {
@@ -164,6 +171,25 @@ impl BankAccountApi for BankAccountLogic {
                 Some(account_view) => Ok(account_view),
             },
             Err(err) => Err(err.into()),
+        }
+    }
+
+    async fn debit_hold(
+        &self,
+        account_id: Uuid,
+        ledger_id: Uuid,
+        transaction_id: Uuid,
+        amount: Money,
+    ) -> Result<(), anyhow::Error> {
+        let cmd = LedgerCommand::DebitHold {
+            id: ledger_id,
+            account_id,
+            transaction_id,
+            amount,
+        };
+        match self.ledger.cqrs.execute(&ledger_id.to_string(), cmd).await {
+            Ok(_) => Ok(()),
+            Err(err) => Err(anyhow!("Failed to debit hold: {}", err)),
         }
     }
 }

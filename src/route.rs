@@ -47,7 +47,7 @@ pub async fn bank_account_query_handler(
 pub async fn bank_account_command_handler(
     Extension(_tenant_id): Extension<i32>,
     State(state): State<ApplicationState<PgPool>>,
-    CommandExtractor(metadata, command): CommandExtractor,
+    CommandExtractor(_metadata, command): CommandExtractor,
 ) -> Response {
     let result = match &command {
         BankAccountCommand::OpenAccount { id, .. } => (StatusCode::CREATED, id.to_string()),
@@ -55,15 +55,14 @@ pub async fn bank_account_command_handler(
         BankAccountCommand::Deposit { id, .. } => (StatusCode::OK, id.to_string()),
         BankAccountCommand::Withdrawal { id, .. } => (StatusCode::OK, id.to_string()),
     };
-    match state
-        .bank_account
-        .unwrap()
-        .cqrs
-        .execute_with_metadata(&result.1, command, metadata)
-        .await
-    {
-        Ok(_) => (result.0, Json(json!({"id": result.1}))).into_response(),
-        Err(err) => AppError::BadRequest(err.to_string()).into_response(),
+
+    if let Some(command_sender) = &state.command_sender {
+        match command_sender.send(command) {
+            Ok(_) => (result.0, Json(json!({"id": result.1}))).into_response(),
+            Err(err) => AppError::BadRequest(err.to_string()).into_response(),
+        }
+    } else {
+        AppError::InternalServerError("Command Sender not found".to_string()).into_response()
     }
 }
 
