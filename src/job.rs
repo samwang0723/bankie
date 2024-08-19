@@ -1,8 +1,7 @@
-use std::{str::FromStr, sync::Arc};
+use std::str::FromStr;
 
 use anyhow::{anyhow, Context};
 use rust_decimal::Decimal;
-use sqlx::PgPool;
 use tokio_cron_scheduler::{Job, JobSchedulerError};
 use tracing::{error, info};
 use uuid::Uuid;
@@ -12,12 +11,11 @@ use crate::{
     domain::finance::Outbox,
     event_sourcing::command::LedgerCommand,
     repository::redis::{acquire_lock, release_lock, LOCK_KEY, LOCK_TIMEOUT},
-    state::{ApplicationState, LedgerLoaderSaver},
+    state::LedgerLoaderSaver,
+    SharedState,
 };
 
-pub async fn create_ledger_job(
-    state: Arc<ApplicationState<PgPool>>,
-) -> Result<Job, JobSchedulerError> {
+pub async fn create_ledger_job(state: SharedState) -> Result<Job, JobSchedulerError> {
     Job::new_async("1/10 * * * * *", move |_uuid, _l| {
         let db = state.database.clone();
         let ledger = state.ledger.clone().unwrap();
@@ -65,18 +63,18 @@ async fn process_event(event: Outbox, ledger: &LedgerLoaderSaver) -> Result<Uuid
 
     info!("payload: {}", payload[key]);
     let id_str = payload[key]["id"].as_str().context("Missing 'id' field")?;
-    let id = Uuid::from_str(id_str).context("Invalid 'id' format")?;
+    let id = Uuid::parse_str(id_str).context("Invalid 'id' format")?;
 
     let account_id_str = payload[key]["account_id"]
         .as_str()
         .context("Missing 'account_id' field")?;
-    let account_id = Uuid::from_str(account_id_str).context("Invalid 'account_id' format")?;
+    let account_id = Uuid::parse_str(account_id_str).context("Invalid 'account_id' format")?;
 
     let transaction_id_str = payload[key]["transaction_id"]
         .as_str()
         .context("Missing 'transaction_id' field")?;
     let transaction_id =
-        Uuid::from_str(transaction_id_str).context("Invalid 'transaction_id' format")?;
+        Uuid::parse_str(transaction_id_str).context("Invalid 'transaction_id' format")?;
 
     let amount_str = payload[key]["amount"]["amount"]
         .as_str()
