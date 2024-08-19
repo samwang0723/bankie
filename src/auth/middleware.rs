@@ -118,12 +118,9 @@ mod tests {
         mock_db_client
             .expect_get_tenant_profile()
             .returning(move |_| Ok(tenant.clone()));
-        let state = Arc::new(ApplicationState {
-            database: Arc::new(Adapter::new(mock_db_client)),
-            bank_account: None,
-            ledger: None,
-            cache: None,
-        });
+        let state = Arc::new(ApplicationState::<MockDatabaseClient>::new(Adapter::new(
+            mock_db_client,
+        )));
 
         // Create a request with the authorization header
         let mut req = Request::builder()
@@ -172,12 +169,9 @@ mod tests {
         mock_db_client
             .expect_get_tenant_profile()
             .returning(move |_| Ok(tenant.clone()));
-        let state = Arc::new(ApplicationState {
-            database: Arc::new(Adapter::new(mock_db_client)),
-            bank_account: None,
-            ledger: None,
-            cache: None,
-        });
+        let state = Arc::new(ApplicationState::<MockDatabaseClient>::new(Adapter::new(
+            mock_db_client,
+        )));
 
         // Create a request with the authorization header
         let mut req = Request::builder()

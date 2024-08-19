@@ -16,6 +16,32 @@ pub struct ApplicationState<C: DatabaseClient + Send + Sync> {
     pub cache: Option<Arc<redis::Client>>,
 }
 
+impl<C: DatabaseClient + Send + Sync> ApplicationState<C> {
+    pub fn new(database: Adapter<C>) -> Self {
+        Self {
+            bank_account: None,
+            ledger: None,
+            database: Arc::new(database),
+            cache: None,
+        }
+    }
+
+    pub fn with_cache(mut self, cache: redis::Client) -> Self {
+        self.cache = Some(Arc::new(cache));
+        self
+    }
+
+    pub fn with_bank_account(mut self, bank_account: BankAccountLoaderSaver) -> Self {
+        self.bank_account = Some(bank_account);
+        self
+    }
+
+    pub fn with_ledger(mut self, ledger: LedgerLoaderSaver) -> Self {
+        self.ledger = Some(ledger);
+        self
+    }
+}
+
 #[derive(Clone)]
 pub struct BankAccountLoaderSaver {
     pub cqrs: Arc<PostgresCqrs<BankAccount>>,
@@ -47,13 +73,11 @@ pub async fn new_application_state() -> ApplicationState<PgPool> {
 
     let cache = redis::Client::open(SETTINGS.redis.connection_string()).unwrap();
 
-    ApplicationState {
-        bank_account: Some(BankAccountLoaderSaver {
+    ApplicationState::<PgPool>::new(Adapter::new(pool))
+        .with_cache(cache)
+        .with_bank_account(BankAccountLoaderSaver {
             cqrs: bc_cqrs,
             query: bc_query,
-        }),
-        ledger: Some(ledger_loader_saver),
-        database: Arc::new(Adapter::new(pool)),
-        cache: Some(Arc::new(cache)),
-    }
+        })
+        .with_ledger(ledger_loader_saver)
 }
