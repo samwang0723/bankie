@@ -48,7 +48,7 @@ pub fn configure_bank_account(
 
     let repo = PostgresEventRepository::new(pool)
         .with_tables("bank_account_events", "bank_account_snapshots");
-    let store = PersistedEventStore::new_event_store(repo);
+    let store = PersistedEventStore::new_snapshot_store(repo, 2);
     let cqrs = CqrsFramework::new(store, queries, services);
 
     (Arc::new(cqrs), account_view_repo)
@@ -77,7 +77,7 @@ pub fn configure_ledger(
         vec![Box::new(logging_query), Box::new(ledger_query)];
 
     let repo = PostgresEventRepository::new(pool).with_tables("ledger_events", "ledger_snapshots");
-    let store = PersistedEventStore::new_event_store(repo);
+    let store = PersistedEventStore::new_snapshot_store(repo, 2);
     let cqrs = CqrsFramework::new(store, queries, MockLedgerServices {});
 
     (Arc::new(cqrs), ledger_view_repo)

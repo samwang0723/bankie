@@ -155,7 +155,7 @@ impl DatabaseClient for PgPool {
                 amount: Money::new(transaction.amount, Currency::from(transaction.currency)),
             }
         } else {
-            LedgerCommand::Debit {
+            LedgerCommand::DebitRelease {
                 id: Uuid::parse_str(&ledger_id).unwrap(),
                 account_id: transaction.bank_account_id,
                 transaction_id,

@@ -52,19 +52,6 @@ pub async fn init_ledger(
         .map_err(|_| "ledger write failed".into())
 }
 
-pub async fn validate_ledger_action(
-    bank_account: &BankAccount,
-    services: &BankAccountServices,
-    action: LedgerAction,
-    amount: Money,
-) -> Result<(), error::BankAccountError> {
-    services
-        .services
-        .validate(Uuid::parse_str(&bank_account.id).unwrap(), action, amount)
-        .await
-        .map_err(|_| "validation failed".into())
-}
-
 pub async fn create_transaction_with_journal(
     bank_account: &BankAccount,
     services: &BankAccountServices,
@@ -72,6 +59,16 @@ pub async fn create_transaction_with_journal(
     house_account_ledger: String,
     action_type: LedgerAction,
 ) -> Result<Uuid, error::BankAccountError> {
+    // Validate ledger available is sufficient
+    services
+        .services
+        .validate(
+            Uuid::parse_str(&bank_account.id).unwrap(),
+            action_type,
+            amount,
+        )
+        .await?;
+
     let key = match action_type {
         LedgerAction::Deposit => TRANS_DEPOSIT,
         LedgerAction::Withdraw => TRANS_WITHDRAWAL,

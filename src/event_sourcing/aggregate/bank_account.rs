@@ -3,6 +3,7 @@ use command::BankAccountCommand;
 use cqrs_es::Aggregate;
 use event::Event;
 use models::LedgerAction;
+use uuid::Uuid;
 
 use crate::domain::*;
 use crate::event_sourcing::*;
@@ -67,9 +68,6 @@ impl Aggregate for models::BankAccount {
                     .await
                     .map_err(|_| "house account not found")?;
 
-                helper::validate_ledger_action(self, services, LedgerAction::Deposit, amount)
-                    .await?;
-
                 helper::create_transaction_with_journal(
                     self,
                     services,
@@ -81,19 +79,16 @@ impl Aggregate for models::BankAccount {
 
                 Ok(vec![])
             }
-            BankAccountCommand::Withdrawal { id: _, amount } => {
+            BankAccountCommand::Withdrawal { id, amount } => {
                 let house_account = services
                     .services
                     .get_house_account(amount.currency)
                     .await
                     .map_err(|_| "house account not found")?;
 
-                helper::validate_ledger_action(self, services, LedgerAction::Withdraw, amount)
-                    .await?;
-
                 // Here we create transaction and journal. with outbox record
                 // support, later on have job to credit/debit ledger.
-                helper::create_transaction_with_journal(
+                let transaction_id = helper::create_transaction_with_journal(
                     self,
                     services,
                     amount,
@@ -101,6 +96,18 @@ impl Aggregate for models::BankAccount {
                     LedgerAction::Withdraw,
                 )
                 .await?;
+
+                // In order to prevent over withdraw, must debit hold here and
+                // move the balance to pending
+                services
+                    .services
+                    .debit_hold(
+                        id,
+                        Uuid::parse_str(&self.ledger_id).unwrap(),
+                        transaction_id,
+                        amount,
+                    )
+                    .await?;
 
                 Ok(vec![])
             }
@@ -375,6 +382,16 @@ mod aggregate_tests {
             _account_id: Uuid,
         ) -> Result<BankAccountView, anyhow::Error> {
             Ok(BankAccountView::default())
+        }
+
+        async fn debit_hold(
+            &self,
+            _account_id: Uuid,
+            _ledger_id: Uuid,
+            _transaction_id: Uuid,
+            _amount: Money,
+        ) -> Result<(), anyhow::Error> {
+            Ok(())
         }
     }
 }

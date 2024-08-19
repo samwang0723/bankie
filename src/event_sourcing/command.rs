@@ -44,7 +44,13 @@ pub enum LedgerCommand {
         transaction_id: Uuid,
         amount: Money,
     },
-    Debit {
+    DebitHold {
+        id: Uuid,
+        account_id: Uuid,
+        transaction_id: Uuid,
+        amount: Money,
+    },
+    DebitRelease {
         id: Uuid,
         account_id: Uuid,
         transaction_id: Uuid,

@@ -43,7 +43,7 @@ impl Aggregate for models::Ledger {
                     base_event: base_event.clone(),
                 }])
             }
-            LedgerCommand::Debit {
+            LedgerCommand::DebitHold {
                 id,
                 account_id,
                 transaction_id,
@@ -53,24 +53,33 @@ impl Aggregate for models::Ledger {
                 base_event.set_aggregate_id(id);
                 base_event.set_parent_id(account_id);
                 base_event.set_created_at(chrono::Utc::now());
-                Ok(vec![
-                    events::LedgerEvent::LedgerUpdated {
-                        amount,
-                        transaction_id: transaction_id.to_string(),
-                        transaction_type: "debit_hold".to_string(),
-                        available_delta: Money::new(Decimal::ZERO - amount.amount, amount.currency),
-                        pending_delta: Money::new(amount.amount, amount.currency),
-                        base_event: base_event.clone(),
-                    },
-                    events::LedgerEvent::LedgerUpdated {
-                        amount,
-                        transaction_id: transaction_id.to_string(),
-                        transaction_type: "debit_release".to_string(),
-                        available_delta: Money::new(Decimal::ZERO, amount.currency),
-                        pending_delta: Money::new(Decimal::ZERO - amount.amount, amount.currency),
-                        base_event,
-                    },
-                ])
+                Ok(vec![events::LedgerEvent::LedgerUpdated {
+                    amount,
+                    transaction_id: transaction_id.to_string(),
+                    transaction_type: "debit_hold".to_string(),
+                    available_delta: Money::new(Decimal::ZERO - amount.amount, amount.currency),
+                    pending_delta: Money::new(amount.amount, amount.currency),
+                    base_event: base_event.clone(),
+                }])
+            }
+            LedgerCommand::DebitRelease {
+                id,
+                account_id,
+                transaction_id,
+                amount,
+            } => {
+                let mut base_event = BaseEvent::default();
+                base_event.set_aggregate_id(id);
+                base_event.set_parent_id(account_id);
+                base_event.set_created_at(chrono::Utc::now());
+                Ok(vec![events::LedgerEvent::LedgerUpdated {
+                    amount,
+                    transaction_id: transaction_id.to_string(),
+                    transaction_type: "debit_release".to_string(),
+                    available_delta: Money::new(Decimal::ZERO, amount.currency),
+                    pending_delta: Money::new(Decimal::ZERO - amount.amount, amount.currency),
+                    base_event,
+                }])
             }
             LedgerCommand::Credit {
                 id,
@@ -257,29 +266,19 @@ mod aggregate_tests {
                 base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID)
             }
         ],
-        LedgerCommand::Debit {
+        LedgerCommand::DebitHold {
             id: *LEDGER_ID,
             account_id: *ACCOUNT_ID,
             transaction_id: *TRANSACTION_ID,
             amount: Money::new(dec!(200.0), Currency::USD),
         },
-        vec![
-            LedgerEvent::LedgerUpdated {
-                amount: Money::new(dec!(200.0), Currency::USD),
-                transaction_id: TRANSACTION_ID.to_string(),
-                transaction_type: "debit_hold".to_string(),
-                available_delta: Money::new(Decimal::ZERO - dec!(200.0), Currency::USD),
-                pending_delta: Money::new(dec!(200.0), Currency::USD),
-                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID)
-            },
-            LedgerEvent::LedgerUpdated {
-                amount: Money::new(dec!(200.0), Currency::USD),
-                transaction_id: TRANSACTION_ID.to_string(),
-                transaction_type: "debit_release".to_string(),
-                pending_delta: Money::new(Decimal::ZERO - dec!(200.0), Currency::USD),
-                available_delta: Money::new(Decimal::ZERO, Currency::USD),
-                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID)
-            }
-        ]
+        vec![LedgerEvent::LedgerUpdated {
+            amount: Money::new(dec!(200.0), Currency::USD),
+            transaction_id: TRANSACTION_ID.to_string(),
+            transaction_type: "debit_hold".to_string(),
+            available_delta: Money::new(Decimal::ZERO - dec!(200.0), Currency::USD),
+            pending_delta: Money::new(dec!(200.0), Currency::USD),
+            base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID)
+        }]
     );
 }
