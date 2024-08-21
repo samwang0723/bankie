@@ -21,7 +21,7 @@ pub async fn create_ledger_job(state: SharedState) -> Result<Job, JobSchedulerEr
         let ledger = state.ledger.clone().unwrap();
         let cache = state.cache.clone().unwrap();
         Box::pin(async move {
-            match db.fetch_unprocessed_outbox().await {
+            match db.get_unprocessed_outbox().await {
                 Ok(events) => {
                     // acquire lock
                     let identifier = acquire_lock(&cache, LOCK_KEY, LOCK_TIMEOUT).await.unwrap();

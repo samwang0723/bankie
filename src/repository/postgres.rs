@@ -351,7 +351,7 @@ impl DatabaseClient for PgPool {
         })
     }
 
-    async fn fetch_unprocessed_outbox(&self) -> Result<Vec<Outbox>, Error> {
+    async fn get_unprocessed_outbox(&self) -> Result<Vec<Outbox>, Error> {
         let outbox = sqlx::query_as!(
             Outbox,
             r#"
@@ -366,5 +366,40 @@ impl DatabaseClient for PgPool {
         .await?;
 
         Ok(outbox)
+    }
+
+    async fn get_transactions(
+        &self,
+        bank_account_id: String,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<Transaction>, Error> {
+        let transactions = sqlx::query_as!(
+            Transaction,
+            r#"
+            SELECT
+                id,
+                bank_account_id,
+                transaction_reference,
+                transaction_date,
+                amount,
+                currency,
+                description,
+                metadata,
+                status,
+                journal_entry_id
+            FROM transactions
+            WHERE bank_account_id = $1
+            ORDER BY created_at DESC
+            OFFSET $2 LIMIT $3
+            "#,
+            Uuid::parse_str(&bank_account_id).unwrap(),
+            offset,
+            limit,
+        )
+        .fetch_all(self)
+        .await?;
+
+        Ok(transactions)
     }
 }

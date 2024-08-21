@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::command::CommandExtractor;
 use crate::common::error::AppError;
 use crate::common::money::Money;
+use crate::domain::finance::TransactionWithMoney;
 use crate::event_sourcing::command::{BankAccountCommand, LedgerCommand};
 use crate::house_account::HouseAccountExtractor;
 use crate::SharedState;
@@ -21,6 +22,13 @@ use uuid::Uuid;
 #[derive(Deserialize)]
 pub struct HouseAccountParams {
     pub currency: String,
+}
+
+#[derive(Deserialize)]
+pub struct TransactionParams {
+    pub bank_account_id: String,
+    pub offset: i64,
+    pub limit: i64,
 }
 
 pub async fn user_query_handler(
@@ -137,4 +145,27 @@ pub async fn house_account_create_handler(
     }
 
     (StatusCode::CREATED, Json(json!({ "id": house_account_id}))).into_response()
+}
+
+pub async fn transaction_query_handler(
+    Extension(_tenant_id): Extension<i32>,
+    State(state): State<SharedState>,
+    Query(params): Query<TransactionParams>,
+) -> Response {
+    let client = &state.database.clone();
+    match client
+        .get_transactions(params.bank_account_id, params.offset, params.limit)
+        .await
+    {
+        Ok(transactions) => {
+            // convert transaction using into_transaction_with_money and insert
+            // into Vec again to make sure the amount precision
+            let transactions: Vec<TransactionWithMoney> = transactions
+                .into_iter()
+                .map(|t| t.into_transaction_with_money())
+                .collect();
+            (StatusCode::OK, Json(json!({ "entries": transactions }))).into_response()
+        }
+        Err(err) => AppError::InternalServerError(err.to_string()).into_response(),
+    }
 }

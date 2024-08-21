@@ -8,7 +8,8 @@ use event_sourcing::command::BankAccountCommand;
 use job::create_ledger_job;
 use route::{
     bank_account_command_handler, bank_account_query_handler, house_account_create_handler,
-    house_account_query_handler, ledger_query_handler, user_query_handler,
+    house_account_query_handler, ledger_query_handler, transaction_query_handler,
+    user_query_handler,
 };
 use sqlx::PgPool;
 use state::{new_application_state, ApplicationState};
@@ -125,6 +126,7 @@ async fn main() {
                     get(house_account_query_handler).post(house_account_create_handler),
                 )
                 .route("/v1/user/:id", get(user_query_handler))
+                .route("/v1/transaction", get(transaction_query_handler))
                 .layer(middleware::from_fn(authorize::<PgPool>))
                 .layer(AddExtensionLayer::new(state.clone()))
                 .layer(comression_layer)

@@ -1,15 +1,18 @@
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
+use serde::Serialize;
 use serde_json::Value;
 use sqlx::prelude::FromRow;
 use uuid::Uuid;
+
+use crate::common::money::Money;
 
 use super::models::LedgerAction;
 
 pub const TRANS_DEPOSIT: &str = "DE";
 pub const TRANS_WITHDRAWAL: &str = "WI";
 
-#[derive(FromRow, Debug)]
+#[derive(FromRow, Debug, Serialize)]
 pub struct Transaction {
     pub id: Uuid,
     pub bank_account_id: Uuid,
@@ -24,6 +27,19 @@ pub struct Transaction {
     pub journal_entry_id: Option<Uuid>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct TransactionWithMoney {
+    pub id: Uuid,
+    pub bank_account_id: Uuid,
+    pub transaction_reference: String,
+    pub transaction_date: NaiveDate,
+    pub amount: String,
+    pub currency: String,
+    pub description: Option<String>,
+    pub metadata: Value,
+    pub status: String,
+}
+
 impl Transaction {
     pub fn transaction_type(&self) -> LedgerAction {
         // if transaction_reference contains DE / WI
@@ -33,6 +49,22 @@ impl Transaction {
             LedgerAction::Withdraw
         } else {
             panic!("Invalid transaction type");
+        }
+    }
+}
+
+impl Transaction {
+    pub fn into_transaction_with_money(self) -> TransactionWithMoney {
+        TransactionWithMoney {
+            id: self.id,
+            bank_account_id: self.bank_account_id,
+            transaction_reference: self.transaction_reference,
+            transaction_date: self.transaction_date,
+            amount: format!("{}", Money::new(self.amount, self.currency.clone().into())),
+            currency: self.currency,
+            description: self.description,
+            metadata: self.metadata,
+            status: self.status,
         }
     }
 }

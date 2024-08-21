@@ -41,7 +41,13 @@ pub trait DatabaseClient {
     async fn create_tenant_profile(&self, name: &str, scope: &str) -> Result<i32, Error>;
     async fn update_tenant_profile(&self, id: i32, jwt: &str) -> Result<i32, Error>;
     async fn get_tenant_profile(&self, tenant_id: i32) -> Result<Tenant, Error>;
-    async fn fetch_unprocessed_outbox(&self) -> Result<Vec<Outbox>, Error>;
+    async fn get_unprocessed_outbox(&self) -> Result<Vec<Outbox>, Error>;
+    async fn get_transactions(
+        &self,
+        bank_account_id: String,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<Transaction>, Error>;
 }
 
 pub struct Adapter<C: DatabaseClient + Send + Sync> {
@@ -108,8 +114,8 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
         self.client.get_tenant_profile(tenant_id).await
     }
 
-    pub async fn fetch_unprocessed_outbox(&self) -> Result<Vec<Outbox>, Error> {
-        self.client.fetch_unprocessed_outbox().await
+    pub async fn get_unprocessed_outbox(&self) -> Result<Vec<Outbox>, Error> {
+        self.client.get_unprocessed_outbox().await
     }
 
     pub async fn get_user_bank_accounts(
@@ -117,5 +123,16 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
         user_id: String,
     ) -> Result<Vec<BankAccountWithLedger>, Error> {
         self.client.get_user_bank_accounts(user_id).await
+    }
+
+    pub async fn get_transactions(
+        &self,
+        bank_account_id: String,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<Transaction>, Error> {
+        self.client
+            .get_transactions(bank_account_id, offset, limit)
+            .await
     }
 }

@@ -226,7 +226,7 @@ mod money_tests {
     #[test]
     fn test_money_display() {
         let usd = Money::new(dec!(50.00), Currency::USD);
-        let twd = Money::new(dec!(50), Currency::TWD);
+        let twd = Money::new(dec!(50.00), Currency::TWD);
         assert_eq!(format!("{}", usd), "50.00");
         assert_eq!(format!("{}", twd), "50");
     }

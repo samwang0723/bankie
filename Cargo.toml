@@ -17,7 +17,7 @@ sqlx = { version = "0.7.4", features = ["postgres", "runtime-tokio-rustls", "jso
 lazy_static = "1.5"
 config = "0.14"
 dotenv = "0.15.0"
-chrono = { version = "^0.4.20", default-features = false, features = ["clock"] }
+chrono = { version = "^0.4.20", default-features = false, features = ["clock", "serde"] }
 anyhow = "1"
 rs-snowflake = "0.6"
 axum = "0.7"
