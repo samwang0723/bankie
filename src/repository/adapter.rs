@@ -9,12 +9,17 @@ use crate::{
         finance::{JournalEntry, JournalLine, Outbox, Transaction},
         models::{BankAccountKind, HouseAccount},
         tenant::Tenant,
+        user::BankAccountWithLedger,
     },
 };
 
 #[automock]
 #[async_trait]
 pub trait DatabaseClient {
+    async fn get_user_bank_accounts(
+        &self,
+        user_id: String,
+    ) -> Result<Vec<BankAccountWithLedger>, Error>;
     async fn fail_transaction(&self, transaction_id: Uuid) -> Result<(), Error>;
     async fn complete_transaction(&self, transaction_id: Uuid) -> Result<(), Error>;
     async fn create_transaction_with_journal(
@@ -105,5 +110,12 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
 
     pub async fn fetch_unprocessed_outbox(&self) -> Result<Vec<Outbox>, Error> {
         self.client.fetch_unprocessed_outbox().await
+    }
+
+    pub async fn get_user_bank_accounts(
+        &self,
+        user_id: String,
+    ) -> Result<Vec<BankAccountWithLedger>, Error> {
+        self.client.get_user_bank_accounts(user_id).await
     }
 }

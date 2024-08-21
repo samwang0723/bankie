@@ -23,6 +23,18 @@ pub struct HouseAccountParams {
     pub currency: String,
 }
 
+pub async fn user_query_handler(
+    Extension(_tenant_id): Extension<i32>,
+    Path(id): Path<String>,
+    State(state): State<SharedState>,
+) -> Response {
+    let client = Arc::clone(&state.database);
+    match client.get_user_bank_accounts(id).await {
+        Ok(accounts) => (StatusCode::OK, Json(json!({ "entries": accounts }))).into_response(),
+        Err(err) => AppError::InternalServerError(err.to_string()).into_response(),
+    }
+}
+
 // Serves as our query endpoint to respond with the materialized `BankAccountView`
 // for the requested account.
 pub async fn bank_account_query_handler(

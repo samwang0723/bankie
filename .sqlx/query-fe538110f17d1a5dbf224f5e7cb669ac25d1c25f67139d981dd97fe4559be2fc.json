@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                select \n                    b.payload->>'id' as id,\n                    b.payload->>'status' as status,\n                    b.payload->>'account_type' as account_type,\n                    b.payload->>'kind' as kind,\n                    b.payload->>'currency' as currency,\n                    (l.payload->'available'->>'amount')::numeric as available,\n                    (l.payload->'pending'->>'amount')::numeric as pending,\n                    (l.payload->'current'->>'amount')::numeric as current,\n                    b.payload->>'created_at' as created_at,\n                    b.payload->>'updated_at' as updated_at\n                from bank_account_views b \n                left join ledger_views l on b.payload->>'ledger_id' = l.view_id \n                where b.payload->>'user_id' = $1;\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "account_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "currency",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "available",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 6,
+        "name": "pending",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 7,
+        "name": "current",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "updated_at",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "fe538110f17d1a5dbf224f5e7cb669ac25d1c25f67139d981dd97fe4559be2fc"
+}

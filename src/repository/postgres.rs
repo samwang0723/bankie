@@ -2,6 +2,7 @@ use crate::common::money::{Currency, Money};
 use crate::domain::finance::{JournalEntry, JournalLine, Outbox, Transaction};
 use crate::domain::models::{BankAccountKind, HouseAccount, LedgerAction};
 use crate::domain::tenant::Tenant;
+use crate::domain::user::BankAccountWithLedger;
 use crate::event_sourcing::command::LedgerCommand;
 
 use super::adapter::DatabaseClient;
@@ -14,6 +15,36 @@ use uuid::Uuid;
 
 #[async_trait]
 impl DatabaseClient for PgPool {
+    async fn get_user_bank_accounts(
+        &self,
+        user_id: String,
+    ) -> Result<Vec<BankAccountWithLedger>, Error> {
+        let accounts = sqlx::query_as!(
+            BankAccountWithLedger,
+            r#"
+                select
+                    b.payload->>'id' as id,
+                    b.payload->>'status' as status,
+                    b.payload->>'account_type' as account_type,
+                    b.payload->>'kind' as kind,
+                    b.payload->>'currency' as currency,
+                    (l.payload->'available'->>'amount')::numeric as available,
+                    (l.payload->'pending'->>'amount')::numeric as pending,
+                    (l.payload->'current'->>'amount')::numeric as current,
+                    b.payload->>'created_at' as created_at,
+                    b.payload->>'updated_at' as updated_at
+                from bank_account_views b
+                left join ledger_views l on b.payload->>'ledger_id' = l.view_id
+                where b.payload->>'user_id' = $1;
+            "#,
+            user_id
+        )
+        .fetch_all(self)
+        .await?;
+
+        Ok(accounts)
+    }
+
     async fn fail_transaction(&self, transaction_id: Uuid) -> Result<(), Error> {
         let mut tx = self.begin().await?;
 
