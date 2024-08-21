@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                select \n                    b.payload->>'id' as id,\n                    b.payload->>'status' as status,\n                    b.payload->>'account_type' as account_type,\n                    b.payload->>'kind' as kind,\n                    b.payload->>'currency' as currency,\n                    (l.payload->'available'->>'amount')::numeric as available,\n                    (l.payload->'pending'->>'amount')::numeric as pending,\n                    (l.payload->'current'->>'amount')::numeric as current,\n                    b.payload->>'created_at' as created_at,\n                    b.payload->>'updated_at' as updated_at\n                from bank_account_views b \n                left join ledger_views l on b.payload->>'ledger_id' = l.view_id \n                where b.payload->>'user_id' = $1;\n            ",
+  "query": "\n                select\n                    b.payload->>'id' as id,\n                    b.payload->>'status' as status,\n                    b.payload->>'account_type' as account_type,\n                    b.payload->>'kind' as kind,\n                    b.payload->>'currency' as currency,\n                    (l.payload->'available'->>'amount')::numeric as available,\n                    (l.payload->'pending'->>'amount')::numeric as pending,\n                    (l.payload->'current'->>'amount')::numeric as current,\n                    b.payload->>'created_at' as created_at,\n                    b.payload->>'updated_at' as updated_at\n                from bank_account_views b\n                left join ledger_views l on b.payload->>'ledger_id' = l.view_id\n                where b.payload->>'user_id' = $1;\n            ",
   "describe": {
     "columns": [
       {
@@ -72,5 +72,5 @@
       null
     ]
   },
-  "hash": "fe538110f17d1a5dbf224f5e7cb669ac25d1c25f67139d981dd97fe4559be2fc"
+  "hash": "0d483c725af0471f94cf5e40937fed5346afe22aa70cc5630e3966e1f9ab452d"
 }
