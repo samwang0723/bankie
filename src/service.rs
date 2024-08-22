@@ -151,17 +151,25 @@ impl BankAccountApi for BankAccountLogic {
         currency: Currency,
         kind: BankAccountKind,
     ) -> Result<bool, anyhow::Error> {
-        match self.bank_account.query.load(&account_id.to_string()).await {
-            Ok(view) => match view {
-                None => self
-                    .database
-                    .validate_bank_account_exists(user_id, currency, kind)
-                    .await
-                    .map_err(|e| anyhow!("Failed to validate: {}", e)),
-                Some(_) => Err(anyhow!("Account duplicated")),
-            },
-            Err(err) => Err(err.into()),
+        if (self
+            .bank_account
+            .query
+            .load(&account_id.to_string())
+            .await?)
+            .is_some()
+        {
+            return Err(anyhow!("Account duplicated"));
         }
+
+        let valid = self
+            .database
+            .validate_bank_account_exists(user_id, currency, kind)
+            .await?;
+        if !valid {
+            return Err(anyhow!("Account duplicated"));
+        }
+
+        Ok(true)
     }
 
     async fn get_bank_account(&self, account_id: Uuid) -> Result<BankAccountView, anyhow::Error> {

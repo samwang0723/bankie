@@ -11,6 +11,8 @@ pub enum BankAccountCommand {
     OpenAccount {
         #[serde(skip_deserializing)]
         id: Uuid,
+        #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+        parent_id: Option<Uuid>,
         account_type: BankAccountType,
         kind: BankAccountKind,
         user_id: String,

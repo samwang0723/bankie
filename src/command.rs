@@ -44,6 +44,7 @@ where
         // Generate account id instead of bringing in from external
         if let BankAccountCommand::OpenAccount { id, .. } = &mut command {
             *id = Uuid::new_v4();
+            // TODO: Check parent_id if user already had Checking account in same currency
         }
         Ok(CommandExtractor(metadata, command))
     }
@@ -126,6 +127,7 @@ mod tests {
                 // Check fields
                 if let BankAccountCommand::OpenAccount {
                     id,
+                    parent_id,
                     account_type,
                     kind,
                     user_id,
@@ -133,6 +135,7 @@ mod tests {
                 } = command
                 {
                     assert!(!id.is_nil());
+                    assert!(parent_id.is_none());
                     assert_eq!(account_type, BankAccountType::Retail);
                     assert_eq!(currency, Currency::TWD);
                     assert_eq!(user_id, "b9aa777c-0868-48ac-9c49-eff869b437d7".to_string());

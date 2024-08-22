@@ -44,6 +44,7 @@ impl View<BankAccount> for BankAccountView {
                 currency,
             } => {
                 self.id = base_event.get_aggregate_id();
+                self.parent_id = base_event.get_parent_id();
                 self.status = BankAccountStatus::Pending;
                 self.created_at = base_event.get_created_at();
                 self.updated_at = base_event.get_created_at();
@@ -57,6 +58,7 @@ impl View<BankAccount> for BankAccountView {
                 base_event,
             } => {
                 self.id = base_event.get_aggregate_id();
+                self.parent_id = base_event.get_parent_id();
                 self.ledger_id = ledger_id.clone();
                 self.status = BankAccountStatus::Approved;
                 self.updated_at = base_event.get_created_at();

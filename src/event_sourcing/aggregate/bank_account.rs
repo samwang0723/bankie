@@ -31,6 +31,7 @@ impl Aggregate for models::BankAccount {
         match command {
             BankAccountCommand::OpenAccount {
                 id,
+                parent_id: _,
                 account_type,
                 kind,
                 user_id,
@@ -220,6 +221,7 @@ mod aggregate_tests {
         vec![],
         BankAccountCommand::OpenAccount {
             id: *ACCOUNT_ID,
+            parent_id: None,
             account_type: BankAccountType::Retail,
             kind: BankAccountKind::Checking,
             user_id: "user".to_string(),

@@ -79,6 +79,7 @@ pub struct BankAccountView {
     pub id: String,
     pub ledger_id: String,
     pub user_id: String,
+    pub parent_id: String,
     pub status: BankAccountStatus,
     pub account_type: BankAccountType,
     pub kind: BankAccountKind,
