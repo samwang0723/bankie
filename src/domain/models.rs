@@ -55,7 +55,9 @@ pub struct BankAccount {
     pub kind: BankAccountKind,
     pub currency: Currency,
     pub ledger_id: String,
-    pub user_id: String,
+    #[serde(default, alias = "user_id")]
+    pub external_reference_id: Option<String>,
+    pub account_number: String,
     pub timestamp: String,
 }
 
@@ -78,8 +80,10 @@ pub struct HouseAccount {
 pub struct BankAccountView {
     pub id: String,
     pub ledger_id: String,
-    pub user_id: String,
+    #[serde(default, alias = "user_id")]
+    pub external_reference_id: Option<String>,
     pub parent_id: String,
+    pub account_number: String,
     pub status: BankAccountStatus,
     pub account_type: BankAccountType,
     pub kind: BankAccountKind,

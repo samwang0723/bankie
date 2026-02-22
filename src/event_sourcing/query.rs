@@ -40,7 +40,8 @@ impl View<BankAccount> for BankAccountView {
                 base_event,
                 account_type,
                 kind,
-                user_id,
+                external_reference_id,
+                account_number,
                 currency,
             } => {
                 self.id = base_event.get_aggregate_id();
@@ -51,7 +52,8 @@ impl View<BankAccount> for BankAccountView {
                 self.account_type = *account_type;
                 self.kind = *kind;
                 self.currency = *currency;
-                self.user_id = user_id.clone();
+                self.external_reference_id = external_reference_id.clone();
+                self.account_number = account_number.clone();
             }
             BankAccountEvent::AccountKycApproved {
                 ledger_id,

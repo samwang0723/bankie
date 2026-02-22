@@ -13,9 +13,12 @@ pub enum BankAccountCommand {
         id: Uuid,
         #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
         parent_id: Option<Uuid>,
+        #[serde(skip_deserializing)]
+        account_number: String,
         account_type: BankAccountType,
         kind: BankAccountKind,
-        user_id: String,
+        #[serde(default, alias = "user_id")]
+        external_reference_id: Option<String>,
         currency: Currency,
     },
     ApproveAccount {

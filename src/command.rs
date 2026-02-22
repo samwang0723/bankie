@@ -6,6 +6,7 @@ use axum::response::{IntoResponse, Response};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+use crate::common::account::generate_bank_account_number;
 use crate::event_sourcing::command::BankAccountCommand;
 
 // This is a custom Axum extension that builds metadata from the inbound request
@@ -41,10 +42,13 @@ where
         if let BankAccountCommand::ApproveAccount { id: _, ledger_id } = &mut command {
             *ledger_id = Uuid::new_v4();
         }
-        // Generate account id instead of bringing in from external
-        if let BankAccountCommand::OpenAccount { id, .. } = &mut command {
+        // Generate account id and account number instead of bringing in from external
+        if let BankAccountCommand::OpenAccount {
+            id, account_number, ..
+        } = &mut command
+        {
             *id = Uuid::new_v4();
-            // TODO: Check parent_id if user already had Checking account in same currency
+            *account_number = generate_bank_account_number(12);
         }
         Ok(CommandExtractor(metadata, command))
     }
@@ -90,8 +94,7 @@ mod tests {
     use rust_decimal_macros::dec;
 
     #[tokio::test]
-    async fn test_open_account_extractor() {
-        // Create a mock request
+    async fn test_open_account_extractor_with_external_ref() {
         let request = Request::builder()
             .uri("/test-uri")
             .header(USER_AGENT, "test-agent")
@@ -102,44 +105,124 @@ mod tests {
                         "account_type": "Retail",
                         "kind": "Interest",
                         "currency": "TWD",
-                        "user_id": "b9aa777c-0868-48ac-9c49-eff869b437d7"
+                        "external_reference_id": "b9aa777c-0868-48ac-9c49-eff869b437d7"
                     }
                 }
                 "#,
             ))
             .unwrap();
 
-        // Mock state
         let state = ();
-
-        // Call the from_request method
         let result = CommandExtractor::from_request(request, &state).await;
 
-        // Verify the result
         match result {
             Ok(extractor) => {
                 let CommandExtractor(metadata, command) = extractor;
-
-                // Check metadata
                 assert_eq!(metadata.get("uri").unwrap(), "/test-uri");
                 assert_eq!(metadata.get(USER_AGENT_HDR).unwrap(), "test-agent");
 
-                // Check fields
                 if let BankAccountCommand::OpenAccount {
                     id,
                     parent_id,
+                    account_number,
                     account_type,
                     kind,
-                    user_id,
+                    external_reference_id,
                     currency,
                 } = command
                 {
                     assert!(!id.is_nil());
                     assert!(parent_id.is_none());
+                    assert_eq!(account_number.len(), 12);
+                    assert!(account_number.chars().all(|c| c.is_ascii_digit()));
                     assert_eq!(account_type, BankAccountType::Retail);
                     assert_eq!(currency, Currency::TWD);
-                    assert_eq!(user_id, "b9aa777c-0868-48ac-9c49-eff869b437d7".to_string());
+                    assert_eq!(
+                        external_reference_id,
+                        Some("b9aa777c-0868-48ac-9c49-eff869b437d7".to_string())
+                    );
                     assert_eq!(kind, BankAccountKind::Interest);
+                } else {
+                    panic!("Invalid command");
+                }
+            }
+            Err(_) => panic!("Extraction failed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_open_account_extractor_with_user_id_alias() {
+        // Backward compat: user_id should map to external_reference_id
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"
+                {
+                    "OpenAccount": {
+                        "account_type": "Retail",
+                        "kind": "Checking",
+                        "currency": "USD",
+                        "user_id": "legacy-user-123"
+                    }
+                }
+                "#,
+            ))
+            .unwrap();
+
+        let state = ();
+        let result = CommandExtractor::from_request(request, &state).await;
+
+        match result {
+            Ok(CommandExtractor(_, command)) => {
+                if let BankAccountCommand::OpenAccount {
+                    external_reference_id,
+                    account_number,
+                    ..
+                } = command
+                {
+                    assert_eq!(external_reference_id, Some("legacy-user-123".to_string()));
+                    assert_eq!(account_number.len(), 12);
+                } else {
+                    panic!("Invalid command");
+                }
+            }
+            Err(_) => panic!("Extraction failed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_open_account_extractor_without_external_ref() {
+        // No external_reference_id at all -- should be None
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"
+                {
+                    "OpenAccount": {
+                        "account_type": "Retail",
+                        "kind": "Checking",
+                        "currency": "USD"
+                    }
+                }
+                "#,
+            ))
+            .unwrap();
+
+        let state = ();
+        let result = CommandExtractor::from_request(request, &state).await;
+
+        match result {
+            Ok(CommandExtractor(_, command)) => {
+                if let BankAccountCommand::OpenAccount {
+                    external_reference_id,
+                    account_number,
+                    ..
+                } = command
+                {
+                    assert!(external_reference_id.is_none());
+                    assert_eq!(account_number.len(), 12);
                 } else {
                     panic!("Invalid command");
                 }

@@ -73,14 +73,23 @@ pub async fn bank_account_command_handler(
     CommandExtractor(_metadata, command): CommandExtractor,
 ) -> Response {
     let result = match &command {
-        BankAccountCommand::OpenAccount { id, .. } => (StatusCode::CREATED, id.to_string()),
-        BankAccountCommand::ApproveAccount { id, .. } => (StatusCode::OK, id.to_string()),
-        BankAccountCommand::Deposit { id, .. } => (StatusCode::OK, id.to_string()),
-        BankAccountCommand::Withdrawal { id, .. } => (StatusCode::OK, id.to_string()),
+        BankAccountCommand::OpenAccount {
+            id, account_number, ..
+        } => (
+            StatusCode::CREATED,
+            json!({"id": id.to_string(), "account_number": account_number}),
+        ),
+        BankAccountCommand::ApproveAccount { id, .. } => {
+            (StatusCode::OK, json!({"id": id.to_string()}))
+        }
+        BankAccountCommand::Deposit { id, .. } => (StatusCode::OK, json!({"id": id.to_string()})),
+        BankAccountCommand::Withdrawal { id, .. } => {
+            (StatusCode::OK, json!({"id": id.to_string()}))
+        }
     };
     if let Some(command_sender) = &state.command_sender {
         match command_sender.send(command).await {
-            Ok(_) => (result.0, Json(json!({"id": result.1}))).into_response(),
+            Ok(_) => (result.0, Json(result.1)).into_response(),
             Err(err) => AppError::BadRequest(err.to_string()).into_response(),
         }
     } else {
@@ -162,6 +171,44 @@ pub async fn house_account_create_handler(
     }
 
     (StatusCode::CREATED, Json(json!({ "id": house_account_id}))).into_response()
+}
+
+pub async fn sub_account_query_handler(
+    Extension(_tenant_id): Extension<i32>,
+    Path(id): Path<String>,
+    State(state): State<SharedState>,
+) -> Response {
+    let client = Arc::clone(&state.database);
+    match client.get_sub_accounts(id).await {
+        Ok(accounts) => {
+            // Separate master from sub-accounts
+            let (master, sub_accounts): (Vec<_>, Vec<_>) = accounts
+                .into_iter()
+                .partition(|a| a.parent_id.is_none() || a.parent_id.as_deref() == Some(""));
+            let master = master.into_iter().next();
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "master": master,
+                    "sub_accounts": sub_accounts
+                })),
+            )
+                .into_response()
+        }
+        Err(err) => AppError::InternalServerError(err.to_string()).into_response(),
+    }
+}
+
+pub async fn bank_account_by_number_handler(
+    Extension(_tenant_id): Extension<i32>,
+    Path(account_number): Path<String>,
+    State(state): State<SharedState>,
+) -> Response {
+    let client = Arc::clone(&state.database);
+    match client.get_bank_account_by_number(account_number).await {
+        Ok(account) => (StatusCode::OK, Json(account)).into_response(),
+        Err(_) => AppError::NotFound("Account not found".to_string()).into_response(),
+    }
 }
 
 pub async fn transaction_query_handler(

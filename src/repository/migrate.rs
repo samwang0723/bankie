@@ -2,6 +2,7 @@ use sqlx::migrate::Migrator;
 use sqlx::postgres::PgPoolOptions;
 use std::path::Path;
 
+#[allow(dead_code)]
 #[tokio::main]
 async fn main() -> Result<(), sqlx::Error> {
     dotenv::dotenv().ok();
@@ -12,7 +13,10 @@ async fn main() -> Result<(), sqlx::Error> {
         let host = std::env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string());
         let port = std::env::var("DB_PORT").unwrap_or_else(|_| "5432".to_string());
         let dbname = std::env::var("DB_NAME").unwrap_or_else(|_| "bankie_main".to_string());
-        format!("postgres://{}:{}@{}:{}/{}", user, password, host, port, dbname)
+        format!(
+            "postgres://{}:{}@{}:{}/{}",
+            user, password, host, port, dbname
+        )
     });
 
     // Create a connection pool

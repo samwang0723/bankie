@@ -14,7 +14,10 @@ pub enum BankAccountEvent {
         account_type: BankAccountType,
         kind: BankAccountKind,
         currency: Currency,
-        user_id: String,
+        #[serde(default, alias = "user_id")]
+        external_reference_id: Option<String>,
+        #[serde(default)]
+        account_number: String,
         base_event: BaseEvent,
     },
     AccountKycApproved {

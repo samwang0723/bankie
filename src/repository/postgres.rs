@@ -20,11 +20,12 @@ impl DatabaseClient for PgPool {
         &self,
         user_id: String,
     ) -> Result<Vec<BankAccountWithLedger>, Error> {
-        let accounts = sqlx::query_as!(
-            BankAccountWithLedger,
+        let accounts = sqlx::query_as::<_, BankAccountWithLedger>(
             r#"
                 select
                     b.payload->>'id' as id,
+                    b.payload->>'account_number' as account_number,
+                    b.payload->>'parent_id' as parent_id,
                     b.payload->>'status' as status,
                     b.payload->>'account_type' as account_type,
                     b.payload->>'kind' as kind,
@@ -36,10 +37,12 @@ impl DatabaseClient for PgPool {
                     b.payload->>'updated_at' as updated_at
                 from bank_account_views b
                 left join ledger_views l on b.payload->>'ledger_id' = l.view_id
-                where b.payload->>'user_id' = $1;
+                where b.payload->>'user_id' = $1
+                   or b.payload->>'external_reference_id' = $1
+                   or b.external_reference_id = $1
             "#,
-            user_id
         )
+        .bind(&user_id)
         .fetch_all(self)
         .await?;
 
@@ -269,31 +272,125 @@ impl DatabaseClient for PgPool {
 
     async fn validate_bank_account_exists(
         &self,
-        user_id: String,
-        asset_code: &str,
+        external_reference_id: Option<String>,
+        currency: &str,
         kind: BankAccountKind,
     ) -> Result<bool, Error> {
-        let count = sqlx::query!(
+        let ext_ref = match external_reference_id {
+            Some(ref r) if !r.is_empty() => r.clone(),
+            _ => return Ok(true), // No external ref = no dedup needed
+        };
+        let currency_str = currency.to_string();
+        let kind_str = kind.to_string();
+        let row = sqlx::query_scalar::<_, i64>(
             r#"
-            select count(1) as total from bank_account_views
-            where payload->>'user_id'=$1
+            select count(1) from bank_account_views
+            where (payload->>'user_id'=$1 OR payload->>'external_reference_id'=$1 OR external_reference_id=$1)
             and payload->>'currency'=$2
             and payload->>'kind'=$3
-            and payload->>'status' IN ('Pending', 'Approved', 'Freeze');
+            and payload->>'status' IN ('Pending', 'Approved', 'Freeze')
             "#,
-            user_id,
-            asset_code,
-            kind.to_string()
         )
+        .bind(&ext_ref)
+        .bind(&currency_str)
+        .bind(&kind_str)
         .fetch_one(self)
-        .await?
-        .total;
+        .await?;
 
-        if count.map_or(false, |value| value != 0) {
-            Ok(false)
-        } else {
-            Ok(true)
-        }
+        Ok(row == 0)
+    }
+
+    async fn find_checking_account(
+        &self,
+        external_reference_id: Option<String>,
+        currency: &str,
+    ) -> Result<Option<String>, Error> {
+        let ext_ref = match external_reference_id {
+            Some(ref r) if !r.is_empty() => r.clone(),
+            _ => return Ok(None),
+        };
+        let result = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT view_id FROM bank_account_views
+            WHERE (payload->>'user_id' = $1 OR payload->>'external_reference_id' = $1 OR external_reference_id = $1)
+            AND payload->>'currency' = $2
+            AND payload->>'kind' = 'Checking'
+            AND payload->>'status' IN ('Pending', 'Approved')
+            LIMIT 1
+            "#,
+        )
+        .bind(&ext_ref)
+        .bind(currency)
+        .fetch_optional(self)
+        .await?;
+
+        Ok(result)
+    }
+
+    async fn get_sub_accounts(
+        &self,
+        account_id: String,
+    ) -> Result<Vec<BankAccountWithLedger>, Error> {
+        let accounts = sqlx::query_as::<_, BankAccountWithLedger>(
+            r#"
+            SELECT
+                b.payload->>'id' as id,
+                b.payload->>'account_number' as account_number,
+                b.payload->>'parent_id' as parent_id,
+                b.payload->>'status' as status,
+                b.payload->>'account_type' as account_type,
+                b.payload->>'kind' as kind,
+                b.payload->>'currency' as currency,
+                (l.payload->'available'->>'amount')::numeric as available,
+                (l.payload->'pending'->>'amount')::numeric as pending,
+                (l.payload->'current'->>'amount')::numeric as current,
+                b.payload->>'created_at' as created_at,
+                b.payload->>'updated_at' as updated_at
+            FROM bank_account_views b
+            LEFT JOIN ledger_views l ON b.payload->>'ledger_id' = l.view_id
+            WHERE b.view_id = $1
+               OR b.parent_id = $1
+               OR b.payload->>'parent_id' = $1
+            "#,
+        )
+        .bind(&account_id)
+        .fetch_all(self)
+        .await?;
+
+        Ok(accounts)
+    }
+
+    async fn get_bank_account_by_number(
+        &self,
+        account_number: String,
+    ) -> Result<BankAccountWithLedger, Error> {
+        let account = sqlx::query_as::<_, BankAccountWithLedger>(
+            r#"
+            SELECT
+                b.payload->>'id' as id,
+                b.payload->>'account_number' as account_number,
+                b.payload->>'parent_id' as parent_id,
+                b.payload->>'status' as status,
+                b.payload->>'account_type' as account_type,
+                b.payload->>'kind' as kind,
+                b.payload->>'currency' as currency,
+                (l.payload->'available'->>'amount')::numeric as available,
+                (l.payload->'pending'->>'amount')::numeric as pending,
+                (l.payload->'current'->>'amount')::numeric as current,
+                b.payload->>'created_at' as created_at,
+                b.payload->>'updated_at' as updated_at
+            FROM bank_account_views b
+            LEFT JOIN ledger_views l ON b.payload->>'ledger_id' = l.view_id
+            WHERE b.account_number = $1
+               OR b.payload->>'account_number' = $1
+            LIMIT 1
+            "#,
+        )
+        .bind(&account_number)
+        .fetch_one(self)
+        .await?;
+
+        Ok(account)
     }
 
     async fn create_tenant_profile(&self, name: &str, scope: &str) -> Result<i32, Error> {
