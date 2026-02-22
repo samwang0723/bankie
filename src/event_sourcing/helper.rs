@@ -13,13 +13,13 @@ use crate::{common, event_sourcing::*};
 pub async fn validate_account_creation(
     services: &BankAccountServices,
     id: Uuid,
-    user_id: String,
+    external_reference_id: Option<String>,
     currency: Currency,
     kind: BankAccountKind,
 ) -> Result<(), error::BankAccountError> {
     let valid = services
         .services
-        .validate_account_creation(id, user_id, currency, kind)
+        .validate_account_creation(id, external_reference_id, currency, kind)
         .await?;
     if !valid {
         return Err("validation failed".into());

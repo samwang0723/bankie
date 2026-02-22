@@ -34,10 +34,23 @@ pub trait DatabaseClient {
     async fn get_house_accounts(&self, currency: Currency) -> Result<Vec<HouseAccount>, Error>;
     async fn validate_bank_account_exists(
         &self,
-        user_id: String,
+        external_reference_id: Option<String>,
         currency: Currency,
         kind: BankAccountKind,
     ) -> Result<bool, Error>;
+    async fn find_checking_account(
+        &self,
+        external_reference_id: Option<String>,
+        currency: &str,
+    ) -> Result<Option<String>, Error>;
+    async fn get_sub_accounts(
+        &self,
+        account_id: String,
+    ) -> Result<Vec<BankAccountWithLedger>, Error>;
+    async fn get_bank_account_by_number(
+        &self,
+        account_number: String,
+    ) -> Result<BankAccountWithLedger, Error>;
     async fn create_tenant_profile(&self, name: &str, scope: &str) -> Result<i32, Error>;
     async fn update_tenant_profile(&self, id: i32, jwt: &str) -> Result<i32, Error>;
     async fn get_tenant_profile(&self, tenant_id: i32) -> Result<Tenant, Error>;
@@ -93,13 +106,37 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
 
     pub async fn validate_bank_account_exists(
         &self,
-        user_id: String,
+        external_reference_id: Option<String>,
         currency: Currency,
         kind: BankAccountKind,
     ) -> Result<bool, Error> {
         self.client
-            .validate_bank_account_exists(user_id, currency, kind)
+            .validate_bank_account_exists(external_reference_id, currency, kind)
             .await
+    }
+
+    pub async fn find_checking_account(
+        &self,
+        external_reference_id: Option<String>,
+        currency: &str,
+    ) -> Result<Option<String>, Error> {
+        self.client
+            .find_checking_account(external_reference_id, currency)
+            .await
+    }
+
+    pub async fn get_sub_accounts(
+        &self,
+        account_id: String,
+    ) -> Result<Vec<BankAccountWithLedger>, Error> {
+        self.client.get_sub_accounts(account_id).await
+    }
+
+    pub async fn get_bank_account_by_number(
+        &self,
+        account_number: String,
+    ) -> Result<BankAccountWithLedger, Error> {
+        self.client.get_bank_account_by_number(account_number).await
     }
 
     pub async fn create_tenant_profile(&self, name: &str, scope: &str) -> Result<i32, Error> {
