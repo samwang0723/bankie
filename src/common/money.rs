@@ -75,6 +75,7 @@ impl Currency {
         }
     }
 
+    #[allow(dead_code)]
     pub fn as_asset_code(&self) -> String {
         self.to_string()
     }
@@ -141,6 +142,7 @@ impl Money {
         Money { amount, currency }
     }
 
+    #[allow(dead_code)]
     pub fn asset_code(&self) -> String {
         self.currency.as_asset_code()
     }

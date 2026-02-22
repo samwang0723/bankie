@@ -45,6 +45,7 @@ impl AppError {
 
     /// Create an InternalServerError that logs the real error but returns a
     /// sanitized message to the client. Prevents leaking internal details.
+    #[allow(dead_code)]
     pub fn internal(err: impl fmt::Display) -> Self {
         tracing::error!("Internal error: {}", err);
         AppError::InternalServerError("An internal error occurred".to_string())
