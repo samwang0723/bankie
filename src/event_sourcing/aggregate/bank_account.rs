@@ -84,6 +84,41 @@ impl Aggregate for models::BankAccount {
                     base_event: helper::create_base_event(id),
                 }])
             }
+            BankAccountCommand::FreezeAccount { id } => {
+                if self.status != models::BankAccountStatus::Approved {
+                    return Err("account must be Approved to freeze".into());
+                }
+                Ok(vec![events::BankAccountEvent::AccountFrozen {
+                    base_event: helper::create_base_event(id),
+                }])
+            }
+            BankAccountCommand::UnfreezeAccount { id } => {
+                if self.status != models::BankAccountStatus::Freeze {
+                    return Err("account must be Frozen to unfreeze".into());
+                }
+                Ok(vec![events::BankAccountEvent::AccountUnfrozen {
+                    base_event: helper::create_base_event(id),
+                }])
+            }
+            BankAccountCommand::CloseAccount { id } => {
+                if self.status != models::BankAccountStatus::Approved {
+                    return Err("account must be Approved to close".into());
+                }
+                // Verify ledger balance is zero
+                let (available, pending) = services
+                    .services
+                    .get_ledger_balance(id)
+                    .await
+                    .map_err(|_| "failed to check ledger balance")?;
+                if available.amount != rust_decimal::Decimal::ZERO
+                    || pending.amount != rust_decimal::Decimal::ZERO
+                {
+                    return Err("account balance must be zero to close".into());
+                }
+                Ok(vec![events::BankAccountEvent::AccountClosed {
+                    base_event: helper::create_base_event(id),
+                }])
+            }
             BankAccountCommand::Deposit { id: _, amount } => {
                 let asset_code = amount.currency.to_string();
                 let house_account = services
@@ -130,6 +165,53 @@ impl Aggregate for models::BankAccount {
 
                 Ok(vec![])
             }
+            BankAccountCommand::Transfer {
+                id,
+                to_account_id,
+                amount,
+            } => {
+                // Validate source != destination
+                if id == to_account_id {
+                    return Err("cannot transfer to the same account".into());
+                }
+
+                // Validate destination account exists and is Approved
+                let dest_account = services
+                    .services
+                    .get_bank_account(to_account_id)
+                    .await
+                    .map_err(|_| "destination account not found")?;
+
+                if dest_account.status != models::BankAccountStatus::Approved {
+                    return Err("destination account is not active".into());
+                }
+
+                // Validate same currency
+                if self.currency != dest_account.currency {
+                    return Err("currency mismatch between source and destination".into());
+                }
+
+                // Create transfer transactions (source debit + destination credit)
+                let dest_ledger_id = dest_account.ledger_id.clone();
+                let transaction_id = helper::create_transfer_transactions(
+                    self,
+                    services,
+                    to_account_id,
+                    dest_ledger_id,
+                    amount,
+                )
+                .await?;
+
+                // Debit hold on source: move balance to pending
+                let ledger_id = Uuid::parse_str(&self.ledger_id)
+                    .map_err(|e| error::BankAccountError::from(e.to_string().as_str()))?;
+                services
+                    .services
+                    .debit_hold(id, ledger_id, transaction_id, amount)
+                    .await?;
+
+                Ok(vec![])
+            }
         }
     }
 
@@ -161,6 +243,21 @@ impl Aggregate for models::BankAccount {
                 self.status = models::BankAccountStatus::Approved;
                 self.timestamp = base_event.get_created_at();
             }
+            events::BankAccountEvent::AccountFrozen { base_event } => {
+                self.id = base_event.get_aggregate_id();
+                self.status = models::BankAccountStatus::Freeze;
+                self.timestamp = base_event.get_created_at();
+            }
+            events::BankAccountEvent::AccountUnfrozen { base_event } => {
+                self.id = base_event.get_aggregate_id();
+                self.status = models::BankAccountStatus::Approved;
+                self.timestamp = base_event.get_created_at();
+            }
+            events::BankAccountEvent::AccountClosed { base_event } => {
+                self.id = base_event.get_aggregate_id();
+                self.status = models::BankAccountStatus::CustomerClosed;
+                self.timestamp = base_event.get_created_at();
+            }
             events::BankAccountEvent::CustomerDepositedCash { .. } => {}
             events::BankAccountEvent::CustomerWithdrewCash { .. } => {}
         }
@@ -171,6 +268,7 @@ impl Aggregate for models::BankAccount {
 mod aggregate_tests {
     use async_trait::async_trait;
     use lazy_static::lazy_static;
+    use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
     use std::sync::Mutex;
     use uuid::Uuid;
@@ -188,8 +286,8 @@ mod aggregate_tests {
         events::BankAccountEvent,
         finance::{JournalEntry, JournalLine, Transaction},
         models::{
-            BankAccount, BankAccountKind, BankAccountType, BankAccountView, HouseAccount,
-            LedgerAction,
+            BankAccount, BankAccountKind, BankAccountStatus, BankAccountType, BankAccountView,
+            HouseAccount, LedgerAction,
         },
     };
 
@@ -199,6 +297,7 @@ mod aggregate_tests {
         static ref LEDGER_ID: Uuid = Uuid::new_v4();
         static ref ACCOUNT_ID: Uuid = Uuid::new_v4();
         static ref TRANSACTION_ID: Uuid = Uuid::new_v4();
+        static ref DEST_ACCOUNT_ID: Uuid = Uuid::new_v4();
     }
 
     fn create_base_event(uuid: Uuid) -> BaseEvent {
@@ -206,6 +305,23 @@ mod aggregate_tests {
         base_event.set_aggregate_id(uuid);
         base_event.set_created_at(chrono::Utc::now());
         base_event
+    }
+
+    fn approved_account_events() -> Vec<BankAccountEvent> {
+        vec![
+            BankAccountEvent::AccountOpened {
+                base_event: create_base_event(*ACCOUNT_ID),
+                account_type: BankAccountType::Retail,
+                kind: BankAccountKind::Checking,
+                external_reference_id: Some("user".to_string()),
+                account_number: "123456789012".to_string(),
+                currency: Currency::USD,
+            },
+            BankAccountEvent::AccountKycApproved {
+                ledger_id: LEDGER_ID.to_string(),
+                base_event: create_base_event(*ACCOUNT_ID),
+            },
+        ]
     }
 
     fn setup_mock_services() -> MockBankAccountServices {
@@ -225,6 +341,19 @@ mod aggregate_tests {
                     .given($given)
                     .when($command)
                     .then_expect_events($expected);
+            }
+        };
+    }
+
+    macro_rules! test_error_case {
+        ($name:ident, $given:expr, $command:expr, $expected_err:expr) => {
+            #[test]
+            fn $name() {
+                let services = BankAccountServices::new(Box::new(setup_mock_services()));
+                AccountTestFramework::with(services)
+                    .given($given)
+                    .when($command)
+                    .then_expect_error_message($expected_err);
             }
         };
     }
@@ -294,21 +423,76 @@ mod aggregate_tests {
     );
 
     test_case!(
-        test_deposit,
-        vec![
-            BankAccountEvent::AccountOpened {
+        test_freeze_account,
+        approved_account_events(),
+        BankAccountCommand::FreezeAccount { id: *ACCOUNT_ID },
+        vec![BankAccountEvent::AccountFrozen {
+            base_event: create_base_event(*ACCOUNT_ID)
+        }]
+    );
+
+    test_case!(
+        test_unfreeze_account,
+        {
+            let mut events = approved_account_events();
+            events.push(BankAccountEvent::AccountFrozen {
                 base_event: create_base_event(*ACCOUNT_ID),
-                account_type: BankAccountType::Retail,
-                kind: BankAccountKind::Checking,
-                external_reference_id: Some("user".to_string()),
-                account_number: "123456789012".to_string(),
-                currency: Currency::USD
-            },
-            BankAccountEvent::AccountKycApproved {
-                ledger_id: LEDGER_ID.to_string(),
-                base_event: create_base_event(*ACCOUNT_ID)
-            }
-        ],
+            });
+            events
+        },
+        BankAccountCommand::UnfreezeAccount { id: *ACCOUNT_ID },
+        vec![BankAccountEvent::AccountUnfrozen {
+            base_event: create_base_event(*ACCOUNT_ID)
+        }]
+    );
+
+    test_error_case!(
+        test_freeze_pending_account_fails,
+        vec![BankAccountEvent::AccountOpened {
+            base_event: create_base_event(*ACCOUNT_ID),
+            account_type: BankAccountType::Retail,
+            kind: BankAccountKind::Checking,
+            external_reference_id: Some("user".to_string()),
+            account_number: "123456789012".to_string(),
+            currency: Currency::USD
+        }],
+        BankAccountCommand::FreezeAccount { id: *ACCOUNT_ID },
+        "account must be Approved to freeze"
+    );
+
+    test_error_case!(
+        test_unfreeze_approved_account_fails,
+        approved_account_events(),
+        BankAccountCommand::UnfreezeAccount { id: *ACCOUNT_ID },
+        "account must be Frozen to unfreeze"
+    );
+
+    test_case!(
+        test_close_account,
+        approved_account_events(),
+        BankAccountCommand::CloseAccount { id: *ACCOUNT_ID },
+        vec![BankAccountEvent::AccountClosed {
+            base_event: create_base_event(*ACCOUNT_ID)
+        }]
+    );
+
+    test_error_case!(
+        test_close_pending_account_fails,
+        vec![BankAccountEvent::AccountOpened {
+            base_event: create_base_event(*ACCOUNT_ID),
+            account_type: BankAccountType::Retail,
+            kind: BankAccountKind::Checking,
+            external_reference_id: Some("user".to_string()),
+            account_number: "123456789012".to_string(),
+            currency: Currency::USD
+        }],
+        BankAccountCommand::CloseAccount { id: *ACCOUNT_ID },
+        "account must be Approved to close"
+    );
+
+    test_case!(
+        test_deposit,
+        approved_account_events(),
         BankAccountCommand::Deposit {
             id: *ACCOUNT_ID,
             amount: Money::new(dec!(1000.0), Currency::USD)
@@ -318,25 +502,34 @@ mod aggregate_tests {
 
     test_case!(
         test_withdrawal,
-        vec![
-            BankAccountEvent::AccountOpened {
-                base_event: create_base_event(*ACCOUNT_ID),
-                account_type: BankAccountType::Retail,
-                kind: BankAccountKind::Checking,
-                external_reference_id: Some("user".to_string()),
-                account_number: "123456789012".to_string(),
-                currency: Currency::USD
-            },
-            BankAccountEvent::AccountKycApproved {
-                ledger_id: LEDGER_ID.to_string(),
-                base_event: create_base_event(*ACCOUNT_ID)
-            }
-        ],
+        approved_account_events(),
         BankAccountCommand::Withdrawal {
             id: *ACCOUNT_ID,
             amount: Money::new(dec!(500.0), Currency::USD)
         },
         vec![]
+    );
+
+    test_case!(
+        test_transfer,
+        approved_account_events(),
+        BankAccountCommand::Transfer {
+            id: *ACCOUNT_ID,
+            to_account_id: *DEST_ACCOUNT_ID,
+            amount: Money::new(dec!(100.0), Currency::USD)
+        },
+        vec![]
+    );
+
+    test_error_case!(
+        test_transfer_to_self_fails,
+        approved_account_events(),
+        BankAccountCommand::Transfer {
+            id: *ACCOUNT_ID,
+            to_account_id: *ACCOUNT_ID,
+            amount: Money::new(dec!(100.0), Currency::USD)
+        },
+        "cannot transfer to the same account"
     );
 
     pub struct MockBankAccountServices {
@@ -431,7 +624,10 @@ mod aggregate_tests {
             &self,
             _account_id: Uuid,
         ) -> Result<BankAccountView, anyhow::Error> {
-            Ok(BankAccountView::default())
+            Ok(BankAccountView {
+                status: BankAccountStatus::Approved,
+                ..Default::default()
+            })
         }
 
         async fn debit_hold(
@@ -442,6 +638,27 @@ mod aggregate_tests {
             _amount: Money,
         ) -> Result<(), anyhow::Error> {
             Ok(())
+        }
+
+        async fn get_ledger_balance(
+            &self,
+            _account_id: Uuid,
+        ) -> Result<(Money, Money), anyhow::Error> {
+            Ok((
+                Money::new(Decimal::ZERO, Currency::USD),
+                Money::new(Decimal::ZERO, Currency::USD),
+            ))
+        }
+
+        async fn create_transfer_transactions(
+            &self,
+            _source_account_id: Uuid,
+            _source_ledger_id: String,
+            _dest_account_id: Uuid,
+            _dest_ledger_id: String,
+            _amount: Money,
+        ) -> Result<Uuid, anyhow::Error> {
+            Ok(Uuid::new_v4())
         }
     }
 }

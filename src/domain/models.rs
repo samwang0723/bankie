@@ -45,6 +45,7 @@ pub enum LedgerAction {
     #[default]
     Deposit,
     Withdraw,
+    Transfer,
 }
 
 #[derive(Serialize, Default, Deserialize)]

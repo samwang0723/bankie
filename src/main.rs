@@ -6,12 +6,12 @@ use clap::Parser;
 use clap_derive::Parser;
 use common::idempotency::idempotency_check;
 use event_sourcing::command::BankAccountCommand;
-use job::create_ledger_job;
+use job::{create_balance_snapshot_job, create_ledger_job};
 use route::{
-    bank_account_by_number_handler, bank_account_command_handler, bank_account_query_handler,
-    health_check_handler, house_account_create_handler, house_account_query_handler,
-    ledger_query_handler, readiness_check_handler, sub_account_query_handler,
-    transaction_query_handler, user_query_handler,
+    balance_history_handler, bank_account_by_number_handler, bank_account_command_handler,
+    bank_account_query_handler, health_check_handler, house_account_create_handler,
+    house_account_query_handler, ledger_query_handler, readiness_check_handler,
+    sub_account_query_handler, transaction_query_handler, user_query_handler,
 };
 use sqlx::PgPool;
 use state::{new_application_state, ApplicationState};
@@ -62,8 +62,12 @@ async fn process_commands(state: SharedState, mut rx: mpsc::Receiver<BankAccount
         let id = match &command {
             BankAccountCommand::OpenAccount { id, .. } => id,
             BankAccountCommand::ApproveAccount { id, .. } => id,
+            BankAccountCommand::FreezeAccount { id } => id,
+            BankAccountCommand::UnfreezeAccount { id } => id,
+            BankAccountCommand::CloseAccount { id } => id,
             BankAccountCommand::Deposit { id, .. } => id,
             BankAccountCommand::Withdrawal { id, .. } => id,
+            BankAccountCommand::Transfer { id, .. } => id,
         }
         .to_string();
         if let Some(bank_account) = &state.bank_account {
@@ -129,6 +133,17 @@ async fn main() {
                     error!("Failed to create ledger job: {:?}", e);
                 }
             }
+            // Daily balance snapshot job
+            match create_balance_snapshot_job(state.clone()).await {
+                Ok(job) => {
+                    if let Err(e) = sched.add(job).await {
+                        error!("Failed to add balance snapshot job: {:?}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to create balance snapshot job: {:?}", e);
+                }
+            }
             if let Err(e) = sched.start().await {
                 error!("Failed to start scheduler: {:?}", e);
             }
@@ -164,6 +179,10 @@ async fn main() {
                 )
                 .route("/v1/user/:id", get(user_query_handler))
                 .route("/v1/transaction", get(transaction_query_handler))
+                .route(
+                    "/v1/bank_account/:id/balance-history",
+                    get(balance_history_handler),
+                )
                 // Middleware layers (execution order: outermost → innermost → handler)
                 .layer(middleware::from_fn(idempotency_check)) // Runs after auth, checks Redis for duplicate Idempotency-Key
                 .layer(middleware::from_fn(authorize::<PgPool>)) // JWT auth + tenant extraction

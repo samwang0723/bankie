@@ -1,6 +1,9 @@
 use crate::common::asset::{Asset, AssetClass};
 use crate::common::money::{Currency, Money};
-use crate::domain::finance::{JournalEntry, JournalLine, Outbox, Transaction};
+use crate::domain::finance::{
+    BalanceSnapshot, JournalEntry, JournalLine, Outbox, Transaction, TRANS_DEPOSIT, TRANS_TRANSFER,
+    TRANS_WITHDRAWAL,
+};
 use crate::domain::models::{BankAccountKind, HouseAccount, LedgerAction};
 use crate::domain::tenant::Tenant;
 use crate::domain::user::BankAccountWithLedger;
@@ -8,7 +11,7 @@ use crate::event_sourcing::command::LedgerCommand;
 
 use super::adapter::DatabaseClient;
 use async_trait::async_trait;
-use chrono::Local;
+use chrono::{Local, NaiveDate};
 use serde_json::to_value;
 use sqlx::postgres::PgPool;
 use sqlx::Error;
@@ -30,6 +33,7 @@ impl DatabaseClient for PgPool {
                     b.payload->>'account_type' as account_type,
                     b.payload->>'kind' as kind,
                     b.payload->>'currency' as currency,
+                    b.payload->>'ledger_id' as ledger_id,
                     (l.payload->'available'->>'amount')::numeric as available,
                     (l.payload->'pending'->>'amount')::numeric as pending,
                     (l.payload->'current'->>'amount')::numeric as current,
@@ -341,6 +345,7 @@ impl DatabaseClient for PgPool {
                 b.payload->>'account_type' as account_type,
                 b.payload->>'kind' as kind,
                 b.payload->>'currency' as currency,
+                b.payload->>'ledger_id' as ledger_id,
                 (l.payload->'available'->>'amount')::numeric as available,
                 (l.payload->'pending'->>'amount')::numeric as pending,
                 (l.payload->'current'->>'amount')::numeric as current,
@@ -374,6 +379,7 @@ impl DatabaseClient for PgPool {
                 b.payload->>'account_type' as account_type,
                 b.payload->>'kind' as kind,
                 b.payload->>'currency' as currency,
+                b.payload->>'ledger_id' as ledger_id,
                 (l.payload->'available'->>'amount')::numeric as available,
                 (l.payload->'pending'->>'amount')::numeric as pending,
                 (l.payload->'current'->>'amount')::numeric as current,
@@ -504,6 +510,249 @@ impl DatabaseClient for PgPool {
         Ok(transactions)
     }
 
+    async fn get_transactions_filtered(
+        &self,
+        bank_account_id: String,
+        offset: i64,
+        limit: i64,
+        start_date: Option<NaiveDate>,
+        end_date: Option<NaiveDate>,
+        transaction_type: Option<String>,
+        status: Option<String>,
+    ) -> Result<Vec<Transaction>, Error> {
+        let account_id =
+            Uuid::parse_str(&bank_account_id).map_err(|e| Error::Protocol(e.to_string()))?;
+
+        let ref_prefix = transaction_type.as_deref().map(|t| match t {
+            "deposit" => TRANS_DEPOSIT,
+            "withdrawal" => TRANS_WITHDRAWAL,
+            "transfer" => TRANS_TRANSFER,
+            _ => "",
+        });
+
+        let transactions = sqlx::query_as::<_, Transaction>(
+            r#"
+            SELECT
+                id, bank_account_id, transaction_reference, transaction_date,
+                amount, currency, description, metadata, status, journal_entry_id
+            FROM transactions
+            WHERE bank_account_id = $1
+              AND ($4::date IS NULL OR transaction_date >= $4)
+              AND ($5::date IS NULL OR transaction_date <= $5)
+              AND ($6::text IS NULL OR $6 = '' OR transaction_reference LIKE $6 || '%')
+              AND ($7::text IS NULL OR status = $7)
+            ORDER BY created_at DESC
+            OFFSET $2 LIMIT $3
+            "#,
+        )
+        .bind(account_id)
+        .bind(offset)
+        .bind(limit)
+        .bind(start_date)
+        .bind(end_date)
+        .bind(ref_prefix)
+        .bind(status.as_deref())
+        .fetch_all(self)
+        .await?;
+
+        Ok(transactions)
+    }
+
+    async fn count_transactions_filtered(
+        &self,
+        bank_account_id: String,
+        start_date: Option<NaiveDate>,
+        end_date: Option<NaiveDate>,
+        transaction_type: Option<String>,
+        status: Option<String>,
+    ) -> Result<i64, Error> {
+        let account_id =
+            Uuid::parse_str(&bank_account_id).map_err(|e| Error::Protocol(e.to_string()))?;
+
+        let ref_prefix = transaction_type.as_deref().map(|t| match t {
+            "deposit" => TRANS_DEPOSIT,
+            "withdrawal" => TRANS_WITHDRAWAL,
+            "transfer" => TRANS_TRANSFER,
+            _ => "",
+        });
+
+        let count = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT COUNT(1) FROM transactions
+            WHERE bank_account_id = $1
+              AND ($2::date IS NULL OR transaction_date >= $2)
+              AND ($3::date IS NULL OR transaction_date <= $3)
+              AND ($4::text IS NULL OR $4 = '' OR transaction_reference LIKE $4 || '%')
+              AND ($5::text IS NULL OR status = $5)
+            "#,
+        )
+        .bind(account_id)
+        .bind(start_date)
+        .bind(end_date)
+        .bind(ref_prefix)
+        .bind(status.as_deref())
+        .fetch_one(self)
+        .await?;
+
+        Ok(count)
+    }
+
+    async fn create_transfer_transactions(
+        &self,
+        source_account_id: Uuid,
+        source_ledger_id: String,
+        dest_account_id: Uuid,
+        dest_ledger_id: String,
+        amount: Money,
+    ) -> Result<Uuid, Error> {
+        let mut tx = self.begin().await?;
+
+        // Create journal entry for the transfer
+        let journal_entry_id = Uuid::new_v4();
+        sqlx::query(
+            r#"
+            INSERT INTO journal_entries (id, entry_date, description, status)
+            VALUES ($1, $2, $3, $4)
+            "#,
+        )
+        .bind(journal_entry_id)
+        .bind(chrono::Utc::now().date_naive())
+        .bind(format!("Transfer {} {}", amount.amount, amount.currency))
+        .bind("posted")
+        .execute(&mut *tx)
+        .await?;
+
+        // Source journal line (debit)
+        sqlx::query(
+            r#"
+            INSERT INTO journal_lines (id, journal_entry_id, ledger_id, debit_amount, credit_amount, currency, description)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(journal_entry_id)
+        .bind(&source_ledger_id)
+        .bind(amount.amount)
+        .bind(rust_decimal::Decimal::ZERO)
+        .bind(amount.currency.to_string())
+        .bind("Transfer out")
+        .execute(&mut *tx)
+        .await?;
+
+        // Destination journal line (credit)
+        sqlx::query(
+            r#"
+            INSERT INTO journal_lines (id, journal_entry_id, ledger_id, debit_amount, credit_amount, currency, description)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(journal_entry_id)
+        .bind(&dest_ledger_id)
+        .bind(rust_decimal::Decimal::ZERO)
+        .bind(amount.amount)
+        .bind(amount.currency.to_string())
+        .bind("Transfer in")
+        .execute(&mut *tx)
+        .await?;
+
+        let currency_str = amount.currency.to_string();
+        let now = chrono::Utc::now().date_naive();
+
+        // Source transaction (debit/withdrawal side)
+        let source_tx_id = Uuid::new_v4();
+        let source_ref = crate::common::snowflake::generate_transaction_reference(TRANS_TRANSFER);
+        sqlx::query(
+            r#"
+            INSERT INTO transactions (id, bank_account_id, transaction_reference, transaction_date, amount, currency, description, metadata, status, journal_entry_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            "#,
+        )
+        .bind(source_tx_id)
+        .bind(source_account_id)
+        .bind(&source_ref)
+        .bind(now)
+        .bind(amount.amount)
+        .bind(&currency_str)
+        .bind("Transfer out")
+        .bind(serde_json::Value::Null)
+        .bind("processing")
+        .bind(journal_entry_id)
+        .execute(&mut *tx)
+        .await?;
+
+        // Destination transaction (credit side)
+        let dest_tx_id = Uuid::new_v4();
+        let dest_ref = crate::common::snowflake::generate_transaction_reference(TRANS_TRANSFER);
+        sqlx::query(
+            r#"
+            INSERT INTO transactions (id, bank_account_id, transaction_reference, transaction_date, amount, currency, description, metadata, status, journal_entry_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            "#,
+        )
+        .bind(dest_tx_id)
+        .bind(dest_account_id)
+        .bind(&dest_ref)
+        .bind(now)
+        .bind(amount.amount)
+        .bind(&currency_str)
+        .bind("Transfer in")
+        .bind(serde_json::Value::Null)
+        .bind("processing")
+        .bind(journal_entry_id)
+        .execute(&mut *tx)
+        .await?;
+
+        // Outbox: debit-release on source ledger
+        let source_ledger_uuid =
+            Uuid::parse_str(&source_ledger_id).map_err(|e| Error::Protocol(e.to_string()))?;
+        let source_cmd = LedgerCommand::DebitRelease {
+            id: source_ledger_uuid,
+            account_id: source_account_id,
+            transaction_id: source_tx_id,
+            amount,
+        };
+        let source_payload = to_value(&source_cmd).map_err(|e| Error::Protocol(e.to_string()))?;
+        sqlx::query(
+            r#"
+            INSERT INTO outbox (transaction_id, event_type, payload)
+            VALUES ($1, $2, $3)
+            "#,
+        )
+        .bind(source_tx_id)
+        .bind("LedgerCommand::Debit")
+        .bind(&source_payload)
+        .execute(&mut *tx)
+        .await?;
+
+        // Outbox: credit on destination ledger
+        let dest_ledger_uuid =
+            Uuid::parse_str(&dest_ledger_id).map_err(|e| Error::Protocol(e.to_string()))?;
+        let dest_cmd = LedgerCommand::Credit {
+            id: dest_ledger_uuid,
+            account_id: dest_account_id,
+            transaction_id: dest_tx_id,
+            amount,
+        };
+        let dest_payload = to_value(&dest_cmd).map_err(|e| Error::Protocol(e.to_string()))?;
+        sqlx::query(
+            r#"
+            INSERT INTO outbox (transaction_id, event_type, payload)
+            VALUES ($1, $2, $3)
+            "#,
+        )
+        .bind(dest_tx_id)
+        .bind("LedgerCommand::Credit")
+        .bind(&dest_payload)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        // Return source transaction ID for debit-hold
+        Ok(source_tx_id)
+    }
+
     async fn move_to_dead_letter(
         &self,
         outbox_id: i32,
@@ -596,5 +845,82 @@ impl DatabaseClient for PgPool {
             .collect();
 
         Ok(assets)
+    }
+
+    async fn create_balance_snapshot(&self, snapshot: BalanceSnapshot) -> Result<(), Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO balance_snapshots (id, tenant_id, account_id, ledger_id, asset_code, available, pending, current_balance, snapshot_date)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (tenant_id, account_id, snapshot_date) DO UPDATE
+            SET available = $6, pending = $7, current_balance = $8
+            "#,
+        )
+        .bind(snapshot.id)
+        .bind(snapshot.tenant_id)
+        .bind(&snapshot.account_id)
+        .bind(&snapshot.ledger_id)
+        .bind(&snapshot.asset_code)
+        .bind(snapshot.available)
+        .bind(snapshot.pending)
+        .bind(snapshot.current_balance)
+        .bind(snapshot.snapshot_date)
+        .execute(self)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn get_balance_history(
+        &self,
+        account_id: String,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+    ) -> Result<Vec<BalanceSnapshot>, Error> {
+        let snapshots = sqlx::query_as::<_, BalanceSnapshot>(
+            r#"
+            SELECT id, tenant_id, account_id, ledger_id, asset_code, available, pending, current_balance, snapshot_date
+            FROM balance_snapshots
+            WHERE account_id = $1
+            AND snapshot_date >= $2
+            AND snapshot_date <= $3
+            ORDER BY snapshot_date ASC
+            "#,
+        )
+        .bind(&account_id)
+        .bind(start_date)
+        .bind(end_date)
+        .fetch_all(self)
+        .await?;
+
+        Ok(snapshots)
+    }
+
+    async fn get_all_active_account_balances(&self) -> Result<Vec<BankAccountWithLedger>, Error> {
+        let accounts = sqlx::query_as::<_, BankAccountWithLedger>(
+            r#"
+            SELECT
+                b.payload->>'id' as id,
+                b.payload->>'account_number' as account_number,
+                b.payload->>'parent_id' as parent_id,
+                b.payload->>'status' as status,
+                b.payload->>'account_type' as account_type,
+                b.payload->>'kind' as kind,
+                b.payload->>'currency' as currency,
+                b.payload->>'ledger_id' as ledger_id,
+                (l.payload->'available'->>'amount')::numeric as available,
+                (l.payload->'pending'->>'amount')::numeric as pending,
+                (l.payload->'current'->>'amount')::numeric as current,
+                b.payload->>'created_at' as created_at,
+                b.payload->>'updated_at' as updated_at
+            FROM bank_account_views b
+            LEFT JOIN ledger_views l ON b.payload->>'ledger_id' = l.view_id
+            WHERE b.payload->>'status' = 'Approved'
+            "#,
+        )
+        .fetch_all(self)
+        .await?;
+
+        Ok(accounts)
     }
 }

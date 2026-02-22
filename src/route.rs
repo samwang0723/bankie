@@ -13,6 +13,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use chrono::NaiveDate;
 use cqrs_es::persist::ViewRepository;
 use rust_decimal::Decimal;
 use serde::Deserialize;
@@ -27,8 +28,24 @@ pub struct HouseAccountParams {
 #[derive(Deserialize)]
 pub struct TransactionParams {
     pub bank_account_id: String,
+    #[serde(default)]
     pub offset: i64,
+    #[serde(default = "default_limit")]
     pub limit: i64,
+    pub start_date: Option<NaiveDate>,
+    pub end_date: Option<NaiveDate>,
+    pub transaction_type: Option<String>,
+    pub status: Option<String>,
+}
+
+fn default_limit() -> i64 {
+    20
+}
+
+#[derive(Deserialize)]
+pub struct BalanceHistoryParams {
+    pub start_date: NaiveDate,
+    pub end_date: NaiveDate,
 }
 
 pub async fn user_query_handler(
@@ -77,7 +94,11 @@ pub async fn bank_account_command_handler(
         BankAccountCommand::OpenAccount { currency, .. } => Some(currency.to_string()),
         BankAccountCommand::Deposit { amount, .. } => Some(amount.currency.to_string()),
         BankAccountCommand::Withdrawal { amount, .. } => Some(amount.currency.to_string()),
-        BankAccountCommand::ApproveAccount { .. } => None,
+        BankAccountCommand::Transfer { amount, .. } => Some(amount.currency.to_string()),
+        BankAccountCommand::ApproveAccount { .. }
+        | BankAccountCommand::FreezeAccount { .. }
+        | BankAccountCommand::UnfreezeAccount { .. }
+        | BankAccountCommand::CloseAccount { .. } => None,
     };
     if let Some(ref code) = asset_code {
         if !state.asset_registry.validate_asset_code(code).await {
@@ -96,10 +117,28 @@ pub async fn bank_account_command_handler(
         BankAccountCommand::ApproveAccount { id, .. } => {
             (StatusCode::OK, json!({"id": id.to_string()}))
         }
+        BankAccountCommand::FreezeAccount { id } => (
+            StatusCode::OK,
+            json!({"id": id.to_string(), "status": "frozen"}),
+        ),
+        BankAccountCommand::UnfreezeAccount { id } => (
+            StatusCode::OK,
+            json!({"id": id.to_string(), "status": "unfrozen"}),
+        ),
+        BankAccountCommand::CloseAccount { id } => (
+            StatusCode::OK,
+            json!({"id": id.to_string(), "status": "closed"}),
+        ),
         BankAccountCommand::Deposit { id, .. } => (StatusCode::OK, json!({"id": id.to_string()})),
         BankAccountCommand::Withdrawal { id, .. } => {
             (StatusCode::OK, json!({"id": id.to_string()}))
         }
+        BankAccountCommand::Transfer {
+            id, to_account_id, ..
+        } => (
+            StatusCode::OK,
+            json!({"id": id.to_string(), "to_account_id": to_account_id.to_string()}),
+        ),
     };
     if let Some(command_sender) = &state.command_sender {
         match command_sender.send(command).await {
@@ -244,17 +283,96 @@ pub async fn transaction_query_handler(
     Query(params): Query<TransactionParams>,
 ) -> Response {
     let client = &state.database.clone();
+
+    // Clamp limit to max 100
+    let limit = params.limit.clamp(1, 100);
+    let offset = params.offset.max(0);
+
+    let has_filters = params.start_date.is_some()
+        || params.end_date.is_some()
+        || params.transaction_type.is_some()
+        || params.status.is_some();
+
+    if has_filters {
+        // Use filtered query with count for pagination
+        let account_id = params.bank_account_id.clone();
+        let count_result = client
+            .count_transactions_filtered(
+                params.bank_account_id.clone(),
+                params.start_date,
+                params.end_date,
+                params.transaction_type.clone(),
+                params.status.clone(),
+            )
+            .await;
+
+        let total = match count_result {
+            Ok(c) => c,
+            Err(err) => return AppError::InternalServerError(err.to_string()).into_response(),
+        };
+
+        match client
+            .get_transactions_filtered(
+                account_id,
+                offset,
+                limit,
+                params.start_date,
+                params.end_date,
+                params.transaction_type,
+                params.status,
+            )
+            .await
+        {
+            Ok(transactions) => {
+                let transactions: Vec<TransactionWithMoney> = transactions
+                    .into_iter()
+                    .map(|t| t.into_transaction_with_money())
+                    .collect();
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "entries": transactions,
+                        "pagination": {
+                            "total": total,
+                            "offset": offset,
+                            "limit": limit,
+                        }
+                    })),
+                )
+                    .into_response()
+            }
+            Err(err) => AppError::InternalServerError(err.to_string()).into_response(),
+        }
+    } else {
+        // Use simple query (backward compatible)
+        match client
+            .get_transactions(params.bank_account_id, offset, limit)
+            .await
+        {
+            Ok(transactions) => {
+                let transactions: Vec<TransactionWithMoney> = transactions
+                    .into_iter()
+                    .map(|t| t.into_transaction_with_money())
+                    .collect();
+                (StatusCode::OK, Json(json!({ "entries": transactions }))).into_response()
+            }
+            Err(err) => AppError::InternalServerError(err.to_string()).into_response(),
+        }
+    }
+}
+
+pub async fn balance_history_handler(
+    Extension(_tenant_id): Extension<i32>,
+    Path(account_id): Path<String>,
+    State(state): State<SharedState>,
+    Query(params): Query<BalanceHistoryParams>,
+) -> Response {
+    let client = &state.database.clone();
     match client
-        .get_transactions(params.bank_account_id, params.offset, params.limit)
+        .get_balance_history(account_id, params.start_date, params.end_date)
         .await
     {
-        Ok(transactions) => {
-            let transactions: Vec<TransactionWithMoney> = transactions
-                .into_iter()
-                .map(|t| t.into_transaction_with_money())
-                .collect();
-            (StatusCode::OK, Json(json!({ "entries": transactions }))).into_response()
-        }
+        Ok(snapshots) => (StatusCode::OK, Json(json!({ "entries": snapshots }))).into_response(),
         Err(err) => AppError::InternalServerError(err.to_string()).into_response(),
     }
 }

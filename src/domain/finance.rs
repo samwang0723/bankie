@@ -11,6 +11,7 @@ use super::models::LedgerAction;
 
 pub const TRANS_DEPOSIT: &str = "DE";
 pub const TRANS_WITHDRAWAL: &str = "WI";
+pub const TRANS_TRANSFER: &str = "TR";
 
 #[derive(FromRow, Debug, Serialize)]
 pub struct Transaction {
@@ -46,6 +47,8 @@ impl Transaction {
             LedgerAction::Deposit
         } else if self.transaction_reference.contains(TRANS_WITHDRAWAL) {
             LedgerAction::Withdraw
+        } else if self.transaction_reference.contains(TRANS_TRANSFER) {
+            LedgerAction::Transfer
         } else {
             LedgerAction::Deposit // safe fallback instead of panic
         }
@@ -97,4 +100,17 @@ pub struct Outbox {
     #[allow(dead_code)]
     pub processed: bool,
     pub retry_count: i32,
+}
+
+#[derive(FromRow, Debug, Serialize)]
+pub struct BalanceSnapshot {
+    pub id: Uuid,
+    pub tenant_id: i32,
+    pub account_id: String,
+    pub ledger_id: String,
+    pub asset_code: String,
+    pub available: Decimal,
+    pub pending: Decimal,
+    pub current_balance: Decimal,
+    pub snapshot_date: NaiveDate,
 }

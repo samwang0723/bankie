@@ -24,6 +24,15 @@ pub enum BankAccountEvent {
         ledger_id: String,
         base_event: BaseEvent,
     },
+    AccountFrozen {
+        base_event: BaseEvent,
+    },
+    AccountUnfrozen {
+        base_event: BaseEvent,
+    },
+    AccountClosed {
+        base_event: BaseEvent,
+    },
     CustomerDepositedCash {
         amount: Money,
         ledger_id: String,
@@ -41,6 +50,9 @@ impl DomainEvent for BankAccountEvent {
         let event_type: &str = match self {
             BankAccountEvent::AccountOpened { .. } => "bank_account.opened",
             BankAccountEvent::AccountKycApproved { .. } => "bank_account.kyc_approved",
+            BankAccountEvent::AccountFrozen { .. } => "bank_account.frozen",
+            BankAccountEvent::AccountUnfrozen { .. } => "bank_account.unfrozen",
+            BankAccountEvent::AccountClosed { .. } => "bank_account.closed",
             BankAccountEvent::CustomerDepositedCash { .. } => "bank_account.deposited",
             BankAccountEvent::CustomerWithdrewCash { .. } => "bank_account.withdrew",
         };
