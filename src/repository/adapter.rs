@@ -10,6 +10,7 @@ use crate::domain::{
     user::BankAccountWithLedger,
 };
 
+#[allow(dead_code)]
 #[automock]
 #[async_trait]
 pub trait DatabaseClient {
@@ -79,6 +80,7 @@ pub struct Adapter<C: DatabaseClient + Send + Sync> {
     client: C,
 }
 
+#[allow(dead_code)]
 impl<C: DatabaseClient + Send + Sync> Adapter<C> {
     pub fn new(client: C) -> Self {
         Adapter { client }

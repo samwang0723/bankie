@@ -23,10 +23,12 @@ pub struct Asset {
 
 /// Thread-safe registry of supported assets, loaded from DB at startup.
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct AssetRegistry {
     inner: Arc<RwLock<HashMap<String, Asset>>>,
 }
 
+#[allow(dead_code)]
 impl AssetRegistry {
     pub fn new(assets: Vec<Asset>) -> Self {
         let map: HashMap<String, Asset> = assets.into_iter().map(|a| (a.code.clone(), a)).collect();

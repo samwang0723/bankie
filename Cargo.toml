@@ -21,7 +21,7 @@ chrono = { version = "^0.4.20", default-features = false, features = ["clock", "
 anyhow = "1"
 rs-snowflake = "0.6"
 axum = "0.7"
-tower = "0.4"
+tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["compression-full", "cors", "validate-request", "add-extension", "trace"] }
 jsonwebtoken = "9.3"
 rand = "0.8"
