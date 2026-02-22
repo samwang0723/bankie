@@ -43,14 +43,18 @@ pub async fn user_query_handler(
     }
 }
 
-// Serves as our query endpoint to respond with the materialized `BankAccountView`
-// for the requested account.
 pub async fn bank_account_query_handler(
     Extension(_tenant_id): Extension<i32>,
     Path(id): Path<String>,
     State(state): State<SharedState>,
 ) -> Response {
-    let bank_account = &state.bank_account.clone().unwrap();
+    let bank_account = match &state.bank_account {
+        Some(ba) => ba,
+        None => {
+            return AppError::InternalServerError("Bank account not configured".to_string())
+                .into_response()
+        }
+    };
     let view = match bank_account.query.load(&id).await {
         Ok(view) => view,
         Err(err) => {
@@ -63,7 +67,6 @@ pub async fn bank_account_query_handler(
     }
 }
 
-// Serves as our command endpoint to make changes in a `BankAccount` aggregate.
 pub async fn bank_account_command_handler(
     Extension(_tenant_id): Extension<i32>,
     State(state): State<SharedState>,
@@ -76,7 +79,7 @@ pub async fn bank_account_command_handler(
         BankAccountCommand::Withdrawal { id, .. } => (StatusCode::OK, id.to_string()),
     };
     if let Some(command_sender) = &state.command_sender {
-        match command_sender.send(command) {
+        match command_sender.send(command).await {
             Ok(_) => (result.0, Json(json!({"id": result.1}))).into_response(),
             Err(err) => AppError::BadRequest(err.to_string()).into_response(),
         }
@@ -90,7 +93,13 @@ pub async fn ledger_query_handler(
     Path(id): Path<String>,
     State(state): State<SharedState>,
 ) -> Response {
-    let ledger = &state.ledger.clone().unwrap();
+    let ledger = match &state.ledger {
+        Some(l) => l,
+        None => {
+            return AppError::InternalServerError("Ledger not configured".to_string())
+                .into_response()
+        }
+    };
     let view = match ledger.query.load(&id).await {
         Ok(view) => view,
         Err(err) => {
@@ -109,7 +118,7 @@ pub async fn house_account_query_handler(
     Query(params): Query<HouseAccountParams>,
 ) -> Response {
     let client = Arc::clone(&state.database);
-    match client.get_house_accounts(params.currency.into()).await {
+    match client.get_house_accounts(&params.currency).await {
         Ok(accounts) => (StatusCode::OK, Json(json!({ "entries": accounts }))).into_response(),
         Err(err) => AppError::InternalServerError(err.to_string()).into_response(),
     }
@@ -122,7 +131,15 @@ pub async fn house_account_create_handler(
 ) -> Response {
     let client = &state.database.clone();
     let ledger_id = Uuid::new_v4();
-    let ledger = &state.ledger.clone().unwrap();
+    let ledger = match &state.ledger {
+        Some(l) => l,
+        None => {
+            return AppError::InternalServerError("Ledger not configured".to_string())
+                .into_response()
+        }
+    };
+
+    let currency = house_account.currency.parse().unwrap_or_default();
     if let Err(err) = ledger
         .cqrs
         .execute(
@@ -130,7 +147,7 @@ pub async fn house_account_create_handler(
             LedgerCommand::Init {
                 id: ledger_id,
                 account_id: house_account.id,
-                amount: Money::new(Decimal::ZERO, house_account.currency),
+                amount: Money::new(Decimal::ZERO, currency),
             },
         )
         .await
@@ -158,8 +175,6 @@ pub async fn transaction_query_handler(
         .await
     {
         Ok(transactions) => {
-            // convert transaction using into_transaction_with_money and insert
-            // into Vec again to make sure the amount precision
             let transactions: Vec<TransactionWithMoney> = transactions
                 .into_iter()
                 .map(|t| t.into_transaction_with_money())
@@ -168,4 +183,28 @@ pub async fn transaction_query_handler(
         }
         Err(err) => AppError::InternalServerError(err.to_string()).into_response(),
     }
+}
+
+pub async fn health_check_handler() -> StatusCode {
+    StatusCode::OK
+}
+
+pub async fn readiness_check_handler(State(state): State<SharedState>) -> Response {
+    // Check DB connectivity by verifying bank_account loader exists
+    if state.bank_account.is_none() || state.ledger.is_none() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"status": "not_ready"})),
+        )
+            .into_response();
+    }
+    // Check Redis connectivity
+    if state.cache.is_none() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"status": "no_cache"})),
+        )
+            .into_response();
+    }
+    (StatusCode::OK, Json(json!({"status": "ready"}))).into_response()
 }

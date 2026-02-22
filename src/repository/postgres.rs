@@ -1,3 +1,4 @@
+use crate::common::asset::{Asset, AssetClass};
 use crate::common::money::{Currency, Money};
 use crate::domain::finance::{JournalEntry, JournalLine, Outbox, Transaction};
 use crate::domain::models::{BankAccountKind, HouseAccount, LedgerAction};
@@ -180,19 +181,20 @@ impl DatabaseClient for PgPool {
         };
         let cmd = if transaction_type == LedgerAction::Deposit {
             LedgerCommand::Credit {
-                id: Uuid::parse_str(&ledger_id).unwrap(),
+                id: Uuid::parse_str(&ledger_id).map_err(|e| Error::Protocol(e.to_string()))?,
                 account_id: transaction.bank_account_id,
                 transaction_id,
                 amount: Money::new(transaction.amount, Currency::from(transaction.currency)),
             }
         } else {
             LedgerCommand::DebitRelease {
-                id: Uuid::parse_str(&ledger_id).unwrap(),
+                id: Uuid::parse_str(&ledger_id).map_err(|e| Error::Protocol(e.to_string()))?,
                 account_id: transaction.bank_account_id,
                 transaction_id,
                 amount: Money::new(transaction.amount, Currency::from(transaction.currency)),
             }
         };
+        let payload = to_value(&cmd).map_err(|e| Error::Protocol(e.to_string()))?;
         sqlx::query!(
             r#"
             INSERT INTO outbox (transaction_id, event_type, payload)
@@ -200,7 +202,7 @@ impl DatabaseClient for PgPool {
             "#,
             transaction_id,
             event_type,
-            to_value(&cmd).unwrap(),
+            payload,
         )
         .execute(&mut *tx)
         .await?;
@@ -221,7 +223,7 @@ impl DatabaseClient for PgPool {
             account.account_name,
             account.account_type,
             account.ledger_id,
-            account.currency.to_string(),
+            account.currency,
             account.status
         )
         .execute(self)
@@ -229,18 +231,18 @@ impl DatabaseClient for PgPool {
         Ok(())
     }
 
-    async fn get_house_account(&self, currency: Currency) -> Result<HouseAccount, Error> {
+    async fn get_house_account(&self, asset_code: &str) -> Result<HouseAccount, Error> {
         let house_account = sqlx::query_as!(
             HouseAccount,
             r#"
-            SELECT id, status, account_number, account_name, account_type, ledger_id, currency as "currency: String"
+            SELECT id, status, account_number, account_name, account_type, ledger_id, currency
             FROM house_accounts
             WHERE currency = $1
             AND status = 'active'
             AND account_type = 'House'
             LIMIT 1
             "#,
-            currency.to_string()
+            asset_code
         )
         .fetch_one(self)
         .await?;
@@ -248,16 +250,16 @@ impl DatabaseClient for PgPool {
         Ok(house_account)
     }
 
-    async fn get_house_accounts(&self, currency: Currency) -> Result<Vec<HouseAccount>, Error> {
+    async fn get_house_accounts(&self, asset_code: &str) -> Result<Vec<HouseAccount>, Error> {
         let house_accounts = sqlx::query_as!(
             HouseAccount,
             r#"
-            SELECT id, status, account_number, account_name, account_type, ledger_id, currency as "currency: String"
+            SELECT id, status, account_number, account_name, account_type, ledger_id, currency
             FROM house_accounts
             WHERE currency = $1
             AND status = 'active'
             "#,
-            currency.to_string()
+            asset_code
         )
         .fetch_all(self)
         .await?;
@@ -268,7 +270,7 @@ impl DatabaseClient for PgPool {
     async fn validate_bank_account_exists(
         &self,
         user_id: String,
-        currency: Currency,
+        asset_code: &str,
         kind: BankAccountKind,
     ) -> Result<bool, Error> {
         let count = sqlx::query!(
@@ -280,7 +282,7 @@ impl DatabaseClient for PgPool {
             and payload->>'status' IN ('Pending', 'Approved', 'Freeze');
             "#,
             user_id,
-            currency.to_string(),
+            asset_code,
             kind.to_string()
         )
         .fetch_one(self)
@@ -355,11 +357,11 @@ impl DatabaseClient for PgPool {
         let outbox = sqlx::query_as!(
             Outbox,
             r#"
-            SELECT id, transaction_id, event_type, payload, processed
+            SELECT id, transaction_id, event_type, payload, processed, retry_count
             FROM outbox
-            WHERE processed = false
+            WHERE processed = false AND retry_count < 5
             ORDER BY created_at ASC
-            LIMIT 100
+            LIMIT 1000
             "#,
         )
         .fetch_all(self)
@@ -374,6 +376,8 @@ impl DatabaseClient for PgPool {
         offset: i64,
         limit: i64,
     ) -> Result<Vec<Transaction>, Error> {
+        let account_id =
+            Uuid::parse_str(&bank_account_id).map_err(|e| Error::Protocol(e.to_string()))?;
         let transactions = sqlx::query_as!(
             Transaction,
             r#"
@@ -393,7 +397,7 @@ impl DatabaseClient for PgPool {
             ORDER BY created_at DESC
             OFFSET $2 LIMIT $3
             "#,
-            Uuid::parse_str(&bank_account_id).unwrap(),
+            account_id,
             offset,
             limit,
         )
@@ -401,5 +405,99 @@ impl DatabaseClient for PgPool {
         .await?;
 
         Ok(transactions)
+    }
+
+    async fn move_to_dead_letter(
+        &self,
+        outbox_id: i32,
+        transaction_id: Uuid,
+        event_type: &str,
+        payload: &serde_json::Value,
+        error_message: &str,
+        retry_count: i32,
+    ) -> Result<(), Error> {
+        let mut tx = self.begin().await?;
+
+        sqlx::query!(
+            r#"
+            INSERT INTO outbox_dead_letter (original_outbox_id, transaction_id, event_type, payload, error_message, retry_count)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            "#,
+            outbox_id,
+            transaction_id,
+            event_type,
+            payload,
+            error_message,
+            retry_count,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query!(
+            r#"
+            UPDATE outbox SET processed = true, processed_at = NOW()
+            WHERE id = $1
+            "#,
+            outbox_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        Ok(())
+    }
+
+    async fn increment_outbox_retry(
+        &self,
+        outbox_id: i32,
+        error_message: &str,
+    ) -> Result<(), Error> {
+        sqlx::query!(
+            r#"
+            UPDATE outbox
+            SET retry_count = retry_count + 1, last_error = $2
+            WHERE id = $1
+            "#,
+            outbox_id,
+            error_message,
+        )
+        .execute(self)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn load_assets(&self) -> Result<Vec<Asset>, Error> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT code, asset_class, precision, min_amount, display_name, network, is_active
+            FROM assets
+            WHERE is_active = true
+            "#
+        )
+        .fetch_all(self)
+        .await?;
+
+        let assets = rows
+            .into_iter()
+            .map(|r| {
+                let asset_class = match r.asset_class.as_str() {
+                    "Crypto" => AssetClass::Crypto,
+                    _ => AssetClass::Fiat,
+                };
+                Asset {
+                    code: r.code,
+                    asset_class,
+                    precision: r.precision as u32,
+                    min_amount: r.min_amount,
+                    display_name: r.display_name,
+                    network: r.network,
+                    is_active: r.is_active,
+                }
+            })
+            .collect();
+
+        Ok(assets)
     }
 }

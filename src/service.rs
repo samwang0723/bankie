@@ -8,7 +8,7 @@ use tracing::error;
 use uuid::Uuid;
 
 use crate::{
-    common::money::{Currency, Money},
+    common::money::Money,
     domain::{
         finance::{JournalEntry, JournalLine, Transaction},
         models::{BankAccountKind, BankAccountStatus, BankAccountView, HouseAccount, LedgerAction},
@@ -33,7 +33,7 @@ impl BankAccountServices {
 // External services must be called during the processing of the command.
 #[async_trait]
 pub trait BankAccountApi: Sync + Send {
-    async fn get_house_account(&self, currency: Currency) -> Result<HouseAccount, anyhow::Error>;
+    async fn get_house_account(&self, asset_code: &str) -> Result<HouseAccount, anyhow::Error>;
     async fn note_ledger(&self, id: String, command: LedgerCommand) -> Result<(), anyhow::Error>;
     async fn create_transaction_with_journal(
         &self,
@@ -52,7 +52,7 @@ pub trait BankAccountApi: Sync + Send {
         &self,
         account_id: Uuid,
         user_id: String,
-        currency: Currency,
+        asset_code: &str,
         kind: BankAccountKind,
     ) -> Result<bool, anyhow::Error>;
     async fn get_bank_account(&self, account_id: Uuid) -> Result<BankAccountView, anyhow::Error>;
@@ -74,7 +74,6 @@ pub struct BankAccountLogic {
 #[async_trait]
 impl BankAccountApi for BankAccountLogic {
     async fn note_ledger(&self, id: String, command: LedgerCommand) -> Result<(), anyhow::Error> {
-        // Should call ledger commange to write the transaction.
         self.ledger
             .cqrs
             .execute(&id, command)
@@ -137,9 +136,9 @@ impl BankAccountApi for BankAccountLogic {
         Ok(())
     }
 
-    async fn get_house_account(&self, currency: Currency) -> Result<HouseAccount, anyhow::Error> {
+    async fn get_house_account(&self, asset_code: &str) -> Result<HouseAccount, anyhow::Error> {
         self.database
-            .get_house_account(currency)
+            .get_house_account(asset_code)
             .await
             .map_err(|e| anyhow!("Failed to get house account: {}", e))
     }
@@ -148,7 +147,7 @@ impl BankAccountApi for BankAccountLogic {
         &self,
         account_id: Uuid,
         user_id: String,
-        currency: Currency,
+        asset_code: &str,
         kind: BankAccountKind,
     ) -> Result<bool, anyhow::Error> {
         if (self
@@ -163,7 +162,7 @@ impl BankAccountApi for BankAccountLogic {
 
         let valid = self
             .database
-            .validate_bank_account_exists(user_id, currency, kind)
+            .validate_bank_account_exists(user_id, asset_code, kind)
             .await?;
         if !valid {
             return Err(anyhow!("Account duplicated"));

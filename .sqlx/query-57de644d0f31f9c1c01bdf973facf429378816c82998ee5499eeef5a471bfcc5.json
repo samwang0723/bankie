@@ -1,0 +1,15 @@
+{
+  "query": "\n            UPDATE outbox\n            SET retry_count = retry_count + 1, last_error = $2\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "db_name": "PostgreSQL",
+  "hash": "57de644d0f31f9c1c01bdf973facf429378816c82998ee5499eeef5a471bfcc5"
+}

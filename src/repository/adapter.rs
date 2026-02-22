@@ -3,14 +3,11 @@ use mockall::automock;
 use sqlx::Error;
 use uuid::Uuid;
 
-use crate::{
-    common::money::Currency,
-    domain::{
-        finance::{JournalEntry, JournalLine, Outbox, Transaction},
-        models::{BankAccountKind, HouseAccount},
-        tenant::Tenant,
-        user::BankAccountWithLedger,
-    },
+use crate::domain::{
+    finance::{JournalEntry, JournalLine, Outbox, Transaction},
+    models::{BankAccountKind, HouseAccount},
+    tenant::Tenant,
+    user::BankAccountWithLedger,
 };
 
 #[automock]
@@ -30,12 +27,12 @@ pub trait DatabaseClient {
         journal_lines: Vec<JournalLine>,
     ) -> Result<Uuid, Error>;
     async fn create_house_account(&self, account: HouseAccount) -> Result<(), Error>;
-    async fn get_house_account(&self, currency: Currency) -> Result<HouseAccount, Error>;
-    async fn get_house_accounts(&self, currency: Currency) -> Result<Vec<HouseAccount>, Error>;
+    async fn get_house_account(&self, asset_code: &str) -> Result<HouseAccount, Error>;
+    async fn get_house_accounts(&self, asset_code: &str) -> Result<Vec<HouseAccount>, Error>;
     async fn validate_bank_account_exists(
         &self,
         user_id: String,
-        currency: Currency,
+        asset_code: &str,
         kind: BankAccountKind,
     ) -> Result<bool, Error>;
     async fn create_tenant_profile(&self, name: &str, scope: &str) -> Result<i32, Error>;
@@ -48,6 +45,21 @@ pub trait DatabaseClient {
         offset: i64,
         limit: i64,
     ) -> Result<Vec<Transaction>, Error>;
+    async fn move_to_dead_letter(
+        &self,
+        outbox_id: i32,
+        transaction_id: Uuid,
+        event_type: &str,
+        payload: &serde_json::Value,
+        error_message: &str,
+        retry_count: i32,
+    ) -> Result<(), Error>;
+    async fn increment_outbox_retry(
+        &self,
+        outbox_id: i32,
+        error_message: &str,
+    ) -> Result<(), Error>;
+    async fn load_assets(&self) -> Result<Vec<crate::common::asset::Asset>, Error>;
 }
 
 pub struct Adapter<C: DatabaseClient + Send + Sync> {
@@ -83,22 +95,22 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
         self.client.create_house_account(account).await
     }
 
-    pub async fn get_house_account(&self, currency: Currency) -> Result<HouseAccount, Error> {
-        self.client.get_house_account(currency).await
+    pub async fn get_house_account(&self, asset_code: &str) -> Result<HouseAccount, Error> {
+        self.client.get_house_account(asset_code).await
     }
 
-    pub async fn get_house_accounts(&self, currency: Currency) -> Result<Vec<HouseAccount>, Error> {
-        self.client.get_house_accounts(currency).await
+    pub async fn get_house_accounts(&self, asset_code: &str) -> Result<Vec<HouseAccount>, Error> {
+        self.client.get_house_accounts(asset_code).await
     }
 
     pub async fn validate_bank_account_exists(
         &self,
         user_id: String,
-        currency: Currency,
+        asset_code: &str,
         kind: BankAccountKind,
     ) -> Result<bool, Error> {
         self.client
-            .validate_bank_account_exists(user_id, currency, kind)
+            .validate_bank_account_exists(user_id, asset_code, kind)
             .await
     }
 
@@ -134,5 +146,40 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
         self.client
             .get_transactions(bank_account_id, offset, limit)
             .await
+    }
+
+    pub async fn move_to_dead_letter(
+        &self,
+        outbox_id: i32,
+        transaction_id: Uuid,
+        event_type: &str,
+        payload: &serde_json::Value,
+        error_message: &str,
+        retry_count: i32,
+    ) -> Result<(), Error> {
+        self.client
+            .move_to_dead_letter(
+                outbox_id,
+                transaction_id,
+                event_type,
+                payload,
+                error_message,
+                retry_count,
+            )
+            .await
+    }
+
+    pub async fn increment_outbox_retry(
+        &self,
+        outbox_id: i32,
+        error_message: &str,
+    ) -> Result<(), Error> {
+        self.client
+            .increment_outbox_retry(outbox_id, error_message)
+            .await
+    }
+
+    pub async fn load_assets(&self) -> Result<Vec<crate::common::asset::Asset>, Error> {
+        self.client.load_assets().await
     }
 }

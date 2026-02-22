@@ -1,9 +1,12 @@
 use std::sync::Arc;
+use std::time::Duration;
 
-use postgres_es::{default_postgress_pool, PostgresCqrs, PostgresViewRepository};
+use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
+use tracing::{error, info};
 
+use crate::common::asset::AssetRegistry;
 use crate::configs::settings::SETTINGS;
 use crate::domain::models::{BankAccount, BankAccountView, Ledger, LedgerView};
 use crate::event_sourcing::command::BankAccountCommand;
@@ -11,13 +14,16 @@ use crate::repository::adapter::{Adapter, DatabaseClient};
 use crate::repository::configs::{configure_bank_account, configure_ledger};
 use crate::SharedState;
 
+use postgres_es::{PostgresCqrs, PostgresViewRepository};
+
 #[derive(Clone)]
 pub struct ApplicationState<C: DatabaseClient + Send + Sync> {
     pub bank_account: Option<BankAccountLoaderSaver>,
     pub ledger: Option<LedgerLoaderSaver>,
     pub database: Arc<Adapter<C>>,
     pub cache: Option<Arc<redis::Client>>,
-    pub command_sender: Option<Arc<UnboundedSender<BankAccountCommand>>>,
+    pub command_sender: Option<Arc<Sender<BankAccountCommand>>>,
+    pub asset_registry: AssetRegistry,
 }
 
 impl<C: DatabaseClient + Send + Sync> ApplicationState<C> {
@@ -28,6 +34,7 @@ impl<C: DatabaseClient + Send + Sync> ApplicationState<C> {
             database: Arc::new(database),
             cache: None,
             command_sender: None,
+            asset_registry: AssetRegistry::with_defaults(),
         }
     }
 
@@ -46,8 +53,13 @@ impl<C: DatabaseClient + Send + Sync> ApplicationState<C> {
         self
     }
 
-    pub fn with_command_sender(mut self, sender: UnboundedSender<BankAccountCommand>) -> Self {
+    pub fn with_command_sender(mut self, sender: Sender<BankAccountCommand>) -> Self {
         self.command_sender = Some(Arc::new(sender));
+        self
+    }
+
+    pub fn with_asset_registry(mut self, registry: AssetRegistry) -> Self {
+        self.asset_registry = registry;
         self
     }
 }
@@ -69,11 +81,17 @@ pub struct LedgerLoaderSaver {
     pub query: Arc<PostgresViewRepository<LedgerView, Ledger>>,
 }
 
-pub async fn new_application_state(tx: UnboundedSender<BankAccountCommand>) -> SharedState {
-    // Configure the CQRS framework, backed by a Postgres database, along with two queries:
-    // - a simply-query prints events to stdout as they are published
-    // - `query` stores the current state of the account in a ViewRepository that we can access
-    let pool: PgPool = default_postgress_pool(&SETTINGS.database.connection_string()).await;
+pub async fn new_application_state(tx: Sender<BankAccountCommand>) -> SharedState {
+    // H3 FIX: Explicit connection pool sizing instead of library defaults
+    let pool: PgPool = PgPoolOptions::new()
+        .max_connections(50)
+        .min_connections(5)
+        .acquire_timeout(Duration::from_secs(3))
+        .idle_timeout(Duration::from_secs(600))
+        .connect(&SETTINGS.database.connection_string())
+        .await
+        .expect("Failed to connect to database");
+
     let (ledger_cqrs, ledger_query) = configure_ledger(pool.clone());
     let ledger_loader_saver = LedgerLoaderSaver {
         cqrs: ledger_cqrs,
@@ -81,7 +99,26 @@ pub async fn new_application_state(tx: UnboundedSender<BankAccountCommand>) -> S
     };
     let (bc_cqrs, bc_query) = configure_bank_account(pool.clone(), ledger_loader_saver.clone());
 
-    let cache = redis::Client::open(SETTINGS.redis.connection_string()).unwrap();
+    let cache = match redis::Client::open(SETTINGS.redis.connection_string()) {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to connect to Redis: {:?}", e);
+            panic!("Redis connection required for startup");
+        }
+    };
+
+    // Load assets from DB
+    let adapter = Adapter::new(pool.clone());
+    let asset_registry = match adapter.load_assets().await {
+        Ok(assets) => {
+            info!("Loaded {} assets from database", assets.len());
+            AssetRegistry::new(assets)
+        }
+        Err(e) => {
+            error!("Failed to load assets from DB, using defaults: {:?}", e);
+            AssetRegistry::with_defaults()
+        }
+    };
 
     Arc::new(
         ApplicationState::<PgPool>::new(Adapter::new(pool))
@@ -91,6 +128,7 @@ pub async fn new_application_state(tx: UnboundedSender<BankAccountCommand>) -> S
                 query: bc_query,
             })
             .with_ledger(ledger_loader_saver)
-            .with_command_sender(tx),
+            .with_command_sender(tx)
+            .with_asset_registry(asset_registry),
     )
 }

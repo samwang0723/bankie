@@ -16,13 +16,10 @@ impl Aggregate for models::BankAccount {
     type Error = error::BankAccountError;
     type Services = BankAccountServices;
 
-    // This identifier should be unique to the system.
     fn aggregate_type() -> String {
         "bank_account".to_string()
     }
 
-    // The aggregate logic goes here. Note that this will be the _bulk_ of a CQRS system
-    // so expect to use helper functions elsewhere to keep the code clean.
     async fn handle(
         &self,
         command: Self::Command,
@@ -63,9 +60,10 @@ impl Aggregate for models::BankAccount {
                 }])
             }
             BankAccountCommand::Deposit { id: _, amount } => {
+                let asset_code = amount.currency.to_string();
                 let house_account = services
                     .services
-                    .get_house_account(amount.currency)
+                    .get_house_account(&asset_code)
                     .await
                     .map_err(|_| "house account not found")?;
 
@@ -81,14 +79,13 @@ impl Aggregate for models::BankAccount {
                 Ok(vec![])
             }
             BankAccountCommand::Withdrawal { id, amount } => {
+                let asset_code = amount.currency.to_string();
                 let house_account = services
                     .services
-                    .get_house_account(amount.currency)
+                    .get_house_account(&asset_code)
                     .await
                     .map_err(|_| "house account not found")?;
 
-                // Here we create transaction and journal. with outbox record
-                // support, later on have job to credit/debit ledger.
                 let transaction_id = helper::create_transaction_with_journal(
                     self,
                     services,
@@ -98,16 +95,12 @@ impl Aggregate for models::BankAccount {
                 )
                 .await?;
 
-                // In order to prevent over withdraw, must debit hold here and
-                // move the balance to pending
+                // Debit hold: move balance to pending to prevent overdraft
+                let ledger_id = Uuid::parse_str(&self.ledger_id)
+                    .map_err(|e| error::BankAccountError::from(e.to_string().as_str()))?;
                 services
                     .services
-                    .debit_hold(
-                        id,
-                        Uuid::parse_str(&self.ledger_id).unwrap(),
-                        transaction_id,
-                        amount,
-                    )
+                    .debit_hold(id, ledger_id, transaction_id, amount)
                     .await?;
 
                 Ok(vec![])
@@ -141,17 +134,12 @@ impl Aggregate for models::BankAccount {
                 self.status = models::BankAccountStatus::Approved;
                 self.timestamp = base_event.get_created_at();
             }
-            // Money handling actions are just delegate to Ledger, does not need
-            // to record anything in the event.
             events::BankAccountEvent::CustomerDepositedCash { .. } => {}
             events::BankAccountEvent::CustomerWithdrewCash { .. } => {}
         }
     }
 }
 
-// The aggregate tests are the most important part of a CQRS system.
-// The simplicity and flexibility of these tests are a good part of what
-// makes an event sourced system so friendly to changing business requirements.
 #[cfg(test)]
 mod aggregate_tests {
     use async_trait::async_trait;
@@ -178,8 +166,6 @@ mod aggregate_tests {
         },
     };
 
-    // A test framework that will apply our events and command
-    // and verify that the logic works as expected.
     type AccountTestFramework = TestFramework<BankAccount>;
 
     lazy_static! {
@@ -364,7 +350,7 @@ mod aggregate_tests {
 
         async fn get_house_account(
             &self,
-            _currency: Currency,
+            _asset_code: &str,
         ) -> Result<HouseAccount, anyhow::Error> {
             Ok(HouseAccount::default())
         }
@@ -373,7 +359,7 @@ mod aggregate_tests {
             &self,
             _account_id: Uuid,
             _user_id: String,
-            _currency: Currency,
+            _asset_code: &str,
             _kind: BankAccountKind,
         ) -> Result<bool, anyhow::Error> {
             Ok(true)

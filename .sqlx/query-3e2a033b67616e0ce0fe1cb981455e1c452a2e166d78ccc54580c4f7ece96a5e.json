@@ -1,0 +1,58 @@
+{
+  "query": "\n            SELECT id, status, account_number, account_name, account_type, ledger_id, currency\n            FROM house_accounts\n            WHERE currency = $1\n            AND status = 'active'\n            AND account_type = 'House'\n            LIMIT 1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "account_number",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "account_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "account_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "ledger_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "currency",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "db_name": "PostgreSQL",
+  "hash": "3e2a033b67616e0ce0fe1cb981455e1c452a2e166d78ccc54580c4f7ece96a5e"
+}

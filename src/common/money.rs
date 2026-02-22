@@ -6,6 +6,52 @@ use std::fmt;
 use std::ops::{Add, Sub};
 use std::str::FromStr;
 
+/// Default precision lookup for known asset codes.
+/// At runtime, prefer AssetRegistry for precision; this is a compile-time fallback.
+pub fn default_precision(asset_code: &str) -> u32 {
+    match asset_code {
+        "USD" => 2,
+        "TWD" => 0,
+        "BTC" => 8,
+        "ETH" => 18,
+        "USDT" => 6,
+        _ => 2, // safe default for display only
+    }
+}
+
+/// Validate that an asset code is a non-empty uppercase alphanumeric string.
+#[allow(dead_code)]
+pub fn validate_asset_code(code: &str) -> Result<(), AssetCodeError> {
+    if code.is_empty() || code.len() > 10 {
+        return Err(AssetCodeError(format!(
+            "invalid asset code length: '{}'",
+            code
+        )));
+    }
+    if !code.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(AssetCodeError(format!(
+            "invalid asset code characters: '{}'",
+            code
+        )));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+pub struct AssetCodeError(pub String);
+
+impl fmt::Display for AssetCodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Error for AssetCodeError {}
+
+// ============================================================================
+// Legacy Currency enum — kept for backward-compatible serde of existing events
+// ============================================================================
+
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "UPPERCASE")]
@@ -21,6 +67,10 @@ impl Currency {
             Currency::USD => 2,
             Currency::TWD => 0,
         }
+    }
+
+    pub fn as_asset_code(&self) -> String {
+        self.to_string()
     }
 }
 
@@ -45,6 +95,8 @@ impl FromStr for Currency {
     }
 }
 
+/// DEPRECATED: kept only for backward compatibility with existing event deserialization.
+/// New code should use Currency::from_str() / .parse() or validate_asset_code() instead.
 impl From<String> for Currency {
     fn from(s: String) -> Self {
         Currency::from_str(&s).unwrap_or_default()
@@ -62,18 +114,23 @@ impl fmt::Display for CurrencyParseError {
 
 impl Error for CurrencyParseError {}
 
+// ============================================================================
+// Money type — supports both legacy Currency and new asset_code String
+// ============================================================================
+
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct Money {
     pub amount: Decimal,
     pub currency: Currency,
 }
 
-/// Convert decimal into Money type with precision.
-/// let usd_amount = Money::new(dec!(100.00), Currency::USD);
-/// let twd_amount = Money::new(dec!(100), Currency::TWD);
 impl Money {
     pub fn new(amount: Decimal, currency: Currency) -> Self {
         Money { amount, currency }
+    }
+
+    pub fn asset_code(&self) -> String {
+        self.currency.as_asset_code()
     }
 }
 
@@ -149,6 +206,32 @@ mod money_tests {
         assert_eq!(Currency::from_str("USD").unwrap(), Currency::USD);
         assert_eq!(Currency::from_str("TWD").unwrap(), Currency::TWD);
         assert!(Currency::from_str("EUR").is_err());
+    }
+
+    #[test]
+    fn test_currency_parse_rejects_unknown() {
+        assert!("BTC".parse::<Currency>().is_err());
+        assert!("INVALID".parse::<Currency>().is_err());
+        assert_eq!("USD".parse::<Currency>().unwrap(), Currency::USD);
+    }
+
+    #[test]
+    fn test_validate_asset_code() {
+        assert!(validate_asset_code("USD").is_ok());
+        assert!(validate_asset_code("BTC").is_ok());
+        assert!(validate_asset_code("USDT").is_ok());
+        assert!(validate_asset_code("").is_err());
+        assert!(validate_asset_code("TOO_LONG_CODE").is_err());
+        assert!(validate_asset_code("US$").is_err());
+    }
+
+    #[test]
+    fn test_default_precision() {
+        assert_eq!(default_precision("USD"), 2);
+        assert_eq!(default_precision("TWD"), 0);
+        assert_eq!(default_precision("BTC"), 8);
+        assert_eq!(default_precision("ETH"), 18);
+        assert_eq!(default_precision("UNKNOWN"), 2);
     }
 
     #[test]
@@ -241,5 +324,11 @@ mod money_tests {
     fn test_money_display_zero_twd() {
         let money = Money::new(dec!(0), Currency::TWD);
         assert_eq!(format!("{}", money), "0");
+    }
+
+    #[test]
+    fn test_money_asset_code() {
+        let usd = Money::new(dec!(100), Currency::USD);
+        assert_eq!(usd.asset_code(), "USD");
     }
 }

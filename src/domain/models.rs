@@ -70,7 +70,7 @@ pub struct HouseAccount {
     pub account_type: String,
     #[serde(skip_deserializing)]
     pub ledger_id: String,
-    pub currency: Currency,
+    pub currency: String,
 }
 
 // The view for a BankAccount query

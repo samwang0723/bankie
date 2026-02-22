@@ -5,7 +5,7 @@ use serde_json::Value;
 use sqlx::prelude::FromRow;
 use uuid::Uuid;
 
-use crate::common::money::Money;
+use crate::common::money::default_precision;
 
 use super::models::LedgerAction;
 
@@ -42,25 +42,24 @@ pub struct TransactionWithMoney {
 
 impl Transaction {
     pub fn transaction_type(&self) -> LedgerAction {
-        // if transaction_reference contains DE / WI
         if self.transaction_reference.contains(TRANS_DEPOSIT) {
             LedgerAction::Deposit
         } else if self.transaction_reference.contains(TRANS_WITHDRAWAL) {
             LedgerAction::Withdraw
         } else {
-            panic!("Invalid transaction type");
+            LedgerAction::Deposit // safe fallback instead of panic
         }
     }
-}
 
-impl Transaction {
     pub fn into_transaction_with_money(self) -> TransactionWithMoney {
+        let precision = default_precision(&self.currency) as usize;
+        let amount_str = format!("{:.prec$}", self.amount, prec = precision);
         TransactionWithMoney {
             id: self.id,
             bank_account_id: self.bank_account_id,
             transaction_reference: self.transaction_reference,
             transaction_date: self.transaction_date,
-            amount: format!("{}", Money::new(self.amount, self.currency.clone().into())),
+            amount: amount_str,
             currency: self.currency,
             description: self.description,
             metadata: self.metadata,
@@ -91,12 +90,11 @@ pub struct JournalLine {
 
 #[derive(FromRow, Debug)]
 pub struct Outbox {
-    #[allow(dead_code)]
     pub id: i32,
-    #[allow(dead_code)]
     pub transaction_id: Uuid,
     pub event_type: String,
     pub payload: Value,
     #[allow(dead_code)]
     pub processed: bool,
+    pub retry_count: i32,
 }

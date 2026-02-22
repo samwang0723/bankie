@@ -6,3 +6,4 @@ secret.yml
 config.prod.yaml
 config.stg.yaml
 config.dev.yaml
+.local-jwt-token

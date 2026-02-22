@@ -16,13 +16,10 @@ impl Aggregate for models::Ledger {
     type Error = error::LedgerError;
     type Services = MockLedgerServices;
 
-    // This identifier should be unique to the system.
     fn aggregate_type() -> String {
         "ledger".to_string()
     }
 
-    // The aggregate logic goes here. Note that this will be the _bulk_ of a CQRS system
-    // so expect to use helper functions elsewhere to keep the code clean.
     async fn handle(
         &self,
         command: Self::Command,
@@ -49,6 +46,12 @@ impl Aggregate for models::Ledger {
                 transaction_id,
                 amount,
             } => {
+                // C1 FIX: Check balance sufficiency using aggregate state (strongly consistent),
+                // not the eventually-consistent view. This prevents the TOCTOU race condition.
+                if self.available < amount {
+                    return Err("Insufficient funds".into());
+                }
+
                 let mut base_event = BaseEvent::default();
                 base_event.set_aggregate_id(id);
                 base_event.set_parent_id(account_id);
@@ -142,9 +145,6 @@ impl Aggregate for models::Ledger {
     }
 }
 
-// The aggregate tests are the most important part of a CQRS system.
-// The simplicity and flexibility of these tests are a good part of what
-// makes an event sourced system so friendly to changing business requirements.
 #[cfg(test)]
 mod aggregate_tests {
     use lazy_static::lazy_static;
@@ -166,8 +166,6 @@ mod aggregate_tests {
         models::Ledger,
     };
 
-    // A test framework that will apply our events and command
-    // and verify that the logic works as expected.
     type LedgerTestFramework = TestFramework<Ledger>;
 
     lazy_static! {
@@ -281,4 +279,21 @@ mod aggregate_tests {
             base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID)
         }]
     );
+
+    #[test]
+    fn test_debit_hold_insufficient_funds() {
+        // C1 test: DebitHold on aggregate with insufficient funds should fail
+        LedgerTestFramework::with(MockLedgerServices {})
+            .given(vec![LedgerEvent::LedgerInitiated {
+                amount: Money::new(dec!(100.0), Currency::USD),
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID),
+            }])
+            .when(LedgerCommand::DebitHold {
+                id: *LEDGER_ID,
+                account_id: *ACCOUNT_ID,
+                transaction_id: *TRANSACTION_ID,
+                amount: Money::new(dec!(200.0), Currency::USD),
+            })
+            .then_expect_error_message("Insufficient funds");
+    }
 }

@@ -1,7 +1,7 @@
 use command::LedgerCommand;
 use event::{BaseEvent, Event};
 use finance::{JournalEntry, JournalLine, Transaction, TRANS_DEPOSIT, TRANS_WITHDRAWAL};
-use models::{BankAccount, BankAccountKind, LedgerAction};
+use models::{BankAccountKind, LedgerAction};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
@@ -19,7 +19,7 @@ pub async fn validate_account_creation(
 ) -> Result<(), error::BankAccountError> {
     let valid = services
         .services
-        .validate_account_creation(id, user_id, currency, kind)
+        .validate_account_creation(id, user_id, &currency.to_string(), kind)
         .await?;
     if !valid {
         return Err("validation failed".into());
@@ -53,7 +53,7 @@ pub async fn init_ledger(
 }
 
 pub async fn create_transaction_with_journal(
-    bank_account: &BankAccount,
+    bank_account: &models::BankAccount,
     services: &BankAccountServices,
     amount: Money,
     house_account_ledger: String,
@@ -63,7 +63,8 @@ pub async fn create_transaction_with_journal(
     services
         .services
         .validate(
-            Uuid::parse_str(&bank_account.id).unwrap(),
+            Uuid::parse_str(&bank_account.id)
+                .map_err(|e| error::BankAccountError::from(e.to_string().as_str()))?,
             action_type,
             amount,
         )
@@ -75,7 +76,8 @@ pub async fn create_transaction_with_journal(
     };
     let transaction = Transaction {
         id: Uuid::new_v4(),
-        bank_account_id: Uuid::parse_str(&bank_account.id).unwrap(),
+        bank_account_id: Uuid::parse_str(&bank_account.id)
+            .map_err(|e| error::BankAccountError::from(e.to_string().as_str()))?,
         transaction_reference: common::snowflake::generate_transaction_reference(key),
         transaction_date: chrono::Utc::now().date_naive(),
         amount: amount.amount,

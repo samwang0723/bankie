@@ -1,4 +1,5 @@
-.PHONY: help test lint changelog-gen changelog-commit docker-build
+.PHONY: help test lint changelog-gen changelog-commit docker-build \
+       local-setup local-infra local-init-db local-migrate local-build local-start local-stop local-jwt local-demo
 
 help: ## show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {sub("\\\\n",sprintf("\n%22c"," "), $$2);printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -15,6 +16,115 @@ ifneq (,$(wildcard .env))
     include .env
     export $(shell sed 's/=.*//' .env)
 endif
+
+##################
+# local dev env  #
+##################
+
+# Default local dev credentials (override via .env or env vars)
+DB_HOST      ?= localhost
+DB_PORT      ?= 5432
+DB_USER      ?= bankie_app
+DB_NAME      ?= bankie_main
+DB_PASSWD    ?= localpass
+JWT_SECRET   ?= LocalDevSecretKey1234567890abcdefghijklmnop
+SERVICE      ?= demo-service
+
+DATABASE_URL ?= postgres://$(DB_USER):$(DB_PASSWD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)
+
+local-setup: local-infra local-init-db local-migrate local-build local-jwt-gen local-start ## one-shot: infra + db + build + jwt + server
+	@echo ""
+	@echo "=========================================="
+	@echo "  Bankie is running on http://localhost:3030"
+	@echo "=========================================="
+	@echo ""
+	@echo "JWT token written to: .local-jwt-token"
+	@echo ""
+	@echo "Quick test:"
+	@echo "  curl -s http://localhost:3030/health"
+	@echo ""
+	@echo "Full demo:"
+	@echo "  make local-demo"
+	@echo ""
+	@echo "Stop everything:"
+	@echo "  make local-stop"
+
+local-infra: ## start PostgreSQL + Redis via docker-compose
+	@echo "[local] Starting PostgreSQL + Redis..."
+	@docker compose -f docker-compose.local.yml up -d
+	@echo "[local] Waiting for PostgreSQL to be ready..."
+	@for i in $$(seq 1 30); do \
+		docker exec bankie-postgres pg_isready -U postgres > /dev/null 2>&1 && break; \
+		sleep 1; \
+	done
+	@echo "[local] Waiting for Redis to be ready..."
+	@for i in $$(seq 1 15); do \
+		docker exec bankie-redis redis-cli ping 2>/dev/null | grep -q PONG && break; \
+		sleep 1; \
+	done
+	@echo "[local] Infrastructure ready."
+
+local-init-db: ## create DB user + database (idempotent)
+	@echo "[local] Initializing database user and schema..."
+	@PGPASSWORD= psql -h $(DB_HOST) -p $(DB_PORT) -U postgres -tc \
+		"SELECT 1 FROM pg_roles WHERE rolname='$(DB_USER)'" | grep -q 1 || \
+		PGPASSWORD= psql -h $(DB_HOST) -p $(DB_PORT) -U postgres -c \
+		"CREATE USER $(DB_USER) WITH ENCRYPTED PASSWORD '$(DB_PASSWD)'; ALTER ROLE $(DB_USER) WITH CREATEDB;"
+	@PGPASSWORD= psql -h $(DB_HOST) -p $(DB_PORT) -U postgres -tc \
+		"SELECT 1 FROM pg_database WHERE datname='$(DB_NAME)'" | grep -q 1 || \
+		(PGPASSWORD= psql -h $(DB_HOST) -p $(DB_PORT) -U postgres -c \
+		"CREATE DATABASE $(DB_NAME); GRANT ALL PRIVILEGES ON DATABASE $(DB_NAME) TO $(DB_USER); ALTER DATABASE $(DB_NAME) OWNER TO $(DB_USER);")
+	@echo "[local] Database initialized."
+
+local-migrate: ## run migrations using env-based connection
+	@echo "[local] Running migrations..."
+	@DATABASE_URL="$(DATABASE_URL)" cargo run --bin migrations
+	@echo "[local] Migrations complete."
+
+local-build: ## build the bankie server binary
+	@echo "[local] Building bankie..."
+	@SQLX_OFFLINE=true cargo build
+	@echo "[local] Build complete."
+
+local-jwt-gen: ## generate JWT and save to .local-jwt-token
+	@echo "[local] Generating JWT for service '$(SERVICE)'..."
+	@DB_PASSWD=$(DB_PASSWD) JWT_SECRET=$(JWT_SECRET) RUST_LOG=info \
+		cargo run --bin bankie -- --mode jwt --service $(SERVICE) 2>&1 | \
+		grep -oE 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | head -1 > .local-jwt-token
+	@if [ -s .local-jwt-token ]; then \
+		echo "[local] JWT saved to .local-jwt-token"; \
+	else \
+		echo "[local] WARNING: Could not extract JWT. Run manually:"; \
+		echo "  DB_PASSWD=$(DB_PASSWD) JWT_SECRET=$(JWT_SECRET) cargo run --bin bankie -- --mode jwt --service $(SERVICE)"; \
+	fi
+
+local-jwt: local-jwt-gen ## alias: generate JWT token
+	@cat .local-jwt-token 2>/dev/null || echo "(no token file found)"
+
+local-start: ## start the bankie server (background)
+	@echo "[local] Starting bankie server..."
+	@DB_PASSWD=$(DB_PASSWD) JWT_SECRET=$(JWT_SECRET) ENV=local RUST_LOG=info \
+		cargo run --bin bankie -- --mode server &
+	@echo "[local] Waiting for server to be ready..."
+	@for i in $$(seq 1 30); do \
+		curl -sf http://localhost:3030/health > /dev/null 2>&1 && break; \
+		sleep 1; \
+	done
+	@echo "[local] Server ready at http://localhost:3030"
+
+local-stop: ## stop server + tear down infra
+	@echo "[local] Stopping bankie server..."
+	@-pkill -f "bankie.*--mode server" 2>/dev/null || true
+	@echo "[local] Stopping Docker containers..."
+	@docker compose -f docker-compose.local.yml down
+	@echo "[local] Stopped."
+
+local-demo: ## run the full demo scenario (requires running server + JWT)
+	@if [ ! -f .local-jwt-token ] || [ ! -s .local-jwt-token ]; then \
+		echo "ERROR: No JWT token found. Run 'make local-setup' first."; \
+		exit 1; \
+	fi
+	@./scripts/demo.sh "$$(cat .local-jwt-token)"
 
 ########
 # test #
