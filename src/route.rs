@@ -92,9 +92,9 @@ pub async fn bank_account_command_handler(
     // Validate currency/asset_code against AssetRegistry
     let asset_code = match &command {
         BankAccountCommand::OpenAccount { currency, .. } => Some(currency.to_string()),
-        BankAccountCommand::Deposit { amount, .. } => Some(amount.currency.to_string()),
-        BankAccountCommand::Withdrawal { amount, .. } => Some(amount.currency.to_string()),
-        BankAccountCommand::Transfer { amount, .. } => Some(amount.currency.to_string()),
+        BankAccountCommand::Deposit { amount, .. } => Some(amount.asset_code()),
+        BankAccountCommand::Withdrawal { amount, .. } => Some(amount.asset_code()),
+        BankAccountCommand::Transfer { amount, .. } => Some(amount.asset_code()),
         BankAccountCommand::ApproveAccount { .. }
         | BankAccountCommand::FreezeAccount { .. }
         | BankAccountCommand::UnfreezeAccount { .. }

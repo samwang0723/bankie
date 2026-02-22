@@ -120,7 +120,7 @@ impl Aggregate for models::BankAccount {
                 }])
             }
             BankAccountCommand::Deposit { id: _, amount } => {
-                let asset_code = amount.currency.to_string();
+                let asset_code = amount.asset_code();
                 let house_account = services
                     .services
                     .get_house_account(&asset_code)
@@ -139,7 +139,7 @@ impl Aggregate for models::BankAccount {
                 Ok(vec![])
             }
             BankAccountCommand::Withdrawal { id, amount } => {
-                let asset_code = amount.currency.to_string();
+                let asset_code = amount.asset_code();
                 let house_account = services
                     .services
                     .get_house_account(&asset_code)
