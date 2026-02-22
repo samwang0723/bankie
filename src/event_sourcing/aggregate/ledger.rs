@@ -296,4 +296,163 @@ mod aggregate_tests {
             })
             .then_expect_error_message("Insufficient funds");
     }
+
+    // L1: DebitRelease — verify pending decreases after hold
+    fn funded_ledger_events() -> Vec<LedgerEvent> {
+        vec![
+            LedgerEvent::LedgerInitiated {
+                amount: Money::new(dec!(1000.0), Currency::USD),
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID),
+            },
+            // Credit: hold + release (net effect: available += 1000)
+            LedgerEvent::LedgerUpdated {
+                amount: Money::new(dec!(1000.0), Currency::USD),
+                transaction_id: TRANSACTION_ID.to_string(),
+                transaction_type: "credit_hold".to_string(),
+                available_delta: Money::new(Decimal::ZERO, Currency::USD),
+                pending_delta: Money::new(dec!(1000.0), Currency::USD),
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID),
+            },
+            LedgerEvent::LedgerUpdated {
+                amount: Money::new(dec!(1000.0), Currency::USD),
+                transaction_id: TRANSACTION_ID.to_string(),
+                transaction_type: "credit_release".to_string(),
+                available_delta: Money::new(dec!(1000.0), Currency::USD),
+                pending_delta: Money::new(Decimal::ZERO - dec!(1000.0), Currency::USD),
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID),
+            },
+        ]
+    }
+
+    ledger_test_case!(
+        test_debit_release,
+        {
+            let mut events = funded_ledger_events();
+            // DebitHold $200: available -= 200, pending += 200
+            events.push(LedgerEvent::LedgerUpdated {
+                amount: Money::new(dec!(200.0), Currency::USD),
+                transaction_id: TRANSACTION_ID.to_string(),
+                transaction_type: "debit_hold".to_string(),
+                available_delta: Money::new(Decimal::ZERO - dec!(200.0), Currency::USD),
+                pending_delta: Money::new(dec!(200.0), Currency::USD),
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID),
+            });
+            events
+        },
+        LedgerCommand::DebitRelease {
+            id: *LEDGER_ID,
+            account_id: *ACCOUNT_ID,
+            transaction_id: *TRANSACTION_ID,
+            amount: Money::new(dec!(200.0), Currency::USD),
+        },
+        vec![LedgerEvent::LedgerUpdated {
+            amount: Money::new(dec!(200.0), Currency::USD),
+            transaction_id: TRANSACTION_ID.to_string(),
+            transaction_type: "debit_release".to_string(),
+            available_delta: Money::new(Decimal::ZERO, Currency::USD),
+            pending_delta: Money::new(Decimal::ZERO - dec!(200.0), Currency::USD),
+            base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID),
+        }]
+    );
+
+    // L3: DebitHold for exact available amount (boundary)
+    ledger_test_case!(
+        test_debit_hold_exact_balance,
+        funded_ledger_events(),
+        LedgerCommand::DebitHold {
+            id: *LEDGER_ID,
+            account_id: *ACCOUNT_ID,
+            transaction_id: *TRANSACTION_ID,
+            amount: Money::new(dec!(2000.0), Currency::USD),
+        },
+        vec![LedgerEvent::LedgerUpdated {
+            amount: Money::new(dec!(2000.0), Currency::USD),
+            transaction_id: TRANSACTION_ID.to_string(),
+            transaction_type: "debit_hold".to_string(),
+            available_delta: Money::new(Decimal::ZERO - dec!(2000.0), Currency::USD),
+            pending_delta: Money::new(dec!(2000.0), Currency::USD),
+            base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID),
+        }]
+    );
+
+    // L4: Credit on uninitialized ledger (available = 0, no init event)
+    ledger_test_case!(
+        test_credit_on_uninitialized_ledger,
+        vec![],
+        LedgerCommand::Credit {
+            id: *LEDGER_ID,
+            account_id: *ACCOUNT_ID,
+            transaction_id: *TRANSACTION_ID,
+            amount: Money::new(dec!(500.0), Currency::USD),
+        },
+        vec![
+            LedgerEvent::LedgerUpdated {
+                amount: Money::new(dec!(500.0), Currency::USD),
+                transaction_id: TRANSACTION_ID.to_string(),
+                transaction_type: "credit_hold".to_string(),
+                available_delta: Money::new(Decimal::ZERO, Currency::USD),
+                pending_delta: Money::new(dec!(500.0), Currency::USD),
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID),
+            },
+            LedgerEvent::LedgerUpdated {
+                amount: Money::new(dec!(500.0), Currency::USD),
+                transaction_id: TRANSACTION_ID.to_string(),
+                transaction_type: "credit_release".to_string(),
+                available_delta: Money::new(dec!(500.0), Currency::USD),
+                pending_delta: Money::new(Decimal::ZERO - dec!(500.0), Currency::USD),
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID),
+            }
+        ]
+    );
+
+    // L5: Multiple sequential credits verify cumulative balance
+    ledger_test_case!(
+        test_multiple_credits,
+        {
+            let mut events = funded_ledger_events();
+            // Add a second credit of $500
+            events.push(LedgerEvent::LedgerUpdated {
+                amount: Money::new(dec!(500.0), Currency::USD),
+                transaction_id: TRANSACTION_ID.to_string(),
+                transaction_type: "credit_hold".to_string(),
+                available_delta: Money::new(Decimal::ZERO, Currency::USD),
+                pending_delta: Money::new(dec!(500.0), Currency::USD),
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID),
+            });
+            events.push(LedgerEvent::LedgerUpdated {
+                amount: Money::new(dec!(500.0), Currency::USD),
+                transaction_id: TRANSACTION_ID.to_string(),
+                transaction_type: "credit_release".to_string(),
+                available_delta: Money::new(dec!(500.0), Currency::USD),
+                pending_delta: Money::new(Decimal::ZERO - dec!(500.0), Currency::USD),
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID),
+            });
+            events
+        },
+        // Third credit of $300 — aggregate should have available=2500 at this point
+        LedgerCommand::Credit {
+            id: *LEDGER_ID,
+            account_id: *ACCOUNT_ID,
+            transaction_id: *TRANSACTION_ID,
+            amount: Money::new(dec!(300.0), Currency::USD),
+        },
+        vec![
+            LedgerEvent::LedgerUpdated {
+                amount: Money::new(dec!(300.0), Currency::USD),
+                transaction_id: TRANSACTION_ID.to_string(),
+                transaction_type: "credit_hold".to_string(),
+                available_delta: Money::new(Decimal::ZERO, Currency::USD),
+                pending_delta: Money::new(dec!(300.0), Currency::USD),
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID),
+            },
+            LedgerEvent::LedgerUpdated {
+                amount: Money::new(dec!(300.0), Currency::USD),
+                transaction_id: TRANSACTION_ID.to_string(),
+                transaction_type: "credit_release".to_string(),
+                available_delta: Money::new(dec!(300.0), Currency::USD),
+                pending_delta: Money::new(Decimal::ZERO - dec!(300.0), Currency::USD),
+                base_event: create_ledger_base_event(*LEDGER_ID, *ACCOUNT_ID),
+            }
+        ]
+    );
 }

@@ -196,6 +196,37 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
+    // A1: Expired JWT token should return error
+    #[tokio::test]
+    async fn test_decode_jwt_expired() {
+        env::set_var("JWT_SECRET", "your_secret_key");
+        let claims = Claims {
+            iss: "bankie".to_owned(),
+            sub: "test_service".to_owned(),
+            aud: "service".to_owned(),
+            exp: (Utc::now().timestamp() - 3600) as usize, // expired 1 hour ago
+            iat: (Utc::now().timestamp() - 7200) as usize,
+            scopes: vec!["bank-account:read".to_owned()],
+            tenant_id: 1,
+        };
+        let header = Header::default();
+        let encoding_key = EncodingKey::from_secret("your_secret_key".as_bytes());
+        let jwt_token = encode(&header, &claims, &encoding_key).unwrap();
+
+        let result = decode_jwt(jwt_token);
+        assert!(result.is_err(), "Expired JWT should fail to decode");
+    }
+
+    // A5: Missing JWT_SECRET env var should return error
+    #[tokio::test]
+    async fn test_decode_jwt_missing_secret() {
+        env::remove_var("JWT_SECRET");
+        let result = decode_jwt("some.jwt.token".to_string());
+        assert!(result.is_err(), "Missing JWT_SECRET should return error");
+        // Restore for other tests
+        env::set_var("JWT_SECRET", "your_secret_key");
+    }
+
     #[tokio::test]
     async fn test_decode_jwt() {
         // Generate a JWT token

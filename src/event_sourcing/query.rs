@@ -137,11 +137,221 @@ impl View<Ledger> for LedgerView {
 
 #[cfg(test)]
 mod tests {
-    use crate::{common::money::Currency, event_sourcing::event::BaseEvent};
+    use crate::{
+        common::money::Currency,
+        domain::models::{BankAccountKind, BankAccountType},
+        event_sourcing::event::BaseEvent,
+    };
 
     use super::*;
     use chrono::Utc;
     use rust_decimal::Decimal;
+
+    // Q1: BankAccountView update for AccountOpened
+    #[test]
+    fn test_update_with_account_opened() {
+        let mut view = BankAccountView::default();
+        let base_event = BaseEvent {
+            aggregate_id: "acc1".to_string(),
+            parent_id: "".to_string(),
+            created_at: Utc::now().to_string(),
+        };
+        let event = EventEnvelope {
+            aggregate_id: "acc1".to_string(),
+            metadata: Default::default(),
+            sequence: 1,
+            payload: BankAccountEvent::AccountOpened {
+                base_event: base_event.clone(),
+                account_type: BankAccountType::Retail,
+                kind: BankAccountKind::Checking,
+                external_reference_id: Some("user-123".to_string()),
+                account_number: "123456789012".to_string(),
+                currency: Currency::USD,
+            },
+        };
+        view.update(&event);
+
+        assert_eq!(view.id, "acc1");
+        assert_eq!(view.status, BankAccountStatus::Pending);
+        assert_eq!(view.account_type, BankAccountType::Retail);
+        assert_eq!(view.kind, BankAccountKind::Checking);
+        assert_eq!(view.currency, Currency::USD);
+        assert_eq!(view.external_reference_id, Some("user-123".to_string()));
+        assert_eq!(view.account_number, "123456789012");
+    }
+
+    // Q2: BankAccountView update for AccountKycApproved
+    #[test]
+    fn test_update_with_account_kyc_approved() {
+        let mut view = BankAccountView::default();
+        let base_event = BaseEvent {
+            aggregate_id: "acc1".to_string(),
+            parent_id: "parent1".to_string(),
+            created_at: Utc::now().to_string(),
+        };
+        let event = EventEnvelope {
+            aggregate_id: "acc1".to_string(),
+            metadata: Default::default(),
+            sequence: 2,
+            payload: BankAccountEvent::AccountKycApproved {
+                ledger_id: "ledger-123".to_string(),
+                base_event: base_event.clone(),
+            },
+        };
+        view.update(&event);
+
+        assert_eq!(view.id, "acc1");
+        assert_eq!(view.status, BankAccountStatus::Approved);
+        assert_eq!(view.ledger_id, "ledger-123");
+        assert_eq!(view.parent_id, "parent1");
+    }
+
+    // Q3: BankAccountView update for AccountFrozen, AccountUnfrozen, AccountClosed
+    #[test]
+    fn test_update_with_account_frozen() {
+        let mut view = BankAccountView {
+            status: BankAccountStatus::Approved,
+            ..Default::default()
+        };
+        let base_event = BaseEvent {
+            aggregate_id: "acc1".to_string(),
+            parent_id: "".to_string(),
+            created_at: Utc::now().to_string(),
+        };
+        let event = EventEnvelope {
+            aggregate_id: "acc1".to_string(),
+            metadata: Default::default(),
+            sequence: 3,
+            payload: BankAccountEvent::AccountFrozen {
+                base_event: base_event.clone(),
+            },
+        };
+        view.update(&event);
+        assert_eq!(view.status, BankAccountStatus::Freeze);
+    }
+
+    #[test]
+    fn test_update_with_account_unfrozen() {
+        let mut view = BankAccountView {
+            status: BankAccountStatus::Freeze,
+            ..Default::default()
+        };
+        let base_event = BaseEvent {
+            aggregate_id: "acc1".to_string(),
+            parent_id: "".to_string(),
+            created_at: Utc::now().to_string(),
+        };
+        let event = EventEnvelope {
+            aggregate_id: "acc1".to_string(),
+            metadata: Default::default(),
+            sequence: 4,
+            payload: BankAccountEvent::AccountUnfrozen {
+                base_event: base_event.clone(),
+            },
+        };
+        view.update(&event);
+        assert_eq!(view.status, BankAccountStatus::Approved);
+    }
+
+    #[test]
+    fn test_update_with_account_closed() {
+        let mut view = BankAccountView {
+            status: BankAccountStatus::Approved,
+            ..Default::default()
+        };
+        let base_event = BaseEvent {
+            aggregate_id: "acc1".to_string(),
+            parent_id: "".to_string(),
+            created_at: Utc::now().to_string(),
+        };
+        let event = EventEnvelope {
+            aggregate_id: "acc1".to_string(),
+            metadata: Default::default(),
+            sequence: 5,
+            payload: BankAccountEvent::AccountClosed {
+                base_event: base_event.clone(),
+            },
+        };
+        view.update(&event);
+        assert_eq!(view.status, BankAccountStatus::CustomerClosed);
+    }
+
+    // Q4: LedgerView multi-event sequence (init + credit + debit_hold)
+    #[test]
+    fn test_ledger_view_multi_event_sequence() {
+        let mut view = LedgerView::default();
+        let base_event = BaseEvent {
+            aggregate_id: "ledger1".to_string(),
+            parent_id: "account1".to_string(),
+            created_at: Utc::now().to_string(),
+        };
+
+        // Init with $1000
+        view.update(&EventEnvelope {
+            aggregate_id: "ledger1".to_string(),
+            metadata: Default::default(),
+            sequence: 1,
+            payload: LedgerEvent::LedgerInitiated {
+                base_event: base_event.clone(),
+                amount: Money::new(Decimal::new(1000, 0), Currency::USD),
+            },
+        });
+        assert_eq!(view.available.amount, Decimal::new(1000, 0));
+        assert_eq!(view.pending.amount, Decimal::ZERO);
+        assert_eq!(view.current.amount, Decimal::new(1000, 0));
+
+        // Credit $500 (hold + release)
+        view.update(&EventEnvelope {
+            aggregate_id: "ledger1".to_string(),
+            metadata: Default::default(),
+            sequence: 2,
+            payload: LedgerEvent::LedgerUpdated {
+                amount: Money::new(Decimal::new(500, 0), Currency::USD),
+                transaction_id: "tx1".to_string(),
+                transaction_type: "credit_hold".to_string(),
+                available_delta: Money::new(Decimal::ZERO, Currency::USD),
+                pending_delta: Money::new(Decimal::new(500, 0), Currency::USD),
+                base_event: base_event.clone(),
+            },
+        });
+        assert_eq!(view.available.amount, Decimal::new(1000, 0));
+        assert_eq!(view.pending.amount, Decimal::new(500, 0));
+
+        view.update(&EventEnvelope {
+            aggregate_id: "ledger1".to_string(),
+            metadata: Default::default(),
+            sequence: 3,
+            payload: LedgerEvent::LedgerUpdated {
+                amount: Money::new(Decimal::new(500, 0), Currency::USD),
+                transaction_id: "tx1".to_string(),
+                transaction_type: "credit_release".to_string(),
+                available_delta: Money::new(Decimal::new(500, 0), Currency::USD),
+                pending_delta: Money::new(Decimal::new(-500, 0), Currency::USD),
+                base_event: base_event.clone(),
+            },
+        });
+        assert_eq!(view.available.amount, Decimal::new(1500, 0));
+        assert_eq!(view.pending.amount, Decimal::ZERO);
+        assert_eq!(view.current.amount, Decimal::new(1500, 0));
+
+        // DebitHold $200
+        view.update(&EventEnvelope {
+            aggregate_id: "ledger1".to_string(),
+            metadata: Default::default(),
+            sequence: 4,
+            payload: LedgerEvent::LedgerUpdated {
+                amount: Money::new(Decimal::new(200, 0), Currency::USD),
+                transaction_id: "tx2".to_string(),
+                transaction_type: "debit_hold".to_string(),
+                available_delta: Money::new(Decimal::new(-200, 0), Currency::USD),
+                pending_delta: Money::new(Decimal::new(200, 0), Currency::USD),
+                base_event: base_event.clone(),
+            },
+        });
+        assert_eq!(view.available.amount, Decimal::new(1300, 0));
+        assert_eq!(view.pending.amount, Decimal::new(200, 0));
+        assert_eq!(view.current.amount, Decimal::new(1500, 0));
+    }
 
     #[test]
     fn test_update_with_ledger_initiated() {

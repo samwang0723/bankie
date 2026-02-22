@@ -596,4 +596,74 @@ mod tests {
         // Verify the result
         assert!(result.is_err());
     }
+
+    // C1: Deposit with zero amount should be rejected
+    #[tokio::test]
+    async fn test_deposit_zero_amount_rejected() {
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"{"Deposit": {"id": "b9aa777c-0868-48ac-9c49-eff869b437d7", "amount": {"currency": "USD", "amount": 0}}}"#,
+            ))
+            .unwrap();
+        let result = CommandExtractor::from_request(request, &()).await;
+        assert!(result.is_err());
+    }
+
+    // C4: Deposit with negative amount should be rejected
+    #[tokio::test]
+    async fn test_deposit_negative_amount_rejected() {
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"{"Deposit": {"id": "b9aa777c-0868-48ac-9c49-eff869b437d7", "amount": {"currency": "USD", "amount": -100}}}"#,
+            ))
+            .unwrap();
+        let result = CommandExtractor::from_request(request, &()).await;
+        assert!(result.is_err());
+    }
+
+    // C2: Withdrawal with zero amount should be rejected
+    #[tokio::test]
+    async fn test_withdrawal_zero_amount_rejected() {
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"{"Withdrawal": {"id": "b9aa777c-0868-48ac-9c49-eff869b437d7", "amount": {"currency": "USD", "amount": 0}}}"#,
+            ))
+            .unwrap();
+        let result = CommandExtractor::from_request(request, &()).await;
+        assert!(result.is_err());
+    }
+
+    // C5: Withdrawal with negative amount should be rejected
+    #[tokio::test]
+    async fn test_withdrawal_negative_amount_rejected() {
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"{"Withdrawal": {"id": "b9aa777c-0868-48ac-9c49-eff869b437d7", "amount": {"currency": "USD", "amount": -100}}}"#,
+            ))
+            .unwrap();
+        let result = CommandExtractor::from_request(request, &()).await;
+        assert!(result.is_err());
+    }
+
+    // C3: Transfer with zero amount should be rejected
+    #[tokio::test]
+    async fn test_transfer_zero_amount_rejected() {
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"{"Transfer": {"id": "b9aa777c-0868-48ac-9c49-eff869b437d7", "to_account_id": "a1bb888d-1979-49bd-8d50-ff6980c548e8", "amount": {"currency": "USD", "amount": 0}}}"#,
+            ))
+            .unwrap();
+        let result = CommandExtractor::from_request(request, &()).await;
+        assert!(result.is_err());
+    }
 }

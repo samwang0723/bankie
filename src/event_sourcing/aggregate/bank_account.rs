@@ -536,6 +536,8 @@ mod aggregate_tests {
         write_ledger_response: Mutex<Option<Result<(), anyhow::Error>>>,
         write_transaction_response: Mutex<Option<Result<Uuid, anyhow::Error>>>,
         validate_response: Mutex<Option<Result<(), anyhow::Error>>>,
+        get_bank_account_response: Mutex<Option<Result<BankAccountView, String>>>,
+        get_ledger_balance_response: Mutex<Option<Result<(Money, Money), String>>>,
     }
 
     impl Default for MockBankAccountServices {
@@ -544,6 +546,8 @@ mod aggregate_tests {
                 write_ledger_response: Mutex::new(None),
                 write_transaction_response: Mutex::new(None),
                 validate_response: Mutex::new(None),
+                get_bank_account_response: Mutex::new(None),
+                get_ledger_balance_response: Mutex::new(None),
             }
         }
     }
@@ -559,6 +563,14 @@ mod aggregate_tests {
 
         fn set_validate_response(&self, response: Result<(), anyhow::Error>) {
             *self.validate_response.lock().unwrap() = Some(response);
+        }
+
+        fn set_get_bank_account_response(&self, response: Result<BankAccountView, String>) {
+            *self.get_bank_account_response.lock().unwrap() = Some(response);
+        }
+
+        fn set_get_ledger_balance_response(&self, response: Result<(Money, Money), String>) {
+            *self.get_ledger_balance_response.lock().unwrap() = Some(response);
         }
     }
 
@@ -624,6 +636,9 @@ mod aggregate_tests {
             &self,
             _account_id: Uuid,
         ) -> Result<BankAccountView, anyhow::Error> {
+            if let Some(response) = self.get_bank_account_response.lock().unwrap().take() {
+                return response.map_err(|e| anyhow::anyhow!(e));
+            }
             Ok(BankAccountView {
                 status: BankAccountStatus::Approved,
                 ..Default::default()
@@ -644,6 +659,9 @@ mod aggregate_tests {
             &self,
             _account_id: Uuid,
         ) -> Result<(Money, Money), anyhow::Error> {
+            if let Some(response) = self.get_ledger_balance_response.lock().unwrap().take() {
+                return response.map_err(|e| anyhow::anyhow!(e));
+            }
             Ok((
                 Money::new(Decimal::ZERO, Currency::USD),
                 Money::new(Decimal::ZERO, Currency::USD),
@@ -660,5 +678,73 @@ mod aggregate_tests {
         ) -> Result<Uuid, anyhow::Error> {
             Ok(Uuid::new_v4())
         }
+    }
+
+    // G1: Close frozen account should fail (status is Freeze, not Approved)
+    test_error_case!(
+        test_close_frozen_account_fails,
+        {
+            let mut events = approved_account_events();
+            events.push(BankAccountEvent::AccountFrozen {
+                base_event: create_base_event(*ACCOUNT_ID),
+            });
+            events
+        },
+        BankAccountCommand::CloseAccount { id: *ACCOUNT_ID },
+        "account must be Approved to close"
+    );
+
+    // G2: Close account with non-zero balance should fail
+    #[test]
+    fn test_close_account_nonzero_balance_fails() {
+        let mock = setup_mock_services();
+        mock.set_get_ledger_balance_response(Ok((
+            Money::new(dec!(100.0), Currency::USD),
+            Money::new(Decimal::ZERO, Currency::USD),
+        )));
+        let services = BankAccountServices::new(Box::new(mock));
+        AccountTestFramework::with(services)
+            .given(approved_account_events())
+            .when(BankAccountCommand::CloseAccount { id: *ACCOUNT_ID })
+            .then_expect_error_message("account balance must be zero to close");
+    }
+
+    // G5: Transfer to non-Approved destination should fail
+    #[test]
+    fn test_transfer_to_frozen_dest_fails() {
+        let mock = setup_mock_services();
+        mock.set_get_bank_account_response(Ok(BankAccountView {
+            status: BankAccountStatus::Freeze,
+            ..Default::default()
+        }));
+        let services = BankAccountServices::new(Box::new(mock));
+        AccountTestFramework::with(services)
+            .given(approved_account_events())
+            .when(BankAccountCommand::Transfer {
+                id: *ACCOUNT_ID,
+                to_account_id: *DEST_ACCOUNT_ID,
+                amount: Money::new(dec!(50.0), Currency::USD),
+            })
+            .then_expect_error_message("destination account is not active");
+    }
+
+    // G6: Transfer with currency mismatch should fail
+    #[test]
+    fn test_transfer_currency_mismatch_fails() {
+        let mock = setup_mock_services();
+        mock.set_get_bank_account_response(Ok(BankAccountView {
+            status: BankAccountStatus::Approved,
+            currency: Currency::TWD,
+            ..Default::default()
+        }));
+        let services = BankAccountServices::new(Box::new(mock));
+        AccountTestFramework::with(services)
+            .given(approved_account_events())
+            .when(BankAccountCommand::Transfer {
+                id: *ACCOUNT_ID,
+                to_account_id: *DEST_ACCOUNT_ID,
+                amount: Money::new(dec!(50.0), Currency::USD),
+            })
+            .then_expect_error_message("currency mismatch between source and destination");
     }
 }
