@@ -72,6 +72,20 @@ pub async fn bank_account_command_handler(
     State(state): State<SharedState>,
     CommandExtractor(_metadata, command): CommandExtractor,
 ) -> Response {
+    // Validate currency/asset_code against AssetRegistry
+    let asset_code = match &command {
+        BankAccountCommand::OpenAccount { currency, .. } => Some(currency.to_string()),
+        BankAccountCommand::Deposit { amount, .. } => Some(amount.currency.to_string()),
+        BankAccountCommand::Withdrawal { amount, .. } => Some(amount.currency.to_string()),
+        BankAccountCommand::ApproveAccount { .. } => None,
+    };
+    if let Some(ref code) = asset_code {
+        if !state.asset_registry.validate_asset_code(code).await {
+            return AppError::BadRequest(format!("Unsupported asset code: {}", code))
+                .into_response();
+        }
+    }
+
     let result = match &command {
         BankAccountCommand::OpenAccount {
             id, account_number, ..
@@ -138,6 +152,19 @@ pub async fn house_account_create_handler(
     State(state): State<SharedState>,
     HouseAccountExtractor(_metadata, mut house_account): HouseAccountExtractor,
 ) -> Response {
+    // Validate currency against AssetRegistry
+    if !state
+        .asset_registry
+        .validate_asset_code(&house_account.currency)
+        .await
+    {
+        return AppError::BadRequest(format!(
+            "Unsupported asset code: {}",
+            house_account.currency
+        ))
+        .into_response();
+    }
+
     let client = &state.database.clone();
     let ledger_id = Uuid::new_v4();
     let ledger = match &state.ledger {

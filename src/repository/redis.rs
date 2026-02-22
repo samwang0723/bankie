@@ -63,7 +63,6 @@ pub async fn release_lock(client: &redis::Client, lock_key: &str, lock_value: &s
 
 /// Set a key with NX (only if not exists) and EX (expiry in seconds).
 /// Used for idempotency tokens.
-#[allow(dead_code)]
 pub async fn set_nx_ex(
     client: &redis::Client,
     key: &str,
@@ -83,7 +82,6 @@ pub async fn set_nx_ex(
 }
 
 /// Get a value by key from Redis.
-#[allow(dead_code)]
 pub async fn get_value(
     client: &redis::Client,
     key: &str,

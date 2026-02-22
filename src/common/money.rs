@@ -59,6 +59,9 @@ pub enum Currency {
     #[default]
     USD,
     TWD,
+    BTC,
+    ETH,
+    USDT,
 }
 
 impl Currency {
@@ -66,10 +69,12 @@ impl Currency {
         match self {
             Currency::USD => 2,
             Currency::TWD => 0,
+            Currency::BTC => 8,
+            Currency::ETH => 18,
+            Currency::USDT => 6,
         }
     }
 
-    #[allow(dead_code)]
     pub fn as_asset_code(&self) -> String {
         self.to_string()
     }
@@ -80,6 +85,9 @@ impl fmt::Display for Currency {
         match self {
             Currency::USD => write!(f, "USD"),
             Currency::TWD => write!(f, "TWD"),
+            Currency::BTC => write!(f, "BTC"),
+            Currency::ETH => write!(f, "ETH"),
+            Currency::USDT => write!(f, "USDT"),
         }
     }
 }
@@ -91,6 +99,9 @@ impl FromStr for Currency {
         match s {
             "USD" => Ok(Currency::USD),
             "TWD" => Ok(Currency::TWD),
+            "BTC" => Ok(Currency::BTC),
+            "ETH" => Ok(Currency::ETH),
+            "USDT" => Ok(Currency::USDT),
             _ => Err(CurrencyParseError),
         }
     }
@@ -130,7 +141,6 @@ impl Money {
         Money { amount, currency }
     }
 
-    #[allow(dead_code)]
     pub fn asset_code(&self) -> String {
         self.currency.as_asset_code()
     }
@@ -207,14 +217,18 @@ mod money_tests {
     fn test_currency_from_str() {
         assert_eq!(Currency::from_str("USD").unwrap(), Currency::USD);
         assert_eq!(Currency::from_str("TWD").unwrap(), Currency::TWD);
+        assert_eq!(Currency::from_str("BTC").unwrap(), Currency::BTC);
+        assert_eq!(Currency::from_str("ETH").unwrap(), Currency::ETH);
+        assert_eq!(Currency::from_str("USDT").unwrap(), Currency::USDT);
         assert!(Currency::from_str("EUR").is_err());
     }
 
     #[test]
     fn test_currency_parse_rejects_unknown() {
-        assert!("BTC".parse::<Currency>().is_err());
         assert!("INVALID".parse::<Currency>().is_err());
+        assert!("EUR".parse::<Currency>().is_err());
         assert_eq!("USD".parse::<Currency>().unwrap(), Currency::USD);
+        assert_eq!("BTC".parse::<Currency>().unwrap(), Currency::BTC);
     }
 
     #[test]
@@ -240,6 +254,9 @@ mod money_tests {
     fn test_currency_precision() {
         assert_eq!(Currency::USD.precision(), 2);
         assert_eq!(Currency::TWD.precision(), 0);
+        assert_eq!(Currency::BTC.precision(), 8);
+        assert_eq!(Currency::ETH.precision(), 18);
+        assert_eq!(Currency::USDT.precision(), 6);
     }
 
     #[test]

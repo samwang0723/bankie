@@ -133,7 +133,8 @@ async fn process_event(event: &Outbox, ledger: &LedgerLoaderSaver) -> Result<Uui
     let currency_str = payload[key]["amount"]["currency"]
         .as_str()
         .context("Missing 'currency' field")?;
-    let currency = Currency::from(currency_str.to_string());
+    let currency = Currency::from_str(currency_str)
+        .map_err(|_| anyhow!("Unsupported currency in outbox event: {}", currency_str))?;
 
     let amount = Money::new(amount, currency);
 

@@ -12,13 +12,10 @@ use tracing::warn;
 
 use crate::repository::redis::{get_value, set_nx_ex};
 
-#[allow(dead_code)]
 const IDEMPOTENCY_HEADER: &str = "Idempotency-Key";
-#[allow(dead_code)]
 const IDEMPOTENCY_TTL: i64 = 86400; // 24 hours
 
 /// Extracts the Idempotency-Key header value if present.
-#[allow(dead_code)]
 pub fn get_idempotency_key(headers: &HeaderMap) -> Option<String> {
     headers
         .get(IDEMPOTENCY_HEADER)
@@ -28,19 +25,20 @@ pub fn get_idempotency_key(headers: &HeaderMap) -> Option<String> {
 
 /// Idempotency middleware for POST endpoints.
 /// If `Idempotency-Key` header is present:
-///   - Check Redis for existing key
+///   - Check Redis for existing key (scoped by tenant_id)
 ///   - If found: return cached "already processed" response
 ///   - If not found: set key in Redis with NX + 24h TTL, proceed
-#[allow(dead_code)]
 pub async fn idempotency_check(req: Request, next: Next) -> Result<Response<Body>, StatusCode> {
     let key = get_idempotency_key(req.headers());
 
     if let Some(key) = key {
         // Try to get Redis client from extensions
         let cache = req.extensions().get::<Arc<redis::Client>>().cloned();
+        // Get tenant_id from auth middleware (inserted by authorize)
+        let tenant_id = req.extensions().get::<i32>().copied().unwrap_or(0);
 
         if let Some(cache) = cache {
-            let redis_key = format!("idempotency:{}", key);
+            let redis_key = format!("idempotency:{}:{}", tenant_id, key);
 
             // Check if key already exists
             match get_value(&cache, &redis_key).await {

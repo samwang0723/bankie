@@ -4,6 +4,7 @@ use axum::Router;
 use axum::{middleware, routing::get, routing::post};
 use clap::Parser;
 use clap_derive::Parser;
+use common::idempotency::idempotency_check;
 use event_sourcing::command::BankAccountCommand;
 use job::create_ledger_job;
 use route::{
@@ -134,6 +135,13 @@ async fn main() {
 
             // Configure Axum routes
             let compression_layer: CompressionLayer = CompressionLayer::new();
+
+            // Extract Redis client for idempotency middleware injection
+            let redis_client = state
+                .cache
+                .clone()
+                .expect("Redis client must be initialized at startup");
+
             let router = Router::new()
                 // Health check endpoints (no auth required) — M3 fix
                 .route("/health", get(health_check_handler))
@@ -156,8 +164,11 @@ async fn main() {
                 )
                 .route("/v1/user/:id", get(user_query_handler))
                 .route("/v1/transaction", get(transaction_query_handler))
-                .layer(middleware::from_fn(authorize::<PgPool>))
-                .layer(AddExtensionLayer::new(state.clone()))
+                // Middleware layers (execution order: outermost → innermost → handler)
+                .layer(middleware::from_fn(idempotency_check)) // Runs after auth, checks Redis for duplicate Idempotency-Key
+                .layer(middleware::from_fn(authorize::<PgPool>)) // JWT auth + tenant extraction
+                .layer(AddExtensionLayer::new(redis_client)) // Inject Redis for idempotency middleware
+                .layer(AddExtensionLayer::new(state.clone())) // Inject ApplicationState
                 .layer(compression_layer)
                 .layer(TraceLayer::new_for_http())
                 .with_state(state);
