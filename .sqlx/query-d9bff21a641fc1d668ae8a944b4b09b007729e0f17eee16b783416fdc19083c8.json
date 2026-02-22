@@ -1,4 +1,5 @@
 {
+  "db_name": "PostgreSQL",
   "query": "\n            SELECT id, transaction_id, event_type, payload, processed, retry_count\n            FROM outbox\n            WHERE processed = false AND retry_count < 5\n            ORDER BY created_at ASC\n            LIMIT 1000\n            ",
   "describe": {
     "columns": [
@@ -45,6 +46,5 @@
       false
     ]
   },
-  "db_name": "PostgreSQL",
   "hash": "d9bff21a641fc1d668ae8a944b4b09b007729e0f17eee16b783416fdc19083c8"
 }

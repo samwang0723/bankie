@@ -10,7 +10,7 @@
         "Varchar",
         "Varchar",
         "Varchar",
-        "Bpchar",
+        "Varchar",
         "Varchar"
       ]
     },

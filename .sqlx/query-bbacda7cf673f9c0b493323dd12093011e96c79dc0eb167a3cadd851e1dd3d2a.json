@@ -1,4 +1,5 @@
 {
+  "db_name": "PostgreSQL",
   "query": "\n            SELECT code, asset_class, precision, min_amount, display_name, network, is_active\n            FROM assets\n            WHERE is_active = true\n            ",
   "describe": {
     "columns": [
@@ -51,6 +52,5 @@
       false
     ]
   },
-  "db_name": "PostgreSQL",
   "hash": "bbacda7cf673f9c0b493323dd12093011e96c79dc0eb167a3cadd851e1dd3d2a"
 }

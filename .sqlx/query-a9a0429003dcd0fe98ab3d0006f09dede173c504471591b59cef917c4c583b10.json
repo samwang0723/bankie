@@ -16,7 +16,7 @@
         "Varchar",
         "Date",
         "Numeric",
-        "Bpchar",
+        "Varchar",
         "Text",
         "Jsonb",
         "Varchar",

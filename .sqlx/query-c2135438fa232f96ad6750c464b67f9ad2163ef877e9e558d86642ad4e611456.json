@@ -10,7 +10,7 @@
         "Text",
         "Numeric",
         "Numeric",
-        "Bpchar",
+        "Varchar",
         "Text"
       ]
     },
