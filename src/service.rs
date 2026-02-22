@@ -51,10 +51,15 @@ pub trait BankAccountApi: Sync + Send {
     async fn validate_account_creation(
         &self,
         account_id: Uuid,
-        user_id: String,
+        external_reference_id: Option<String>,
         currency: Currency,
         kind: BankAccountKind,
     ) -> Result<bool, anyhow::Error>;
+    async fn find_checking_account(
+        &self,
+        external_reference_id: Option<String>,
+        currency: Currency,
+    ) -> Result<Option<Uuid>, anyhow::Error>;
     async fn get_bank_account(&self, account_id: Uuid) -> Result<BankAccountView, anyhow::Error>;
     async fn debit_hold(
         &self,
@@ -147,7 +152,7 @@ impl BankAccountApi for BankAccountLogic {
     async fn validate_account_creation(
         &self,
         account_id: Uuid,
-        user_id: String,
+        external_reference_id: Option<String>,
         currency: Currency,
         kind: BankAccountKind,
     ) -> Result<bool, anyhow::Error> {
@@ -161,15 +166,41 @@ impl BankAccountApi for BankAccountLogic {
             return Err(anyhow!("Account duplicated"));
         }
 
-        let valid = self
-            .database
-            .validate_bank_account_exists(user_id, currency, kind)
-            .await?;
-        if !valid {
-            return Err(anyhow!("Account duplicated"));
+        // Only check for duplicates if external_reference_id is provided
+        if let Some(ref ext_ref) = external_reference_id {
+            let valid = self
+                .database
+                .validate_bank_account_exists(Some(ext_ref.clone()), currency, kind)
+                .await?;
+            if !valid {
+                return Err(anyhow!("Account duplicated"));
+            }
         }
 
         Ok(true)
+    }
+
+    async fn find_checking_account(
+        &self,
+        external_reference_id: Option<String>,
+        currency: Currency,
+    ) -> Result<Option<Uuid>, anyhow::Error> {
+        let ext_ref = match external_reference_id {
+            Some(ref r) if !r.is_empty() => Some(r.clone()),
+            _ => return Ok(None),
+        };
+        match self
+            .database
+            .find_checking_account(ext_ref, &currency.to_string())
+            .await?
+        {
+            Some(view_id) => {
+                let uuid = Uuid::parse_str(&view_id)
+                    .map_err(|e| anyhow!("Invalid checking account ID: {}", e))?;
+                Ok(Some(uuid))
+            }
+            None => Ok(None),
+        }
     }
 
     async fn get_bank_account(&self, account_id: Uuid) -> Result<BankAccountView, anyhow::Error> {

@@ -32,19 +32,44 @@ impl Aggregate for models::BankAccount {
             BankAccountCommand::OpenAccount {
                 id,
                 parent_id: _,
+                account_number,
                 account_type,
                 kind,
-                user_id,
+                external_reference_id,
                 currency,
             } => {
-                helper::validate_account_creation(services, id, user_id.clone(), currency, kind)
-                    .await?;
+                helper::validate_account_creation(
+                    services,
+                    id,
+                    external_reference_id.clone(),
+                    currency,
+                    kind,
+                )
+                .await?;
+
+                // Resolve parent_id for sub-accounts (Interest/Yield)
+                let resolved_parent_id = if kind != models::BankAccountKind::Checking {
+                    services
+                        .services
+                        .find_checking_account(external_reference_id.clone(), currency)
+                        .await
+                        .ok()
+                        .flatten()
+                } else {
+                    None
+                };
+
+                let mut base_event = helper::create_base_event(id);
+                if let Some(parent_uuid) = resolved_parent_id {
+                    base_event.set_parent_id(parent_uuid);
+                }
 
                 Ok(vec![events::BankAccountEvent::AccountOpened {
-                    base_event: helper::create_base_event(id),
+                    base_event,
                     account_type,
                     kind,
-                    user_id,
+                    external_reference_id,
+                    account_number,
                     currency,
                 }])
             }
@@ -121,7 +146,8 @@ impl Aggregate for models::BankAccount {
                 base_event,
                 account_type,
                 kind,
-                user_id,
+                external_reference_id,
+                account_number,
                 currency,
             } => {
                 self.id = base_event.get_aggregate_id();
@@ -130,7 +156,8 @@ impl Aggregate for models::BankAccount {
                 self.account_type = account_type;
                 self.kind = kind;
                 self.currency = currency;
-                self.user_id = user_id;
+                self.external_reference_id = external_reference_id;
+                self.account_number = account_number;
             }
             events::BankAccountEvent::AccountKycApproved {
                 ledger_id,
@@ -222,16 +249,40 @@ mod aggregate_tests {
         BankAccountCommand::OpenAccount {
             id: *ACCOUNT_ID,
             parent_id: None,
+            account_number: "123456789012".to_string(),
             account_type: BankAccountType::Retail,
             kind: BankAccountKind::Checking,
-            user_id: "user".to_string(),
+            external_reference_id: Some("user".to_string()),
             currency: Currency::USD
         },
         vec![BankAccountEvent::AccountOpened {
             base_event: create_base_event(*ACCOUNT_ID),
             account_type: BankAccountType::Retail,
             kind: BankAccountKind::Checking,
-            user_id: "user".to_string(),
+            external_reference_id: Some("user".to_string()),
+            account_number: "123456789012".to_string(),
+            currency: Currency::USD
+        }]
+    );
+
+    test_case!(
+        test_account_creation_no_external_ref,
+        vec![],
+        BankAccountCommand::OpenAccount {
+            id: *ACCOUNT_ID,
+            parent_id: None,
+            account_number: "123456789012".to_string(),
+            account_type: BankAccountType::Retail,
+            kind: BankAccountKind::Checking,
+            external_reference_id: None,
+            currency: Currency::USD
+        },
+        vec![BankAccountEvent::AccountOpened {
+            base_event: create_base_event(*ACCOUNT_ID),
+            account_type: BankAccountType::Retail,
+            kind: BankAccountKind::Checking,
+            external_reference_id: None,
+            account_number: "123456789012".to_string(),
             currency: Currency::USD
         }]
     );
@@ -242,7 +293,8 @@ mod aggregate_tests {
             base_event: create_base_event(*ACCOUNT_ID),
             account_type: BankAccountType::Retail,
             kind: BankAccountKind::Checking,
-            user_id: "user".to_string(),
+            external_reference_id: Some("user".to_string()),
+            account_number: "123456789012".to_string(),
             currency: Currency::USD
         }],
         BankAccountCommand::ApproveAccount {
@@ -262,7 +314,8 @@ mod aggregate_tests {
                 base_event: create_base_event(*ACCOUNT_ID),
                 account_type: BankAccountType::Retail,
                 kind: BankAccountKind::Checking,
-                user_id: "user".to_string(),
+                external_reference_id: Some("user".to_string()),
+                account_number: "123456789012".to_string(),
                 currency: Currency::USD
             },
             BankAccountEvent::AccountKycApproved {
@@ -284,7 +337,8 @@ mod aggregate_tests {
                 base_event: create_base_event(*ACCOUNT_ID),
                 account_type: BankAccountType::Retail,
                 kind: BankAccountKind::Checking,
-                user_id: "user".to_string(),
+                external_reference_id: Some("user".to_string()),
+                account_number: "123456789012".to_string(),
                 currency: Currency::USD
             },
             BankAccountEvent::AccountKycApproved {
@@ -372,11 +426,19 @@ mod aggregate_tests {
         async fn validate_account_creation(
             &self,
             _account_id: Uuid,
-            _user_id: String,
+            _external_reference_id: Option<String>,
             _currency: Currency,
             _kind: BankAccountKind,
         ) -> Result<bool, anyhow::Error> {
             Ok(true)
+        }
+
+        async fn find_checking_account(
+            &self,
+            _external_reference_id: Option<String>,
+            _currency: Currency,
+        ) -> Result<Option<Uuid>, anyhow::Error> {
+            Ok(None)
         }
 
         async fn get_bank_account(
