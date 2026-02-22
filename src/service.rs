@@ -68,6 +68,15 @@ pub trait BankAccountApi: Sync + Send {
         transaction_id: Uuid,
         amount: Money,
     ) -> Result<(), anyhow::Error>;
+    async fn get_ledger_balance(&self, account_id: Uuid) -> Result<(Money, Money), anyhow::Error>;
+    async fn create_transfer_transactions(
+        &self,
+        source_account_id: Uuid,
+        source_ledger_id: String,
+        dest_account_id: Uuid,
+        dest_ledger_id: String,
+        amount: Money,
+    ) -> Result<Uuid, anyhow::Error>;
 }
 
 pub struct BankAccountLogic {
@@ -120,7 +129,8 @@ impl BankAccountApi for BankAccountLogic {
                         Ok(view) => match view {
                             None => error!("Ledger not found"),
                             Some(ledger_view) => {
-                                if action == LedgerAction::Withdraw
+                                if (action == LedgerAction::Withdraw
+                                    || action == LedgerAction::Transfer)
                                     && ledger_view.available < amount
                                 {
                                     return Err(anyhow!("Insufficient funds"));
@@ -229,5 +239,38 @@ impl BankAccountApi for BankAccountLogic {
             Ok(_) => Ok(()),
             Err(err) => Err(anyhow!("Failed to debit hold: {}", err)),
         }
+    }
+
+    async fn get_ledger_balance(&self, account_id: Uuid) -> Result<(Money, Money), anyhow::Error> {
+        let account_view = self.get_bank_account(account_id).await?;
+        match self.ledger.query.load(&account_view.ledger_id).await {
+            Ok(Some(ledger_view)) => Ok((ledger_view.available, ledger_view.pending)),
+            Ok(None) => {
+                // No ledger yet — balance is zero
+                let zero = Money::new(rust_decimal::Decimal::ZERO, account_view.currency);
+                Ok((zero, zero))
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    async fn create_transfer_transactions(
+        &self,
+        source_account_id: Uuid,
+        source_ledger_id: String,
+        dest_account_id: Uuid,
+        dest_ledger_id: String,
+        amount: Money,
+    ) -> Result<Uuid, anyhow::Error> {
+        self.database
+            .create_transfer_transactions(
+                source_account_id,
+                source_ledger_id,
+                dest_account_id,
+                dest_ledger_id,
+                amount,
+            )
+            .await
+            .map_err(|e| anyhow!("Failed to create transfer transactions: {}", e))
     }
 }

@@ -26,12 +26,26 @@ pub enum BankAccountCommand {
         #[serde(skip_deserializing)]
         ledger_id: Uuid,
     },
+    FreezeAccount {
+        id: Uuid,
+    },
+    UnfreezeAccount {
+        id: Uuid,
+    },
+    CloseAccount {
+        id: Uuid,
+    },
     Deposit {
         id: Uuid,
         amount: Money,
     },
     Withdrawal {
         id: Uuid,
+        amount: Money,
+    },
+    Transfer {
+        id: Uuid,
+        to_account_id: Uuid,
         amount: Money,
     },
 }

@@ -1,6 +1,8 @@
 use command::LedgerCommand;
 use event::{BaseEvent, Event};
-use finance::{JournalEntry, JournalLine, Transaction, TRANS_DEPOSIT, TRANS_WITHDRAWAL};
+use finance::{
+    JournalEntry, JournalLine, Transaction, TRANS_DEPOSIT, TRANS_TRANSFER, TRANS_WITHDRAWAL,
+};
 use models::{BankAccountKind, LedgerAction};
 use rust_decimal::Decimal;
 use uuid::Uuid;
@@ -73,6 +75,7 @@ pub async fn create_transaction_with_journal(
     let key = match action_type {
         LedgerAction::Deposit => TRANS_DEPOSIT,
         LedgerAction::Withdraw => TRANS_WITHDRAWAL,
+        LedgerAction::Transfer => TRANS_TRANSFER,
     };
     let transaction = Transaction {
         id: Uuid::new_v4(),
@@ -132,4 +135,40 @@ pub async fn create_transaction_with_journal(
         )
         .await
         .map_err(|_| "transaction update failed".into())
+}
+
+/// Create transfer transactions: source debit + destination credit with double-entry journal.
+/// Returns the source transaction ID for debit-hold.
+pub async fn create_transfer_transactions(
+    source_account: &models::BankAccount,
+    services: &BankAccountServices,
+    dest_account_id: Uuid,
+    dest_ledger_id: String,
+    amount: Money,
+) -> Result<Uuid, error::BankAccountError> {
+    // Validate source has sufficient funds
+    services
+        .services
+        .validate(
+            Uuid::parse_str(&source_account.id)
+                .map_err(|e| error::BankAccountError::from(e.to_string().as_str()))?,
+            LedgerAction::Transfer,
+            amount,
+        )
+        .await?;
+
+    let source_account_id = Uuid::parse_str(&source_account.id)
+        .map_err(|e| error::BankAccountError::from(e.to_string().as_str()))?;
+
+    services
+        .services
+        .create_transfer_transactions(
+            source_account_id,
+            source_account.ledger_id.clone(),
+            dest_account_id,
+            dest_ledger_id,
+            amount,
+        )
+        .await
+        .map_err(|_| "transfer transaction creation failed".into())
 }

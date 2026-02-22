@@ -50,6 +50,24 @@ where
             *id = Uuid::new_v4();
             *account_number = generate_bank_account_number(12);
         }
+        // Validate Transfer amount is positive
+        if let BankAccountCommand::Transfer { amount, .. } = &command {
+            if amount.amount <= rust_decimal::Decimal::ZERO {
+                return Err(CommandExtractionError);
+            }
+        }
+        // Validate Deposit amount is positive
+        if let BankAccountCommand::Deposit { amount, .. } = &command {
+            if amount.amount <= rust_decimal::Decimal::ZERO {
+                return Err(CommandExtractionError);
+            }
+        }
+        // Validate Withdrawal amount is positive
+        if let BankAccountCommand::Withdrawal { amount, .. } = &command {
+            if amount.amount <= rust_decimal::Decimal::ZERO {
+                return Err(CommandExtractionError);
+            }
+        }
         Ok(CommandExtractor(metadata, command))
     }
 }
@@ -380,6 +398,184 @@ mod tests {
             }
             Err(_) => panic!("Extraction failed"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_freeze_account_extractor() {
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"
+                {
+                    "FreezeAccount": {
+                        "id": "b9aa777c-0868-48ac-9c49-eff869b437d7"
+                    }
+                }
+                "#,
+            ))
+            .unwrap();
+
+        let state = ();
+        let result = CommandExtractor::from_request(request, &state).await;
+
+        match result {
+            Ok(CommandExtractor(_, command)) => {
+                if let BankAccountCommand::FreezeAccount { id } = command {
+                    assert_eq!(
+                        id,
+                        Uuid::parse_str("b9aa777c-0868-48ac-9c49-eff869b437d7").unwrap()
+                    );
+                } else {
+                    panic!("Invalid command");
+                }
+            }
+            Err(_) => panic!("Extraction failed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unfreeze_account_extractor() {
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"
+                {
+                    "UnfreezeAccount": {
+                        "id": "b9aa777c-0868-48ac-9c49-eff869b437d7"
+                    }
+                }
+                "#,
+            ))
+            .unwrap();
+
+        let state = ();
+        let result = CommandExtractor::from_request(request, &state).await;
+
+        match result {
+            Ok(CommandExtractor(_, command)) => {
+                if let BankAccountCommand::UnfreezeAccount { id } = command {
+                    assert_eq!(
+                        id,
+                        Uuid::parse_str("b9aa777c-0868-48ac-9c49-eff869b437d7").unwrap()
+                    );
+                } else {
+                    panic!("Invalid command");
+                }
+            }
+            Err(_) => panic!("Extraction failed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_close_account_extractor() {
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"
+                {
+                    "CloseAccount": {
+                        "id": "b9aa777c-0868-48ac-9c49-eff869b437d7"
+                    }
+                }
+                "#,
+            ))
+            .unwrap();
+
+        let state = ();
+        let result = CommandExtractor::from_request(request, &state).await;
+
+        match result {
+            Ok(CommandExtractor(_, command)) => {
+                if let BankAccountCommand::CloseAccount { id } = command {
+                    assert_eq!(
+                        id,
+                        Uuid::parse_str("b9aa777c-0868-48ac-9c49-eff869b437d7").unwrap()
+                    );
+                } else {
+                    panic!("Invalid command");
+                }
+            }
+            Err(_) => panic!("Extraction failed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_transfer_extractor() {
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"
+                {
+                    "Transfer": {
+                        "id": "b9aa777c-0868-48ac-9c49-eff869b437d7",
+                        "to_account_id": "a1bb888d-1979-49bd-8d50-ff6980c548e8",
+                        "amount": {
+                            "currency": "USD",
+                            "amount": 50
+                        }
+                    }
+                }
+                "#,
+            ))
+            .unwrap();
+
+        let state = ();
+        let result = CommandExtractor::from_request(request, &state).await;
+
+        match result {
+            Ok(CommandExtractor(_, command)) => {
+                if let BankAccountCommand::Transfer {
+                    id,
+                    to_account_id,
+                    amount,
+                } = command
+                {
+                    assert_eq!(
+                        id,
+                        Uuid::parse_str("b9aa777c-0868-48ac-9c49-eff869b437d7").unwrap()
+                    );
+                    assert_eq!(
+                        to_account_id,
+                        Uuid::parse_str("a1bb888d-1979-49bd-8d50-ff6980c548e8").unwrap()
+                    );
+                    assert_eq!(amount.currency, Currency::USD);
+                    assert_eq!(amount.amount, dec!(50));
+                } else {
+                    panic!("Invalid command");
+                }
+            }
+            Err(_) => panic!("Extraction failed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_transfer_negative_amount_rejected() {
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"
+                {
+                    "Transfer": {
+                        "id": "b9aa777c-0868-48ac-9c49-eff869b437d7",
+                        "to_account_id": "a1bb888d-1979-49bd-8d50-ff6980c548e8",
+                        "amount": {
+                            "currency": "USD",
+                            "amount": -50
+                        }
+                    }
+                }
+                "#,
+            ))
+            .unwrap();
+
+        let state = ();
+        let result = CommandExtractor::from_request(request, &state).await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]

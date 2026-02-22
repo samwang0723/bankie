@@ -65,6 +65,21 @@ impl View<BankAccount> for BankAccountView {
                 self.status = BankAccountStatus::Approved;
                 self.updated_at = base_event.get_created_at();
             }
+            BankAccountEvent::AccountFrozen { base_event } => {
+                self.id = base_event.get_aggregate_id();
+                self.status = BankAccountStatus::Freeze;
+                self.updated_at = base_event.get_created_at();
+            }
+            BankAccountEvent::AccountUnfrozen { base_event } => {
+                self.id = base_event.get_aggregate_id();
+                self.status = BankAccountStatus::Approved;
+                self.updated_at = base_event.get_created_at();
+            }
+            BankAccountEvent::AccountClosed { base_event } => {
+                self.id = base_event.get_aggregate_id();
+                self.status = BankAccountStatus::CustomerClosed;
+                self.updated_at = base_event.get_created_at();
+            }
             BankAccountEvent::CustomerDepositedCash { .. } => {}
             BankAccountEvent::CustomerWithdrewCash { .. } => {}
         }

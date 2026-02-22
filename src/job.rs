@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::{
     common::money::{Currency, Money},
-    domain::finance::Outbox,
+    domain::finance::{BalanceSnapshot, Outbox},
     event_sourcing::command::LedgerCommand,
     repository::redis::{acquire_lock, release_lock, LOCK_KEY, LOCK_TIMEOUT},
     state::LedgerLoaderSaver,
@@ -97,6 +97,85 @@ pub async fn create_ledger_job(state: SharedState) -> Result<Job, JobSchedulerEr
                     error!("Error fetching outbox events: {:?}", e);
                 }
             }
+        })
+    })
+}
+
+const SNAPSHOT_LOCK_KEY: &str = "balance_snapshot_lock";
+
+/// Daily balance snapshot job — runs at midnight UTC.
+/// Takes a snapshot of all active account balances and persists them.
+pub async fn create_balance_snapshot_job(state: SharedState) -> Result<Job, JobSchedulerError> {
+    // Cron: "0 0 0 * * *" = every day at 00:00:00 UTC
+    Job::new_async("0 0 0 * * *", move |_uuid, _l| {
+        let db = state.database.clone();
+        let cache = state.cache.clone();
+        Box::pin(async move {
+            let cache = match cache {
+                Some(c) => c,
+                None => {
+                    error!("Cache not configured, skipping balance snapshot");
+                    return;
+                }
+            };
+
+            // Acquire lock to prevent concurrent snapshot runs
+            let identifier = match acquire_lock(&cache, SNAPSHOT_LOCK_KEY, LOCK_TIMEOUT).await {
+                Some(id) => id,
+                None => {
+                    warn!("Could not acquire snapshot lock, skipping cycle");
+                    return;
+                }
+            };
+
+            let snapshot_date = chrono::Utc::now().date_naive();
+            info!("Starting daily balance snapshot for {}", snapshot_date);
+
+            match db.get_all_active_account_balances().await {
+                Ok(accounts) => {
+                    let mut success_count = 0;
+                    let mut error_count = 0;
+                    for account in accounts {
+                        let account_id = account.id.clone().unwrap_or_default();
+                        let ledger_id = account.ledger_id.clone().unwrap_or_default();
+                        let currency = account.currency.clone().unwrap_or_default();
+                        let available = account.available.unwrap_or(Decimal::ZERO);
+                        let pending = account.pending.unwrap_or(Decimal::ZERO);
+
+                        if account_id.is_empty() || ledger_id.is_empty() {
+                            continue; // Skip accounts without valid IDs
+                        }
+
+                        let snapshot = BalanceSnapshot {
+                            id: Uuid::new_v4(),
+                            tenant_id: 0, // Default tenant; multi-tenant would extract from account
+                            account_id: account_id.clone(),
+                            ledger_id,
+                            asset_code: currency,
+                            available,
+                            pending,
+                            current_balance: available + pending,
+                            snapshot_date,
+                        };
+                        match db.create_balance_snapshot(snapshot).await {
+                            Ok(_) => success_count += 1,
+                            Err(e) => {
+                                error!("Failed to snapshot account {}: {:?}", account_id, e);
+                                error_count += 1;
+                            }
+                        }
+                    }
+                    info!(
+                        "Balance snapshot complete: {} succeeded, {} failed",
+                        success_count, error_count
+                    );
+                }
+                Err(e) => {
+                    error!("Failed to fetch active accounts for snapshot: {:?}", e);
+                }
+            }
+
+            release_lock(&cache, SNAPSHOT_LOCK_KEY, &identifier).await;
         })
     })
 }
