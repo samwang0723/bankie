@@ -1,5 +1,6 @@
 .PHONY: help test lint changelog-gen changelog-commit docker-build \
-       local-setup local-infra local-init-db local-migrate local-build local-start local-stop local-jwt local-demo
+       local-setup local-infra local-init-db local-migrate local-build local-start local-stop local-jwt local-demo \
+       docker-up docker-down docker-logs docker-clean
 
 help: ## show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {sub("\\\\n",sprintf("\n%22c"," "), $$2);printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -125,6 +126,41 @@ local-demo: ## run the full demo scenario (requires running server + JWT)
 		exit 1; \
 	fi
 	@./scripts/demo.sh "$$(cat .local-jwt-token)"
+
+######################
+# docker full stack  #
+######################
+
+docker-up: ## start full stack (postgres + redis + migrations + bankie) via docker compose
+	@echo "[docker] Building and starting full stack..."
+	@docker compose up -d --build
+	@echo ""
+	@echo "[docker] Waiting for bankie to be ready..."
+	@for i in $$(seq 1 60); do \
+		curl -sf http://localhost:$${APP_PORT:-3030}/health > /dev/null 2>&1 && break; \
+		sleep 2; \
+	done
+	@echo ""
+	@echo "=========================================="
+	@echo "  Bankie is running on http://localhost:$${APP_PORT:-3030}"
+	@echo "=========================================="
+	@echo ""
+	@echo "View logs:  make docker-logs"
+	@echo "Stop:       make docker-down"
+	@echo "Reset data: make docker-clean"
+
+docker-down: ## stop and remove all containers (preserves volumes)
+	@echo "[docker] Stopping containers..."
+	@docker compose down
+	@echo "[docker] Stopped."
+
+docker-logs: ## tail logs from all containers
+	@docker compose logs -f
+
+docker-clean: ## stop containers and remove volumes (full reset)
+	@echo "[docker] Stopping containers and removing volumes..."
+	@docker compose down -v
+	@echo "[docker] Cleaned."
 
 ########
 # test #

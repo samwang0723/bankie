@@ -5,8 +5,10 @@ WORKDIR /app
 
 # Pre-build the library dependencies
 COPY Cargo.toml Cargo.lock .
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release --bin bankie
+RUN mkdir -p src/repository && \
+    echo "fn main() {}" > src/main.rs && \
+    echo "fn main() {}" > src/repository/migrate.rs
+RUN cargo build --release --bin bankie --bin migrations
 
 # Copy everything from the current directory to the PWD (Present Working Directory) inside the container
 COPY src src
@@ -15,16 +17,25 @@ COPY .sqlx .sqlx
 
 ENV SQLX_OFFLINE=true
 
-RUN touch src/main.rs
-RUN cargo build --release --bin bankie
+RUN touch src/main.rs src/repository/migrate.rs
+RUN cargo build --release --bin bankie --bin migrations
 
-RUN strip target/release/bankie
+RUN strip target/release/bankie target/release/migrations
 
-# Stage 2: Create a smaller image with the built binary
+# Stage 2: Migrations runner (needs full OS for DB tools)
+FROM debian:bookworm-slim AS migrations
+
+RUN apt-get update && apt-get install -y ca-certificates postgresql-client && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /app/target/release/migrations /app/migrations
+COPY db/init.sql /app/db/init.sql
+COPY db/migrations /app/db/migrations
+
+# Stage 3: Create a smaller image with the built binary
 FROM gcr.io/distroless/cc-debian12 AS release
-
-# Install necessary runtime dependencies
-# RUN apt-get update && apt-get install -y ca-certificates && apt clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

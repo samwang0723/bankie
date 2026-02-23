@@ -157,11 +157,8 @@ async fn main() {
                 .clone()
                 .expect("Redis client must be initialized at startup");
 
-            let router = Router::new()
-                // Health check endpoints (no auth required) — M3 fix
-                .route("/health", get(health_check_handler))
-                .route("/ready", get(readiness_check_handler))
-                // Authenticated API endpoints
+            // Authenticated API routes (with auth + idempotency middleware)
+            let api_routes = Router::new()
                 .route("/v1/bank_account/:id", get(bank_account_query_handler))
                 .route(
                     "/v1/bank_account/:id/sub-accounts",
@@ -183,11 +180,16 @@ async fn main() {
                     "/v1/bank_account/:id/balance-history",
                     get(balance_history_handler),
                 )
-                // Middleware layers (execution order: outermost → innermost → handler)
-                .layer(middleware::from_fn(idempotency_check)) // Runs after auth, checks Redis for duplicate Idempotency-Key
-                .layer(middleware::from_fn(authorize::<PgPool>)) // JWT auth + tenant extraction
-                .layer(AddExtensionLayer::new(redis_client)) // Inject Redis for idempotency middleware
-                .layer(AddExtensionLayer::new(state.clone())) // Inject ApplicationState
+                .layer(middleware::from_fn(idempotency_check))
+                .layer(middleware::from_fn(authorize::<PgPool>))
+                .layer(AddExtensionLayer::new(redis_client))
+                .layer(AddExtensionLayer::new(state.clone()));
+
+            // Health check endpoints (no auth required)
+            let router = Router::new()
+                .route("/health", get(health_check_handler))
+                .route("/ready", get(readiness_check_handler))
+                .merge(api_routes)
                 .layer(compression_layer)
                 .layer(TraceLayer::new_for_http())
                 .with_state(state);
