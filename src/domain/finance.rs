@@ -206,6 +206,21 @@ mod tests {
     }
 }
 
+/// A row in a settlement report, joining transaction + journal line data.
+#[derive(FromRow, Debug, Serialize)]
+pub struct SettlementReportRow {
+    pub transaction_date: DateTime<Utc>,
+    pub transaction_reference: String,
+    pub amount: Decimal,
+    pub currency: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub journal_entry_id: Option<Uuid>,
+    pub debit_amount: Decimal,
+    pub credit_amount: Decimal,
+    pub account_number: Option<String>,
+}
+
 #[derive(FromRow, Debug, Serialize)]
 pub struct BalanceSnapshot {
     pub id: Uuid,

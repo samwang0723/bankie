@@ -1,8 +1,8 @@
 use crate::common::asset::{Asset, AssetClass};
 use crate::common::money::{Currency, Money};
 use crate::domain::finance::{
-    BalanceSnapshot, JournalEntry, JournalLine, Outbox, Transaction, TRANS_DEPOSIT, TRANS_TRANSFER,
-    TRANS_WITHDRAWAL,
+    BalanceSnapshot, JournalEntry, JournalLine, Outbox, SettlementReportRow, Transaction,
+    TRANS_DEPOSIT, TRANS_TRANSFER, TRANS_WITHDRAWAL,
 };
 use crate::domain::models::{BankAccountKind, HouseAccount, LedgerAction};
 use crate::domain::tenant::Tenant;
@@ -12,6 +12,7 @@ use crate::event_sourcing::command::LedgerCommand;
 use super::adapter::DatabaseClient;
 use async_trait::async_trait;
 use chrono::{Local, NaiveDate};
+use rust_decimal::Decimal;
 use serde_json::to_value;
 use sqlx::postgres::PgPool;
 use sqlx::Error;
@@ -984,5 +985,82 @@ impl DatabaseClient for PgPool {
         .await?;
 
         Ok(accounts)
+    }
+
+    async fn get_settlement_report_data(
+        &self,
+        bank_account_id: String,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+        tenant_id: i32,
+    ) -> Result<Vec<SettlementReportRow>, Error> {
+        let account_id =
+            Uuid::parse_str(&bank_account_id).map_err(|e| Error::Protocol(e.to_string()))?;
+
+        let rows = sqlx::query_as::<_, SettlementReportRow>(
+            r#"
+            SELECT
+                t.transaction_date,
+                t.transaction_reference,
+                t.amount,
+                t.currency,
+                t.description,
+                t.status,
+                t.journal_entry_id,
+                COALESCE(jl.debit_amount, 0) as debit_amount,
+                COALESCE(jl.credit_amount, 0) as credit_amount,
+                b.payload->>'account_number' as account_number
+            FROM transactions t
+            LEFT JOIN journal_entries je ON t.journal_entry_id = je.id
+            LEFT JOIN journal_lines jl ON je.id = jl.journal_entry_id
+                AND jl.ledger_id = (
+                    SELECT payload->>'ledger_id'
+                    FROM bank_account_views
+                    WHERE view_id = $1::text
+                    AND tenant_id = $4
+                )
+            LEFT JOIN bank_account_views b ON b.view_id = $1::text AND b.tenant_id = $4
+            WHERE t.bank_account_id = $1
+                AND t.tenant_id = $4
+                AND t.transaction_date >= $2::date::timestamptz
+                AND t.transaction_date < ($3::date + 1)::timestamptz
+                AND t.status IN ('completed', 'processing')
+            ORDER BY t.transaction_date ASC, t.created_at ASC
+            "#,
+        )
+        .bind(account_id)
+        .bind(start_date)
+        .bind(end_date)
+        .bind(tenant_id)
+        .fetch_all(self)
+        .await?;
+
+        Ok(rows)
+    }
+
+    async fn get_opening_balance(
+        &self,
+        account_id: String,
+        start_date: NaiveDate,
+        tenant_id: i32,
+    ) -> Result<Option<Decimal>, Error> {
+        let prev_date = start_date - chrono::Duration::days(1);
+        let balance = sqlx::query_scalar::<_, Decimal>(
+            r#"
+            SELECT current_balance
+            FROM balance_snapshots
+            WHERE account_id = $1
+                AND tenant_id = $3
+                AND snapshot_date = $2
+            LIMIT 1
+            "#,
+        )
+        .bind(&account_id)
+        .bind(prev_date)
+        .bind(tenant_id)
+        .fetch_optional(self)
+        .await?;
+
+        Ok(balance)
     }
 }

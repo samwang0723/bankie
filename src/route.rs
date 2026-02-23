@@ -6,14 +6,15 @@ use crate::common::money::Money;
 use crate::domain::finance::TransactionWithMoney;
 use crate::event_sourcing::command::{BankAccountCommand, LedgerCommand};
 use crate::house_account::HouseAccountExtractor;
+use crate::report;
 use crate::SharedState;
 
 use axum::extract::{Extension, Query};
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use chrono::NaiveDate;
+use chrono::{NaiveDate, Utc};
 use cqrs_es::persist::ViewRepository;
 use rust_decimal::Decimal;
 use serde::Deserialize;
@@ -382,6 +383,104 @@ pub async fn balance_history_handler(
         Ok(snapshots) => (StatusCode::OK, Json(json!({ "entries": snapshots }))).into_response(),
         Err(err) => AppError::InternalServerError(err.to_string()).into_response(),
     }
+}
+
+#[derive(Deserialize)]
+pub struct SettlementReportParams {
+    pub bank_account_id: String,
+    pub start_date: NaiveDate,
+    pub end_date: NaiveDate,
+    pub currency: Option<String>,
+}
+
+pub async fn settlement_report_handler(
+    Extension(tenant_id): Extension<i32>,
+    State(state): State<SharedState>,
+    Query(params): Query<SettlementReportParams>,
+) -> Response {
+    // Validate date range: start <= end
+    if params.start_date > params.end_date {
+        return AppError::BadRequest("start_date must be before or equal to end_date".to_string())
+            .into_response();
+    }
+
+    // Validate max date range (90 days)
+    let days = (params.end_date - params.start_date).num_days();
+    if days > report::MAX_REPORT_DAYS {
+        return AppError::BadRequest(format!(
+            "Date range exceeds maximum of {} days",
+            report::MAX_REPORT_DAYS
+        ))
+        .into_response();
+    }
+
+    let client = &state.database.clone();
+
+    // Fetch opening balance (from balance_snapshots, fallback to zero)
+    let opening_balance = match client
+        .get_opening_balance(params.bank_account_id.clone(), params.start_date, tenant_id)
+        .await
+    {
+        Ok(Some(balance)) => balance,
+        Ok(None) => Decimal::ZERO,
+        Err(err) => return AppError::InternalServerError(err.to_string()).into_response(),
+    };
+
+    // Fetch settlement report data
+    let rows = match client
+        .get_settlement_report_data(
+            params.bank_account_id.clone(),
+            params.start_date,
+            params.end_date,
+            tenant_id,
+        )
+        .await
+    {
+        Ok(rows) => rows,
+        Err(err) => return AppError::InternalServerError(err.to_string()).into_response(),
+    };
+
+    // Determine currency from first row or params
+    let currency = params
+        .currency
+        .as_deref()
+        .or_else(|| rows.first().map(|r| r.currency.as_str()))
+        .unwrap_or("USD");
+
+    // Determine account number from first row
+    let account_number = rows
+        .first()
+        .and_then(|r| r.account_number.as_deref())
+        .unwrap_or("unknown");
+
+    let generated_at = Utc::now();
+    let csv = report::generate_settlement_csv(
+        &rows,
+        opening_balance,
+        account_number,
+        params.start_date,
+        params.end_date,
+        currency,
+        generated_at,
+    );
+
+    let filename = format!(
+        "settlement_{}_{}_to_{}.csv",
+        params.bank_account_id, params.start_date, params.end_date
+    );
+
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}\"", filename),
+            ),
+        ],
+        csv,
+    )
+        .into_response()
 }
 
 pub async fn health_check_handler() -> StatusCode {
