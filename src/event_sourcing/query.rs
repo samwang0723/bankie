@@ -54,6 +54,7 @@ impl View<BankAccount> for BankAccountView {
                 self.currency = *currency;
                 self.external_reference_id = external_reference_id.clone();
                 self.account_number = account_number.clone();
+                self.tenant_id = base_event.get_tenant_id();
             }
             BankAccountEvent::AccountKycApproved {
                 ledger_id,
@@ -64,21 +65,25 @@ impl View<BankAccount> for BankAccountView {
                 self.ledger_id = ledger_id.clone();
                 self.status = BankAccountStatus::Approved;
                 self.updated_at = base_event.get_created_at();
+                self.tenant_id = base_event.get_tenant_id();
             }
             BankAccountEvent::AccountFrozen { base_event } => {
                 self.id = base_event.get_aggregate_id();
                 self.status = BankAccountStatus::Freeze;
                 self.updated_at = base_event.get_created_at();
+                self.tenant_id = base_event.get_tenant_id();
             }
             BankAccountEvent::AccountUnfrozen { base_event } => {
                 self.id = base_event.get_aggregate_id();
                 self.status = BankAccountStatus::Approved;
                 self.updated_at = base_event.get_created_at();
+                self.tenant_id = base_event.get_tenant_id();
             }
             BankAccountEvent::AccountClosed { base_event } => {
                 self.id = base_event.get_aggregate_id();
                 self.status = BankAccountStatus::CustomerClosed;
                 self.updated_at = base_event.get_created_at();
+                self.tenant_id = base_event.get_tenant_id();
             }
             BankAccountEvent::CustomerDepositedCash { .. } => {}
             BankAccountEvent::CustomerWithdrewCash { .. } => {}
@@ -114,6 +119,7 @@ impl View<Ledger> for LedgerView {
                 self.available = *amount;
                 self.pending = Money::new(Decimal::ZERO, amount.currency);
                 self.current = *amount;
+                self.tenant_id = base_event.get_tenant_id();
             }
             LedgerEvent::LedgerUpdated {
                 amount: _,
@@ -130,6 +136,7 @@ impl View<Ledger> for LedgerView {
                 self.pending = self.pending + *pending_delta;
                 self.current = self.available + self.pending;
                 self.updated_at = base_event.get_created_at();
+                self.tenant_id = base_event.get_tenant_id();
             }
         }
     }
@@ -155,6 +162,7 @@ mod tests {
             aggregate_id: "acc1".to_string(),
             parent_id: "".to_string(),
             created_at: Utc::now().to_string(),
+            tenant_id: 0,
         };
         let event = EventEnvelope {
             aggregate_id: "acc1".to_string(),
@@ -188,6 +196,7 @@ mod tests {
             aggregate_id: "acc1".to_string(),
             parent_id: "parent1".to_string(),
             created_at: Utc::now().to_string(),
+            tenant_id: 0,
         };
         let event = EventEnvelope {
             aggregate_id: "acc1".to_string(),
@@ -217,6 +226,7 @@ mod tests {
             aggregate_id: "acc1".to_string(),
             parent_id: "".to_string(),
             created_at: Utc::now().to_string(),
+            tenant_id: 0,
         };
         let event = EventEnvelope {
             aggregate_id: "acc1".to_string(),
@@ -240,6 +250,7 @@ mod tests {
             aggregate_id: "acc1".to_string(),
             parent_id: "".to_string(),
             created_at: Utc::now().to_string(),
+            tenant_id: 0,
         };
         let event = EventEnvelope {
             aggregate_id: "acc1".to_string(),
@@ -263,6 +274,7 @@ mod tests {
             aggregate_id: "acc1".to_string(),
             parent_id: "".to_string(),
             created_at: Utc::now().to_string(),
+            tenant_id: 0,
         };
         let event = EventEnvelope {
             aggregate_id: "acc1".to_string(),
@@ -284,6 +296,7 @@ mod tests {
             aggregate_id: "ledger1".to_string(),
             parent_id: "account1".to_string(),
             created_at: Utc::now().to_string(),
+            tenant_id: 0,
         };
 
         // Init with $1000
@@ -360,6 +373,7 @@ mod tests {
             aggregate_id: "ledger1".to_string(),
             parent_id: "account1".to_string(),
             created_at: Utc::now().to_string(),
+            tenant_id: 0,
         };
         let amount = Money::new(Decimal::new(1000, 2), Currency::USD);
         let event = EventEnvelope {
@@ -393,6 +407,7 @@ mod tests {
             aggregate_id: "ledger1".to_string(),
             parent_id: "account1".to_string(),
             created_at: Utc::now().to_string(),
+            tenant_id: 0,
         };
         let available_delta = Money::new(Decimal::new(500, 2), Currency::USD);
         let pending_delta = Money::new(Decimal::new(-200, 2), Currency::USD);

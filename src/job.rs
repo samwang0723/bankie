@@ -148,7 +148,7 @@ pub async fn create_balance_snapshot_job(state: SharedState) -> Result<Job, JobS
 
                         let snapshot = BalanceSnapshot {
                             id: Uuid::new_v4(),
-                            tenant_id: 0, // Default tenant; multi-tenant would extract from account
+                            tenant_id: account.tenant_id.unwrap_or(0),
                             account_id: account_id.clone(),
                             ledger_id,
                             asset_code: currency,
@@ -224,12 +224,14 @@ async fn process_event(event: &Outbox, ledger: &LedgerLoaderSaver) -> Result<Uui
             account_id,
             transaction_id,
             amount,
+            tenant_id: event.tenant_id,
         },
         "LedgerCommand::Debit" => LedgerCommand::DebitRelease {
             id,
             account_id,
             transaction_id,
             amount,
+            tenant_id: event.tenant_id,
         },
         _ => return Err(anyhow!("Unknown event type: {}", event.event_type)),
     };

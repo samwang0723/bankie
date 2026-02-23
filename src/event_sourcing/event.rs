@@ -20,6 +20,12 @@ pub trait Event {
 
     // SetCreatedAt changes event's create time
     fn set_created_at(&mut self, created_at: DateTime<Utc>);
+
+    // GetTenantId returns the tenant that owns this event
+    fn get_tenant_id(&self) -> i32;
+
+    // SetTenantId sets the owning tenant
+    fn set_tenant_id(&mut self, tenant_id: i32);
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -27,6 +33,8 @@ pub struct BaseEvent {
     pub created_at: String,
     pub aggregate_id: String,
     pub parent_id: String,
+    #[serde(default)]
+    pub tenant_id: i32,
 }
 
 impl Event for BaseEvent {
@@ -52,6 +60,14 @@ impl Event for BaseEvent {
 
     fn set_created_at(&mut self, created_at: DateTime<Utc>) {
         self.created_at = created_at.to_rfc3339();
+    }
+
+    fn get_tenant_id(&self) -> i32 {
+        self.tenant_id
+    }
+
+    fn set_tenant_id(&mut self, tenant_id: i32) {
+        self.tenant_id = tenant_id;
     }
 }
 

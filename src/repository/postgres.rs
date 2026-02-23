@@ -22,6 +22,7 @@ impl DatabaseClient for PgPool {
     async fn get_user_bank_accounts(
         &self,
         user_id: String,
+        tenant_id: i32,
     ) -> Result<Vec<BankAccountWithLedger>, Error> {
         let accounts = sqlx::query_as::<_, BankAccountWithLedger>(
             r#"
@@ -38,15 +39,18 @@ impl DatabaseClient for PgPool {
                     (l.payload->'pending'->>'amount')::numeric as pending,
                     (l.payload->'current'->>'amount')::numeric as current,
                     b.payload->>'created_at' as created_at,
-                    b.payload->>'updated_at' as updated_at
+                    b.payload->>'updated_at' as updated_at,
+                    b.tenant_id
                 from bank_account_views b
                 left join ledger_views l on b.payload->>'ledger_id' = l.view_id
-                where b.payload->>'user_id' = $1
+                where (b.payload->>'user_id' = $1
                    or b.payload->>'external_reference_id' = $1
-                   or b.external_reference_id = $1
+                   or b.external_reference_id = $1)
+                and b.tenant_id = $2
             "#,
         )
         .bind(&user_id)
+        .bind(tenant_id)
         .fetch_all(self)
         .await?;
 
@@ -118,20 +122,22 @@ impl DatabaseClient for PgPool {
         ledger_id: String,
         journal_entry: JournalEntry,
         journal_lines: Vec<JournalLine>,
+        tenant_id: i32,
     ) -> Result<Uuid, Error> {
         let mut tx = self.begin().await?;
 
         // Insert JournalEntry
         let journal_entry_id = sqlx::query!(
             r#"
-            INSERT INTO journal_entries (id, entry_date, description, status)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO journal_entries (id, entry_date, description, status, tenant_id)
+            VALUES ($1, $2, $3, $4, $5)
             RETURNING id
             "#,
             journal_entry.id,
             journal_entry.entry_date,
             journal_entry.description,
-            journal_entry.status
+            journal_entry.status,
+            tenant_id
         )
         .fetch_one(&mut *tx)
         .await?
@@ -141,8 +147,8 @@ impl DatabaseClient for PgPool {
         for journal_line in journal_lines {
             sqlx::query!(
                 r#"
-                INSERT INTO journal_lines (id, journal_entry_id, ledger_id, debit_amount, credit_amount, currency, description)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                INSERT INTO journal_lines (id, journal_entry_id, ledger_id, debit_amount, credit_amount, currency, description, tenant_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 "#,
                 journal_line.id,
                 journal_entry_id,
@@ -150,7 +156,8 @@ impl DatabaseClient for PgPool {
                 journal_line.debit_amount,
                 journal_line.credit_amount,
                 journal_line.currency,
-                journal_line.description
+                journal_line.description,
+                tenant_id
             )
             .execute(&mut *tx)
             .await?;
@@ -160,8 +167,8 @@ impl DatabaseClient for PgPool {
         let transaction_id = sqlx::query!(
             r#"
             INSERT INTO transactions (id, bank_account_id, transaction_reference,
-            transaction_date, amount, currency, description, metadata, status, journal_entry_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            transaction_date, amount, currency, description, metadata, status, journal_entry_id, tenant_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING id
             "#,
             transaction.id,
@@ -173,7 +180,8 @@ impl DatabaseClient for PgPool {
             transaction.description,
             transaction.metadata,
             transaction.status,
-            journal_entry_id
+            journal_entry_id,
+            tenant_id
         )
         .fetch_one(&mut *tx)
         .await?
@@ -192,6 +200,7 @@ impl DatabaseClient for PgPool {
                 account_id: transaction.bank_account_id,
                 transaction_id,
                 amount: Money::new(transaction.amount, Currency::from(transaction.currency)),
+                tenant_id,
             }
         } else {
             LedgerCommand::DebitRelease {
@@ -199,17 +208,19 @@ impl DatabaseClient for PgPool {
                 account_id: transaction.bank_account_id,
                 transaction_id,
                 amount: Money::new(transaction.amount, Currency::from(transaction.currency)),
+                tenant_id,
             }
         };
         let payload = to_value(&cmd).map_err(|e| Error::Protocol(e.to_string()))?;
         sqlx::query!(
             r#"
-            INSERT INTO outbox (transaction_id, event_type, payload)
-            VALUES ($1, $2, $3)
+            INSERT INTO outbox (transaction_id, event_type, payload, tenant_id)
+            VALUES ($1, $2, $3, $4)
             "#,
             transaction_id,
             event_type,
             payload,
+            tenant_id,
         )
         .execute(&mut *tx)
         .await?;
@@ -222,8 +233,8 @@ impl DatabaseClient for PgPool {
     async fn create_house_account(&self, account: HouseAccount) -> Result<(), Error> {
         sqlx::query!(
             r#"
-            INSERT INTO house_accounts (id, account_number, account_name, account_type, ledger_id, currency, status)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO house_accounts (id, account_number, account_name, account_type, ledger_id, currency, status, tenant_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
             account.id,
             account.account_number,
@@ -231,25 +242,32 @@ impl DatabaseClient for PgPool {
             account.account_type,
             account.ledger_id,
             account.currency,
-            account.status
+            account.status,
+            account.tenant_id
         )
         .execute(self)
         .await?;
         Ok(())
     }
 
-    async fn get_house_account(&self, asset_code: &str) -> Result<HouseAccount, Error> {
+    async fn get_house_account(
+        &self,
+        asset_code: &str,
+        tenant_id: i32,
+    ) -> Result<HouseAccount, Error> {
         let house_account = sqlx::query_as!(
             HouseAccount,
             r#"
-            SELECT id, status, account_number, account_name, account_type, ledger_id, currency
+            SELECT id, status, account_number, account_name, account_type, ledger_id, currency, tenant_id
             FROM house_accounts
             WHERE currency = $1
+            AND tenant_id = $2
             AND status = 'active'
             AND account_type = 'House'
             LIMIT 1
             "#,
-            asset_code
+            asset_code,
+            tenant_id
         )
         .fetch_one(self)
         .await?;
@@ -257,16 +275,22 @@ impl DatabaseClient for PgPool {
         Ok(house_account)
     }
 
-    async fn get_house_accounts(&self, asset_code: &str) -> Result<Vec<HouseAccount>, Error> {
+    async fn get_house_accounts(
+        &self,
+        asset_code: &str,
+        tenant_id: i32,
+    ) -> Result<Vec<HouseAccount>, Error> {
         let house_accounts = sqlx::query_as!(
             HouseAccount,
             r#"
-            SELECT id, status, account_number, account_name, account_type, ledger_id, currency
+            SELECT id, status, account_number, account_name, account_type, ledger_id, currency, tenant_id
             FROM house_accounts
             WHERE currency = $1
+            AND tenant_id = $2
             AND status = 'active'
             "#,
-            asset_code
+            asset_code,
+            tenant_id
         )
         .fetch_all(self)
         .await?;
@@ -279,6 +303,7 @@ impl DatabaseClient for PgPool {
         external_reference_id: Option<String>,
         currency: &str,
         kind: BankAccountKind,
+        tenant_id: i32,
     ) -> Result<bool, Error> {
         let ext_ref = match external_reference_id {
             Some(ref r) if !r.is_empty() => r.clone(),
@@ -293,11 +318,13 @@ impl DatabaseClient for PgPool {
             and payload->>'currency'=$2
             and payload->>'kind'=$3
             and payload->>'status' IN ('Pending', 'Approved', 'Freeze')
+            and tenant_id=$4
             "#,
         )
         .bind(&ext_ref)
         .bind(&currency_str)
         .bind(&kind_str)
+        .bind(tenant_id)
         .fetch_one(self)
         .await?;
 
@@ -308,6 +335,7 @@ impl DatabaseClient for PgPool {
         &self,
         external_reference_id: Option<String>,
         currency: &str,
+        tenant_id: i32,
     ) -> Result<Option<String>, Error> {
         let ext_ref = match external_reference_id {
             Some(ref r) if !r.is_empty() => r.clone(),
@@ -320,11 +348,13 @@ impl DatabaseClient for PgPool {
             AND payload->>'currency' = $2
             AND payload->>'kind' = 'Checking'
             AND payload->>'status' IN ('Pending', 'Approved')
+            AND tenant_id = $3
             LIMIT 1
             "#,
         )
         .bind(&ext_ref)
         .bind(currency)
+        .bind(tenant_id)
         .fetch_optional(self)
         .await?;
 
@@ -334,6 +364,7 @@ impl DatabaseClient for PgPool {
     async fn get_sub_accounts(
         &self,
         account_id: String,
+        tenant_id: i32,
     ) -> Result<Vec<BankAccountWithLedger>, Error> {
         let accounts = sqlx::query_as::<_, BankAccountWithLedger>(
             r#"
@@ -350,15 +381,18 @@ impl DatabaseClient for PgPool {
                 (l.payload->'pending'->>'amount')::numeric as pending,
                 (l.payload->'current'->>'amount')::numeric as current,
                 b.payload->>'created_at' as created_at,
-                b.payload->>'updated_at' as updated_at
+                b.payload->>'updated_at' as updated_at,
+                b.tenant_id
             FROM bank_account_views b
             LEFT JOIN ledger_views l ON b.payload->>'ledger_id' = l.view_id
-            WHERE b.view_id = $1
+            WHERE (b.view_id = $1
                OR b.parent_id = $1
-               OR b.payload->>'parent_id' = $1
+               OR b.payload->>'parent_id' = $1)
+            AND b.tenant_id = $2
             "#,
         )
         .bind(&account_id)
+        .bind(tenant_id)
         .fetch_all(self)
         .await?;
 
@@ -368,6 +402,7 @@ impl DatabaseClient for PgPool {
     async fn get_bank_account_by_number(
         &self,
         account_number: String,
+        tenant_id: i32,
     ) -> Result<BankAccountWithLedger, Error> {
         let account = sqlx::query_as::<_, BankAccountWithLedger>(
             r#"
@@ -384,15 +419,18 @@ impl DatabaseClient for PgPool {
                 (l.payload->'pending'->>'amount')::numeric as pending,
                 (l.payload->'current'->>'amount')::numeric as current,
                 b.payload->>'created_at' as created_at,
-                b.payload->>'updated_at' as updated_at
+                b.payload->>'updated_at' as updated_at,
+                b.tenant_id
             FROM bank_account_views b
             LEFT JOIN ledger_views l ON b.payload->>'ledger_id' = l.view_id
-            WHERE b.account_number = $1
-               OR b.payload->>'account_number' = $1
+            WHERE (b.account_number = $1
+               OR b.payload->>'account_number' = $1)
+            AND b.tenant_id = $2
             LIMIT 1
             "#,
         )
         .bind(&account_number)
+        .bind(tenant_id)
         .fetch_one(self)
         .await?;
 
@@ -460,7 +498,7 @@ impl DatabaseClient for PgPool {
         let outbox = sqlx::query_as!(
             Outbox,
             r#"
-            SELECT id, transaction_id, event_type, payload, processed, retry_count
+            SELECT id, transaction_id, event_type, payload, processed, retry_count, tenant_id
             FROM outbox
             WHERE processed = false AND retry_count < 5
             ORDER BY created_at ASC
@@ -478,6 +516,7 @@ impl DatabaseClient for PgPool {
         bank_account_id: String,
         offset: i64,
         limit: i64,
+        tenant_id: i32,
     ) -> Result<Vec<Transaction>, Error> {
         let account_id =
             Uuid::parse_str(&bank_account_id).map_err(|e| Error::Protocol(e.to_string()))?;
@@ -494,13 +533,16 @@ impl DatabaseClient for PgPool {
                 description,
                 metadata,
                 status,
-                journal_entry_id
+                journal_entry_id,
+                tenant_id
             FROM transactions
             WHERE bank_account_id = $1
+            AND tenant_id = $2
             ORDER BY created_at DESC
-            OFFSET $2 LIMIT $3
+            OFFSET $3 LIMIT $4
             "#,
             account_id,
+            tenant_id,
             offset,
             limit,
         )
@@ -519,6 +561,7 @@ impl DatabaseClient for PgPool {
         end_date: Option<NaiveDate>,
         transaction_type: Option<String>,
         status: Option<String>,
+        tenant_id: i32,
     ) -> Result<Vec<Transaction>, Error> {
         let account_id =
             Uuid::parse_str(&bank_account_id).map_err(|e| Error::Protocol(e.to_string()))?;
@@ -534,9 +577,10 @@ impl DatabaseClient for PgPool {
             r#"
             SELECT
                 id, bank_account_id, transaction_reference, transaction_date,
-                amount, currency, description, metadata, status, journal_entry_id
+                amount, currency, description, metadata, status, journal_entry_id, tenant_id
             FROM transactions
             WHERE bank_account_id = $1
+              AND tenant_id = $8
               AND ($4::date IS NULL OR transaction_date >= $4)
               AND ($5::date IS NULL OR transaction_date <= $5)
               AND ($6::text IS NULL OR $6 = '' OR transaction_reference LIKE $6 || '%')
@@ -552,6 +596,7 @@ impl DatabaseClient for PgPool {
         .bind(end_date)
         .bind(ref_prefix)
         .bind(status.as_deref())
+        .bind(tenant_id)
         .fetch_all(self)
         .await?;
 
@@ -565,6 +610,7 @@ impl DatabaseClient for PgPool {
         end_date: Option<NaiveDate>,
         transaction_type: Option<String>,
         status: Option<String>,
+        tenant_id: i32,
     ) -> Result<i64, Error> {
         let account_id =
             Uuid::parse_str(&bank_account_id).map_err(|e| Error::Protocol(e.to_string()))?;
@@ -580,6 +626,7 @@ impl DatabaseClient for PgPool {
             r#"
             SELECT COUNT(1) FROM transactions
             WHERE bank_account_id = $1
+              AND tenant_id = $6
               AND ($2::date IS NULL OR transaction_date >= $2)
               AND ($3::date IS NULL OR transaction_date <= $3)
               AND ($4::text IS NULL OR $4 = '' OR transaction_reference LIKE $4 || '%')
@@ -591,6 +638,7 @@ impl DatabaseClient for PgPool {
         .bind(end_date)
         .bind(ref_prefix)
         .bind(status.as_deref())
+        .bind(tenant_id)
         .fetch_one(self)
         .await?;
 
@@ -604,6 +652,7 @@ impl DatabaseClient for PgPool {
         dest_account_id: Uuid,
         dest_ledger_id: String,
         amount: Money,
+        tenant_id: i32,
     ) -> Result<Uuid, Error> {
         let mut tx = self.begin().await?;
 
@@ -611,22 +660,23 @@ impl DatabaseClient for PgPool {
         let journal_entry_id = Uuid::new_v4();
         sqlx::query(
             r#"
-            INSERT INTO journal_entries (id, entry_date, description, status)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO journal_entries (id, entry_date, description, status, tenant_id)
+            VALUES ($1, $2, $3, $4, $5)
             "#,
         )
         .bind(journal_entry_id)
         .bind(chrono::Utc::now().date_naive())
         .bind(format!("Transfer {} {}", amount.amount, amount.currency))
         .bind("posted")
+        .bind(tenant_id)
         .execute(&mut *tx)
         .await?;
 
         // Source journal line (debit)
         sqlx::query(
             r#"
-            INSERT INTO journal_lines (id, journal_entry_id, ledger_id, debit_amount, credit_amount, currency, description)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO journal_lines (id, journal_entry_id, ledger_id, debit_amount, credit_amount, currency, description, tenant_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
         )
         .bind(Uuid::new_v4())
@@ -636,14 +686,15 @@ impl DatabaseClient for PgPool {
         .bind(rust_decimal::Decimal::ZERO)
         .bind(amount.currency.to_string())
         .bind("Transfer out")
+        .bind(tenant_id)
         .execute(&mut *tx)
         .await?;
 
         // Destination journal line (credit)
         sqlx::query(
             r#"
-            INSERT INTO journal_lines (id, journal_entry_id, ledger_id, debit_amount, credit_amount, currency, description)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO journal_lines (id, journal_entry_id, ledger_id, debit_amount, credit_amount, currency, description, tenant_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
         )
         .bind(Uuid::new_v4())
@@ -653,6 +704,7 @@ impl DatabaseClient for PgPool {
         .bind(amount.amount)
         .bind(amount.currency.to_string())
         .bind("Transfer in")
+        .bind(tenant_id)
         .execute(&mut *tx)
         .await?;
 
@@ -664,8 +716,8 @@ impl DatabaseClient for PgPool {
         let source_ref = crate::common::snowflake::generate_transaction_reference(TRANS_TRANSFER);
         sqlx::query(
             r#"
-            INSERT INTO transactions (id, bank_account_id, transaction_reference, transaction_date, amount, currency, description, metadata, status, journal_entry_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            INSERT INTO transactions (id, bank_account_id, transaction_reference, transaction_date, amount, currency, description, metadata, status, journal_entry_id, tenant_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             "#,
         )
         .bind(source_tx_id)
@@ -678,6 +730,7 @@ impl DatabaseClient for PgPool {
         .bind(serde_json::Value::Null)
         .bind("processing")
         .bind(journal_entry_id)
+        .bind(tenant_id)
         .execute(&mut *tx)
         .await?;
 
@@ -686,8 +739,8 @@ impl DatabaseClient for PgPool {
         let dest_ref = crate::common::snowflake::generate_transaction_reference(TRANS_TRANSFER);
         sqlx::query(
             r#"
-            INSERT INTO transactions (id, bank_account_id, transaction_reference, transaction_date, amount, currency, description, metadata, status, journal_entry_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            INSERT INTO transactions (id, bank_account_id, transaction_reference, transaction_date, amount, currency, description, metadata, status, journal_entry_id, tenant_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             "#,
         )
         .bind(dest_tx_id)
@@ -700,6 +753,7 @@ impl DatabaseClient for PgPool {
         .bind(serde_json::Value::Null)
         .bind("processing")
         .bind(journal_entry_id)
+        .bind(tenant_id)
         .execute(&mut *tx)
         .await?;
 
@@ -711,17 +765,19 @@ impl DatabaseClient for PgPool {
             account_id: source_account_id,
             transaction_id: source_tx_id,
             amount,
+            tenant_id,
         };
         let source_payload = to_value(&source_cmd).map_err(|e| Error::Protocol(e.to_string()))?;
         sqlx::query(
             r#"
-            INSERT INTO outbox (transaction_id, event_type, payload)
-            VALUES ($1, $2, $3)
+            INSERT INTO outbox (transaction_id, event_type, payload, tenant_id)
+            VALUES ($1, $2, $3, $4)
             "#,
         )
         .bind(source_tx_id)
         .bind("LedgerCommand::Debit")
         .bind(&source_payload)
+        .bind(tenant_id)
         .execute(&mut *tx)
         .await?;
 
@@ -733,17 +789,19 @@ impl DatabaseClient for PgPool {
             account_id: dest_account_id,
             transaction_id: dest_tx_id,
             amount,
+            tenant_id,
         };
         let dest_payload = to_value(&dest_cmd).map_err(|e| Error::Protocol(e.to_string()))?;
         sqlx::query(
             r#"
-            INSERT INTO outbox (transaction_id, event_type, payload)
-            VALUES ($1, $2, $3)
+            INSERT INTO outbox (transaction_id, event_type, payload, tenant_id)
+            VALUES ($1, $2, $3, $4)
             "#,
         )
         .bind(dest_tx_id)
         .bind("LedgerCommand::Credit")
         .bind(&dest_payload)
+        .bind(tenant_id)
         .execute(&mut *tx)
         .await?;
 
@@ -876,12 +934,14 @@ impl DatabaseClient for PgPool {
         account_id: String,
         start_date: NaiveDate,
         end_date: NaiveDate,
+        tenant_id: i32,
     ) -> Result<Vec<BalanceSnapshot>, Error> {
         let snapshots = sqlx::query_as::<_, BalanceSnapshot>(
             r#"
             SELECT id, tenant_id, account_id, ledger_id, asset_code, available, pending, current_balance, snapshot_date
             FROM balance_snapshots
             WHERE account_id = $1
+            AND tenant_id = $4
             AND snapshot_date >= $2
             AND snapshot_date <= $3
             ORDER BY snapshot_date ASC
@@ -890,6 +950,7 @@ impl DatabaseClient for PgPool {
         .bind(&account_id)
         .bind(start_date)
         .bind(end_date)
+        .bind(tenant_id)
         .fetch_all(self)
         .await?;
 
@@ -912,7 +973,8 @@ impl DatabaseClient for PgPool {
                 (l.payload->'pending'->>'amount')::numeric as pending,
                 (l.payload->'current'->>'amount')::numeric as current,
                 b.payload->>'created_at' as created_at,
-                b.payload->>'updated_at' as updated_at
+                b.payload->>'updated_at' as updated_at,
+                b.tenant_id
             FROM bank_account_views b
             LEFT JOIN ledger_views l ON b.payload->>'ledger_id' = l.view_id
             WHERE b.payload->>'status' = 'Approved'

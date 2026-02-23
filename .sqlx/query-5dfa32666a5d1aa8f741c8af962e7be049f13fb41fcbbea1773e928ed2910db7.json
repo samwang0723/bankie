@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, status, account_number, account_name, account_type, ledger_id, currency\n            FROM house_accounts\n            WHERE currency = $1\n            AND status = 'active'\n            ",
+  "query": "\n            SELECT id, status, account_number, account_name, account_type, ledger_id, currency, tenant_id\n            FROM house_accounts\n            WHERE currency = $1\n            AND tenant_id = $2\n            AND status = 'active'\n            AND account_type = 'House'\n            LIMIT 1\n            ",
   "describe": {
     "columns": [
       {
@@ -37,11 +37,17 @@
         "ordinal": 6,
         "name": "currency",
         "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "tenant_id",
+        "type_info": "Int4"
       }
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Text",
+        "Int4"
       ]
     },
     "nullable": [
@@ -51,8 +57,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "4223b9f3dc134f8064f92e08c42184412761b16dd12a6e2edb257602e6b73fb5"
+  "hash": "5dfa32666a5d1aa8f741c8af962e7be049f13fb41fcbbea1773e928ed2910db7"
 }

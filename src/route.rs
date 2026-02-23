@@ -49,12 +49,12 @@ pub struct BalanceHistoryParams {
 }
 
 pub async fn user_query_handler(
-    Extension(_tenant_id): Extension<i32>,
+    Extension(tenant_id): Extension<i32>,
     Path(id): Path<String>,
     State(state): State<SharedState>,
 ) -> Response {
     let client = Arc::clone(&state.database);
-    match client.get_user_bank_accounts(id).await {
+    match client.get_user_bank_accounts(id, tenant_id).await {
         Ok(accounts) => (StatusCode::OK, Json(json!({ "entries": accounts }))).into_response(),
         Err(err) => AppError::InternalServerError(err.to_string()).into_response(),
     }
@@ -117,15 +117,15 @@ pub async fn bank_account_command_handler(
         BankAccountCommand::ApproveAccount { id, .. } => {
             (StatusCode::OK, json!({"id": id.to_string()}))
         }
-        BankAccountCommand::FreezeAccount { id } => (
+        BankAccountCommand::FreezeAccount { id, .. } => (
             StatusCode::OK,
             json!({"id": id.to_string(), "status": "frozen"}),
         ),
-        BankAccountCommand::UnfreezeAccount { id } => (
+        BankAccountCommand::UnfreezeAccount { id, .. } => (
             StatusCode::OK,
             json!({"id": id.to_string(), "status": "unfrozen"}),
         ),
-        BankAccountCommand::CloseAccount { id } => (
+        BankAccountCommand::CloseAccount { id, .. } => (
             StatusCode::OK,
             json!({"id": id.to_string(), "status": "closed"}),
         ),
@@ -175,19 +175,19 @@ pub async fn ledger_query_handler(
 }
 
 pub async fn house_account_query_handler(
-    Extension(_tenant_id): Extension<i32>,
+    Extension(tenant_id): Extension<i32>,
     State(state): State<SharedState>,
     Query(params): Query<HouseAccountParams>,
 ) -> Response {
     let client = Arc::clone(&state.database);
-    match client.get_house_accounts(&params.currency).await {
+    match client.get_house_accounts(&params.currency, tenant_id).await {
         Ok(accounts) => (StatusCode::OK, Json(json!({ "entries": accounts }))).into_response(),
         Err(err) => AppError::InternalServerError(err.to_string()).into_response(),
     }
 }
 
 pub async fn house_account_create_handler(
-    Extension(_tenant_id): Extension<i32>,
+    Extension(tenant_id): Extension<i32>,
     State(state): State<SharedState>,
     HouseAccountExtractor(_metadata, mut house_account): HouseAccountExtractor,
 ) -> Response {
@@ -223,6 +223,7 @@ pub async fn house_account_create_handler(
                 id: ledger_id,
                 account_id: house_account.id,
                 amount: Money::new(Decimal::ZERO, currency),
+                tenant_id,
             },
         )
         .await
@@ -231,6 +232,7 @@ pub async fn house_account_create_handler(
     }
 
     house_account.ledger_id = ledger_id.to_string();
+    house_account.tenant_id = tenant_id;
     let house_account_id = house_account.id.to_string();
     if let Err(err) = client.create_house_account(house_account).await {
         return AppError::BadRequest(err.to_string()).into_response();
@@ -240,12 +242,12 @@ pub async fn house_account_create_handler(
 }
 
 pub async fn sub_account_query_handler(
-    Extension(_tenant_id): Extension<i32>,
+    Extension(tenant_id): Extension<i32>,
     Path(id): Path<String>,
     State(state): State<SharedState>,
 ) -> Response {
     let client = Arc::clone(&state.database);
-    match client.get_sub_accounts(id).await {
+    match client.get_sub_accounts(id, tenant_id).await {
         Ok(accounts) => {
             // Separate master from sub-accounts
             let (master, sub_accounts): (Vec<_>, Vec<_>) = accounts
@@ -266,19 +268,22 @@ pub async fn sub_account_query_handler(
 }
 
 pub async fn bank_account_by_number_handler(
-    Extension(_tenant_id): Extension<i32>,
+    Extension(tenant_id): Extension<i32>,
     Path(account_number): Path<String>,
     State(state): State<SharedState>,
 ) -> Response {
     let client = Arc::clone(&state.database);
-    match client.get_bank_account_by_number(account_number).await {
+    match client
+        .get_bank_account_by_number(account_number, tenant_id)
+        .await
+    {
         Ok(account) => (StatusCode::OK, Json(account)).into_response(),
         Err(_) => AppError::NotFound("Account not found".to_string()).into_response(),
     }
 }
 
 pub async fn transaction_query_handler(
-    Extension(_tenant_id): Extension<i32>,
+    Extension(tenant_id): Extension<i32>,
     State(state): State<SharedState>,
     Query(params): Query<TransactionParams>,
 ) -> Response {
@@ -303,6 +308,7 @@ pub async fn transaction_query_handler(
                 params.end_date,
                 params.transaction_type.clone(),
                 params.status.clone(),
+                tenant_id,
             )
             .await;
 
@@ -320,6 +326,7 @@ pub async fn transaction_query_handler(
                 params.end_date,
                 params.transaction_type,
                 params.status,
+                tenant_id,
             )
             .await
         {
@@ -346,7 +353,7 @@ pub async fn transaction_query_handler(
     } else {
         // Use simple query (backward compatible)
         match client
-            .get_transactions(params.bank_account_id, offset, limit)
+            .get_transactions(params.bank_account_id, offset, limit, tenant_id)
             .await
         {
             Ok(transactions) => {
@@ -362,14 +369,14 @@ pub async fn transaction_query_handler(
 }
 
 pub async fn balance_history_handler(
-    Extension(_tenant_id): Extension<i32>,
+    Extension(tenant_id): Extension<i32>,
     Path(account_id): Path<String>,
     State(state): State<SharedState>,
     Query(params): Query<BalanceHistoryParams>,
 ) -> Response {
     let client = &state.database.clone();
     match client
-        .get_balance_history(account_id, params.start_date, params.end_date)
+        .get_balance_history(account_id, params.start_date, params.end_date, tenant_id)
         .await
     {
         Ok(snapshots) => (StatusCode::OK, Json(json!({ "entries": snapshots }))).into_response(),

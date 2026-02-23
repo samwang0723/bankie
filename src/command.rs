@@ -34,12 +34,18 @@ where
             }
         }
 
+        // Extract tenant_id from auth middleware extension
+        let tenant_id = req.extensions().get::<i32>().copied().unwrap_or(0);
+
         // Parse and deserialize the request body as the command payload.
         let body = Bytes::from_request(req, state).await?;
         let mut command: BankAccountCommand = serde_json::from_slice(body.as_ref())?;
 
         // Generate ledger_id instead of bringing in from external
-        if let BankAccountCommand::ApproveAccount { id: _, ledger_id } = &mut command {
+        if let BankAccountCommand::ApproveAccount {
+            id: _, ledger_id, ..
+        } = &mut command
+        {
             *ledger_id = Uuid::new_v4();
         }
         // Generate account id and account number instead of bringing in from external
@@ -68,6 +74,7 @@ where
                 return Err(CommandExtractionError);
             }
         }
+        command.set_tenant_id(tenant_id);
         Ok(CommandExtractor(metadata, command))
     }
 }
@@ -147,6 +154,7 @@ mod tests {
                     kind,
                     external_reference_id,
                     currency,
+                    ..
                 } = command
                 {
                     assert!(!id.is_nil());
@@ -201,6 +209,7 @@ mod tests {
                 {
                     assert_eq!(external_reference_id, Some("legacy-user-123".to_string()));
                     assert_eq!(account_number.len(), 12);
+                    // tenant_id covered by ..
                 } else {
                     panic!("Invalid command");
                 }
@@ -282,7 +291,7 @@ mod tests {
                 assert_eq!(metadata.get(USER_AGENT_HDR).unwrap(), "test-agent");
 
                 // Check fields
-                if let BankAccountCommand::ApproveAccount { id, ledger_id } = command {
+                if let BankAccountCommand::ApproveAccount { id, ledger_id, .. } = command {
                     assert_eq!(
                         id,
                         Uuid::parse_str("b9aa777c-0868-48ac-9c49-eff869b437d7").unwrap()
@@ -333,7 +342,7 @@ mod tests {
                 assert_eq!(metadata.get(USER_AGENT_HDR).unwrap(), "test-agent");
 
                 // Check fields
-                if let BankAccountCommand::Deposit { id, amount } = command {
+                if let BankAccountCommand::Deposit { id, amount, .. } = command {
                     assert_eq!(
                         id,
                         Uuid::parse_str("b9aa777c-0868-48ac-9c49-eff869b437d7").unwrap()
@@ -385,7 +394,7 @@ mod tests {
                 assert_eq!(metadata.get(USER_AGENT_HDR).unwrap(), "test-agent");
 
                 // Check fields
-                if let BankAccountCommand::Withdrawal { id, amount } = command {
+                if let BankAccountCommand::Withdrawal { id, amount, .. } = command {
                     assert_eq!(
                         id,
                         Uuid::parse_str("b9aa777c-0868-48ac-9c49-eff869b437d7").unwrap()
@@ -421,7 +430,7 @@ mod tests {
 
         match result {
             Ok(CommandExtractor(_, command)) => {
-                if let BankAccountCommand::FreezeAccount { id } = command {
+                if let BankAccountCommand::FreezeAccount { id, .. } = command {
                     assert_eq!(
                         id,
                         Uuid::parse_str("b9aa777c-0868-48ac-9c49-eff869b437d7").unwrap()
@@ -455,7 +464,7 @@ mod tests {
 
         match result {
             Ok(CommandExtractor(_, command)) => {
-                if let BankAccountCommand::UnfreezeAccount { id } = command {
+                if let BankAccountCommand::UnfreezeAccount { id, .. } = command {
                     assert_eq!(
                         id,
                         Uuid::parse_str("b9aa777c-0868-48ac-9c49-eff869b437d7").unwrap()
@@ -489,7 +498,7 @@ mod tests {
 
         match result {
             Ok(CommandExtractor(_, command)) => {
-                if let BankAccountCommand::CloseAccount { id } = command {
+                if let BankAccountCommand::CloseAccount { id, .. } = command {
                     assert_eq!(
                         id,
                         Uuid::parse_str("b9aa777c-0868-48ac-9c49-eff869b437d7").unwrap()
@@ -532,6 +541,7 @@ mod tests {
                     id,
                     to_account_id,
                     amount,
+                    ..
                 } = command
                 {
                     assert_eq!(

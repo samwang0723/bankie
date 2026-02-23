@@ -74,6 +74,8 @@ pub struct HouseAccount {
     #[serde(skip_deserializing)]
     pub ledger_id: String,
     pub currency: String,
+    #[serde(skip_deserializing, default)]
+    pub tenant_id: i32,
 }
 
 // The view for a BankAccount query
@@ -91,6 +93,8 @@ pub struct BankAccountView {
     pub currency: Currency,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default)]
+    pub tenant_id: i32,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -113,4 +117,6 @@ pub struct LedgerView {
     pub current: Money,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default)]
+    pub tenant_id: i32,
 }

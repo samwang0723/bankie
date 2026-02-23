@@ -30,11 +30,13 @@ impl Aggregate for models::Ledger {
                 id,
                 account_id,
                 amount,
+                tenant_id,
             } => {
                 let mut base_event = BaseEvent::default();
                 base_event.set_aggregate_id(id);
                 base_event.set_parent_id(account_id);
                 base_event.set_created_at(chrono::Utc::now());
+                base_event.set_tenant_id(tenant_id);
                 Ok(vec![events::LedgerEvent::LedgerInitiated {
                     amount,
                     base_event: base_event.clone(),
@@ -45,6 +47,7 @@ impl Aggregate for models::Ledger {
                 account_id,
                 transaction_id,
                 amount,
+                tenant_id,
             } => {
                 // C1 FIX: Check balance sufficiency using aggregate state (strongly consistent),
                 // not the eventually-consistent view. This prevents the TOCTOU race condition.
@@ -56,6 +59,7 @@ impl Aggregate for models::Ledger {
                 base_event.set_aggregate_id(id);
                 base_event.set_parent_id(account_id);
                 base_event.set_created_at(chrono::Utc::now());
+                base_event.set_tenant_id(tenant_id);
                 Ok(vec![events::LedgerEvent::LedgerUpdated {
                     amount,
                     transaction_id: transaction_id.to_string(),
@@ -70,11 +74,13 @@ impl Aggregate for models::Ledger {
                 account_id,
                 transaction_id,
                 amount,
+                tenant_id,
             } => {
                 let mut base_event = BaseEvent::default();
                 base_event.set_aggregate_id(id);
                 base_event.set_parent_id(account_id);
                 base_event.set_created_at(chrono::Utc::now());
+                base_event.set_tenant_id(tenant_id);
                 Ok(vec![events::LedgerEvent::LedgerUpdated {
                     amount,
                     transaction_id: transaction_id.to_string(),
@@ -89,11 +95,13 @@ impl Aggregate for models::Ledger {
                 account_id,
                 transaction_id,
                 amount,
+                tenant_id,
             } => {
                 let mut base_event = BaseEvent::default();
                 base_event.set_aggregate_id(id);
                 base_event.set_parent_id(account_id);
                 base_event.set_created_at(chrono::Utc::now());
+                base_event.set_tenant_id(tenant_id);
                 Ok(vec![
                     events::LedgerEvent::LedgerUpdated {
                         amount,
@@ -201,6 +209,7 @@ mod aggregate_tests {
             id: *LEDGER_ID,
             account_id: *ACCOUNT_ID,
             amount: Money::new(dec!(1000.0), Currency::USD),
+            tenant_id: 0,
         },
         vec![LedgerEvent::LedgerInitiated {
             amount: Money::new(dec!(1000.0), Currency::USD),
@@ -219,6 +228,7 @@ mod aggregate_tests {
             account_id: *ACCOUNT_ID,
             transaction_id: *TRANSACTION_ID,
             amount: Money::new(dec!(1000.0), Currency::USD),
+            tenant_id: 0,
         },
         vec![
             LedgerEvent::LedgerUpdated {
@@ -269,6 +279,7 @@ mod aggregate_tests {
             account_id: *ACCOUNT_ID,
             transaction_id: *TRANSACTION_ID,
             amount: Money::new(dec!(200.0), Currency::USD),
+            tenant_id: 0,
         },
         vec![LedgerEvent::LedgerUpdated {
             amount: Money::new(dec!(200.0), Currency::USD),
@@ -293,6 +304,7 @@ mod aggregate_tests {
                 account_id: *ACCOUNT_ID,
                 transaction_id: *TRANSACTION_ID,
                 amount: Money::new(dec!(200.0), Currency::USD),
+                tenant_id: 0,
             })
             .then_expect_error_message("Insufficient funds");
     }
@@ -344,6 +356,7 @@ mod aggregate_tests {
             account_id: *ACCOUNT_ID,
             transaction_id: *TRANSACTION_ID,
             amount: Money::new(dec!(200.0), Currency::USD),
+            tenant_id: 0,
         },
         vec![LedgerEvent::LedgerUpdated {
             amount: Money::new(dec!(200.0), Currency::USD),
@@ -364,6 +377,7 @@ mod aggregate_tests {
             account_id: *ACCOUNT_ID,
             transaction_id: *TRANSACTION_ID,
             amount: Money::new(dec!(2000.0), Currency::USD),
+            tenant_id: 0,
         },
         vec![LedgerEvent::LedgerUpdated {
             amount: Money::new(dec!(2000.0), Currency::USD),
@@ -384,6 +398,7 @@ mod aggregate_tests {
             account_id: *ACCOUNT_ID,
             transaction_id: *TRANSACTION_ID,
             amount: Money::new(dec!(500.0), Currency::USD),
+            tenant_id: 0,
         },
         vec![
             LedgerEvent::LedgerUpdated {
@@ -435,6 +450,7 @@ mod aggregate_tests {
             account_id: *ACCOUNT_ID,
             transaction_id: *TRANSACTION_ID,
             amount: Money::new(dec!(300.0), Currency::USD),
+            tenant_id: 0,
         },
         vec![
             LedgerEvent::LedgerUpdated {

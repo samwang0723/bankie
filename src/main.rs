@@ -62,9 +62,9 @@ async fn process_commands(state: SharedState, mut rx: mpsc::Receiver<BankAccount
         let id = match &command {
             BankAccountCommand::OpenAccount { id, .. } => id,
             BankAccountCommand::ApproveAccount { id, .. } => id,
-            BankAccountCommand::FreezeAccount { id } => id,
-            BankAccountCommand::UnfreezeAccount { id } => id,
-            BankAccountCommand::CloseAccount { id } => id,
+            BankAccountCommand::FreezeAccount { id, .. } => id,
+            BankAccountCommand::UnfreezeAccount { id, .. } => id,
+            BankAccountCommand::CloseAccount { id, .. } => id,
             BankAccountCommand::Deposit { id, .. } => id,
             BankAccountCommand::Withdrawal { id, .. } => id,
             BankAccountCommand::Transfer { id, .. } => id,

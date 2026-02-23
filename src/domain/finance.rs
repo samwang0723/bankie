@@ -26,6 +26,8 @@ pub struct Transaction {
     pub status: String,
     #[allow(dead_code)]
     pub journal_entry_id: Option<Uuid>,
+    #[serde(default)]
+    pub tenant_id: i32,
 }
 
 #[derive(Debug, Serialize)]
@@ -77,6 +79,8 @@ pub struct JournalEntry {
     pub entry_date: NaiveDate,
     pub description: Option<String>,
     pub status: String,
+    #[allow(dead_code)]
+    pub tenant_id: i32,
 }
 
 #[derive(FromRow, Debug)]
@@ -89,6 +93,8 @@ pub struct JournalLine {
     pub credit_amount: Decimal,
     pub currency: String,
     pub description: Option<String>,
+    #[allow(dead_code)]
+    pub tenant_id: i32,
 }
 
 #[derive(FromRow, Debug)]
@@ -100,6 +106,7 @@ pub struct Outbox {
     #[allow(dead_code)]
     pub processed: bool,
     pub retry_count: i32,
+    pub tenant_id: i32,
 }
 
 #[cfg(test)]
@@ -120,6 +127,7 @@ mod tests {
             metadata: json!({}),
             status: "completed".to_string(),
             journal_entry_id: None,
+            tenant_id: 1,
         }
     }
 
@@ -184,6 +192,7 @@ mod tests {
             metadata: json!({"key": "value"}),
             status: "posted".to_string(),
             journal_entry_id: Some(Uuid::new_v4()),
+            tenant_id: 1,
         };
         let with_money = tx.into_transaction_with_money();
         assert_eq!(with_money.id, original_id);

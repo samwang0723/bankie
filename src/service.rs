@@ -33,7 +33,11 @@ impl BankAccountServices {
 // External services must be called during the processing of the command.
 #[async_trait]
 pub trait BankAccountApi: Sync + Send {
-    async fn get_house_account(&self, asset_code: &str) -> Result<HouseAccount, anyhow::Error>;
+    async fn get_house_account(
+        &self,
+        asset_code: &str,
+        tenant_id: i32,
+    ) -> Result<HouseAccount, anyhow::Error>;
     async fn note_ledger(&self, id: String, command: LedgerCommand) -> Result<(), anyhow::Error>;
     async fn create_transaction_with_journal(
         &self,
@@ -41,6 +45,7 @@ pub trait BankAccountApi: Sync + Send {
         ledger_id: String,
         journal_entry: JournalEntry,
         journal_lines: Vec<JournalLine>,
+        tenant_id: i32,
     ) -> Result<Uuid, anyhow::Error>;
     async fn validate(
         &self,
@@ -54,11 +59,13 @@ pub trait BankAccountApi: Sync + Send {
         external_reference_id: Option<String>,
         currency: Currency,
         kind: BankAccountKind,
+        tenant_id: i32,
     ) -> Result<bool, anyhow::Error>;
     async fn find_checking_account(
         &self,
         external_reference_id: Option<String>,
         currency: Currency,
+        tenant_id: i32,
     ) -> Result<Option<Uuid>, anyhow::Error>;
     async fn get_bank_account(&self, account_id: Uuid) -> Result<BankAccountView, anyhow::Error>;
     async fn debit_hold(
@@ -67,6 +74,7 @@ pub trait BankAccountApi: Sync + Send {
         ledger_id: Uuid,
         transaction_id: Uuid,
         amount: Money,
+        tenant_id: i32,
     ) -> Result<(), anyhow::Error>;
     async fn get_ledger_balance(&self, account_id: Uuid) -> Result<(Money, Money), anyhow::Error>;
     async fn create_transfer_transactions(
@@ -76,6 +84,7 @@ pub trait BankAccountApi: Sync + Send {
         dest_account_id: Uuid,
         dest_ledger_id: String,
         amount: Money,
+        tenant_id: i32,
     ) -> Result<Uuid, anyhow::Error>;
 }
 
@@ -101,9 +110,16 @@ impl BankAccountApi for BankAccountLogic {
         ledger_id: String,
         journal_entry: JournalEntry,
         journal_lines: Vec<JournalLine>,
+        tenant_id: i32,
     ) -> Result<Uuid, anyhow::Error> {
         self.database
-            .create_transaction_with_journal(transaction, ledger_id, journal_entry, journal_lines)
+            .create_transaction_with_journal(
+                transaction,
+                ledger_id,
+                journal_entry,
+                journal_lines,
+                tenant_id,
+            )
             .await
             .map_err(|e| anyhow!("Failed to write transaction: {}", e))
     }
@@ -151,9 +167,13 @@ impl BankAccountApi for BankAccountLogic {
         Ok(())
     }
 
-    async fn get_house_account(&self, asset_code: &str) -> Result<HouseAccount, anyhow::Error> {
+    async fn get_house_account(
+        &self,
+        asset_code: &str,
+        tenant_id: i32,
+    ) -> Result<HouseAccount, anyhow::Error> {
         self.database
-            .get_house_account(asset_code)
+            .get_house_account(asset_code, tenant_id)
             .await
             .map_err(|e| anyhow!("Failed to get house account: {}", e))
     }
@@ -164,6 +184,7 @@ impl BankAccountApi for BankAccountLogic {
         external_reference_id: Option<String>,
         currency: Currency,
         kind: BankAccountKind,
+        tenant_id: i32,
     ) -> Result<bool, anyhow::Error> {
         if (self
             .bank_account
@@ -179,7 +200,12 @@ impl BankAccountApi for BankAccountLogic {
         if let Some(ref ext_ref) = external_reference_id {
             let valid = self
                 .database
-                .validate_bank_account_exists(Some(ext_ref.clone()), &currency.to_string(), kind)
+                .validate_bank_account_exists(
+                    Some(ext_ref.clone()),
+                    &currency.to_string(),
+                    kind,
+                    tenant_id,
+                )
                 .await?;
             if !valid {
                 return Err(anyhow!("Account duplicated"));
@@ -193,6 +219,7 @@ impl BankAccountApi for BankAccountLogic {
         &self,
         external_reference_id: Option<String>,
         currency: Currency,
+        tenant_id: i32,
     ) -> Result<Option<Uuid>, anyhow::Error> {
         let ext_ref = match external_reference_id {
             Some(ref r) if !r.is_empty() => Some(r.clone()),
@@ -200,7 +227,7 @@ impl BankAccountApi for BankAccountLogic {
         };
         match self
             .database
-            .find_checking_account(ext_ref, &currency.to_string())
+            .find_checking_account(ext_ref, &currency.to_string(), tenant_id)
             .await?
         {
             Some(view_id) => {
@@ -228,12 +255,14 @@ impl BankAccountApi for BankAccountLogic {
         ledger_id: Uuid,
         transaction_id: Uuid,
         amount: Money,
+        tenant_id: i32,
     ) -> Result<(), anyhow::Error> {
         let cmd = LedgerCommand::DebitHold {
             id: ledger_id,
             account_id,
             transaction_id,
             amount,
+            tenant_id,
         };
         match self.ledger.cqrs.execute(&ledger_id.to_string(), cmd).await {
             Ok(_) => Ok(()),
@@ -261,6 +290,7 @@ impl BankAccountApi for BankAccountLogic {
         dest_account_id: Uuid,
         dest_ledger_id: String,
         amount: Money,
+        tenant_id: i32,
     ) -> Result<Uuid, anyhow::Error> {
         self.database
             .create_transfer_transactions(
@@ -269,6 +299,7 @@ impl BankAccountApi for BankAccountLogic {
                 dest_account_id,
                 dest_ledger_id,
                 amount,
+                tenant_id,
             )
             .await
             .map_err(|e| anyhow!("Failed to create transfer transactions: {}", e))

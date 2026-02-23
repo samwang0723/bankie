@@ -18,10 +18,11 @@ pub async fn validate_account_creation(
     external_reference_id: Option<String>,
     currency: Currency,
     kind: BankAccountKind,
+    tenant_id: i32,
 ) -> Result<(), error::BankAccountError> {
     let valid = services
         .services
-        .validate_account_creation(id, external_reference_id, currency, kind)
+        .validate_account_creation(id, external_reference_id, currency, kind, tenant_id)
         .await?;
     if !valid {
         return Err("validation failed".into());
@@ -29,10 +30,11 @@ pub async fn validate_account_creation(
     Ok(())
 }
 
-pub fn create_base_event(id: Uuid) -> BaseEvent {
+pub fn create_base_event(id: Uuid, tenant_id: i32) -> BaseEvent {
     let mut base_event = BaseEvent::default();
     base_event.set_aggregate_id(id);
     base_event.set_created_at(chrono::Utc::now());
+    base_event.set_tenant_id(tenant_id);
     base_event
 }
 
@@ -41,11 +43,13 @@ pub async fn init_ledger(
     ledger_id: Uuid,
     account_id: Uuid,
     currency: Currency,
+    tenant_id: i32,
 ) -> Result<(), error::BankAccountError> {
     let command = LedgerCommand::Init {
         id: ledger_id,
         account_id,
         amount: Money::new(Decimal::ZERO, currency),
+        tenant_id,
     };
     services
         .services
@@ -60,6 +64,7 @@ pub async fn create_transaction_with_journal(
     amount: Money,
     house_account_ledger: String,
     action_type: LedgerAction,
+    tenant_id: i32,
 ) -> Result<Uuid, error::BankAccountError> {
     // Validate ledger available is sufficient
     services
@@ -89,6 +94,7 @@ pub async fn create_transaction_with_journal(
         metadata: serde_json::Value::Null,
         journal_entry_id: None,
         status: "processing".to_string(),
+        tenant_id,
     };
 
     let journal_entry = JournalEntry {
@@ -96,6 +102,7 @@ pub async fn create_transaction_with_journal(
         entry_date: chrono::Utc::now().date_naive(),
         description: None,
         status: "posted".to_string(),
+        tenant_id,
     };
     let mut house_account_journal_line = JournalLine {
         id: Uuid::new_v4(),
@@ -105,6 +112,7 @@ pub async fn create_transaction_with_journal(
         debit_amount: Decimal::ZERO,
         currency: amount.currency.to_string(),
         description: None,
+        tenant_id,
     };
     let mut user_account_journal_line = JournalLine {
         id: Uuid::new_v4(),
@@ -114,6 +122,7 @@ pub async fn create_transaction_with_journal(
         credit_amount: Decimal::ZERO,
         currency: amount.currency.to_string(),
         description: None,
+        tenant_id,
     };
 
     if action_type == LedgerAction::Deposit {
@@ -132,6 +141,7 @@ pub async fn create_transaction_with_journal(
             bank_account.ledger_id.clone(),
             journal_entry,
             journal_lines,
+            tenant_id,
         )
         .await
         .map_err(|_| "transaction update failed".into())
@@ -145,6 +155,7 @@ pub async fn create_transfer_transactions(
     dest_account_id: Uuid,
     dest_ledger_id: String,
     amount: Money,
+    tenant_id: i32,
 ) -> Result<Uuid, error::BankAccountError> {
     // Validate source has sufficient funds
     services
@@ -168,6 +179,7 @@ pub async fn create_transfer_transactions(
             dest_account_id,
             dest_ledger_id,
             amount,
+            tenant_id,
         )
         .await
         .map_err(|_| "transfer transaction creation failed".into())

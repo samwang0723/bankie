@@ -1,6 +1,6 @@
 .PHONY: help test lint changelog-gen changelog-commit docker-build \
-       local-setup local-infra local-init-db local-migrate local-build local-start local-stop local-jwt local-demo \
-       docker-up docker-down docker-logs docker-clean
+       local-setup local-infra local-init-db local-migrate local-build local-start local-stop local-jwt local-demo local-e2e \
+       docker-up docker-down docker-logs docker-clean docker-jwt docker-e2e
 
 help: ## show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {sub("\\\\n",sprintf("\n%22c"," "), $$2);printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -127,6 +127,13 @@ local-demo: ## run the full demo scenario (requires running server + JWT)
 	fi
 	@./scripts/demo.sh "$$(cat .local-jwt-token)"
 
+local-e2e: ## run E2E test suite (requires running server + JWT)
+	@if [ ! -f .local-jwt-token ] || [ ! -s .local-jwt-token ]; then \
+		echo "ERROR: No JWT token found. Run 'make local-setup' first."; \
+		exit 1; \
+	fi
+	@./scripts/e2e-test.sh "$$(cat .local-jwt-token)"
+
 ######################
 # docker full stack  #
 ######################
@@ -156,6 +163,23 @@ docker-down: ## stop and remove all containers (preserves volumes)
 
 docker-logs: ## tail logs from all containers
 	@docker compose logs -f
+
+docker-jwt: ## generate JWT from running Docker container and save to .docker-jwt-token
+	@echo "[docker] Generating JWT for service '$(SERVICE)'..."
+	@docker exec bankie /app/bankie --mode jwt --service $(SERVICE) 2>&1 | \
+		grep -oE 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | head -1 > .docker-jwt-token
+	@if [ -s .docker-jwt-token ]; then \
+		echo "[docker] JWT saved to .docker-jwt-token"; \
+	else \
+		echo "[docker] WARNING: Could not extract JWT. Is bankie container running?"; \
+	fi
+
+docker-e2e: docker-jwt ## run E2E tests against Docker stack
+	@if [ ! -f .docker-jwt-token ] || [ ! -s .docker-jwt-token ]; then \
+		echo "ERROR: No JWT token found. Run 'make docker-up' first."; \
+		exit 1; \
+	fi
+	@./scripts/e2e-test.sh "$$(cat .docker-jwt-token)"
 
 docker-clean: ## stop containers and remove volumes (full reset)
 	@echo "[docker] Stopping containers and removing volumes..."
