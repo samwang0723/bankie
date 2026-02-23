@@ -8,7 +8,7 @@ use crate::domain::finance::SettlementReportRow;
 pub const MAX_REPORT_DAYS: i64 = 90;
 
 /// UTF-8 BOM for Excel compatibility.
-const UTF8_BOM: &str = "\u{FEFF}";
+pub const UTF8_BOM: &str = "\u{FEFF}";
 
 /// Escape a CSV field value to prevent CSV injection and handle special characters.
 ///

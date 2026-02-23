@@ -551,17 +551,23 @@ action_settlement_report() {
   echo -e "\n${CYAN}Settlement Report (CSV)${NC}"
   separator
   local id start_date end_date currency save
-  id=$(prompt "Bank account ID" "$LAST_ACCOUNT_ID")
+  id=$(prompt "Bank account ID (blank for all accounts)" "$LAST_ACCOUNT_ID")
   start_date=$(prompt "Start date (YYYY-MM-DD)" "2026-01-01")
   end_date=$(prompt "End date (YYYY-MM-DD)" "2026-12-31")
   currency=$(prompt "Currency (blank for auto)" "$LAST_CURRENCY")
 
-  local url="${BASE_URL}/v1/report/settlement?bank_account_id=${id}&start_date=${start_date}&end_date=${end_date}"
+  local url="${BASE_URL}/v1/report/settlement?start_date=${start_date}&end_date=${end_date}"
+  [[ -n "$id" ]] && url="${url}&bank_account_id=${id}"
   [[ -n "$currency" ]] && url="${url}&currency=${currency}"
 
   read -rp "  Save to file? (y/N): " save
   if [[ "$save" == "y" || "$save" == "Y" ]]; then
-    local filename="settlement_${id:0:8}_${start_date}_${end_date}.csv"
+    local filename
+    if [[ -n "$id" ]]; then
+      filename="settlement_${id:0:8}_${start_date}_${end_date}.csv"
+    else
+      filename="settlement_all_${start_date}_${end_date}.csv"
+    fi
     curl -s "$url" -H "$AUTH" -o "$filename"
     echo -e "  ${GREEN}Saved to ${filename}${NC}"
     echo ""

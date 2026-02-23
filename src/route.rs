@@ -427,7 +427,7 @@ pub async fn balance_history_handler(
 
 #[derive(Deserialize)]
 pub struct SettlementReportParams {
-    pub bank_account_id: String,
+    pub bank_account_id: Option<String>,
     pub start_date: NaiveDate,
     pub end_date: NaiveDate,
     pub currency: Option<String>,
@@ -456,58 +456,93 @@ pub async fn settlement_report_handler(
 
     let client = &state.database.clone();
 
-    // Fetch opening balance (from balance_snapshots, fallback to zero)
-    let opening_balance = match client
-        .get_opening_balance(params.bank_account_id.clone(), params.start_date, tenant_id)
-        .await
-    {
-        Ok(Some(balance)) => balance,
-        Ok(None) => Decimal::ZERO,
-        Err(err) => return AppError::InternalServerError(err.to_string()).into_response(),
+    // Resolve account IDs: specific account or all accounts for tenant
+    let account_ids: Vec<String> = if let Some(ref id) = params.bank_account_id {
+        vec![id.clone()]
+    } else {
+        match client.get_accounts(0, 100, tenant_id).await {
+            Ok(accounts) => accounts.into_iter().filter_map(|a| a.id).collect(),
+            Err(err) => return AppError::InternalServerError(err.to_string()).into_response(),
+        }
     };
 
-    // Fetch settlement report data
-    let rows = match client
-        .get_settlement_report_data(
-            params.bank_account_id.clone(),
-            params.start_date,
-            params.end_date,
-            tenant_id,
-        )
-        .await
-    {
-        Ok(rows) => rows,
-        Err(err) => return AppError::InternalServerError(err.to_string()).into_response(),
-    };
-
-    // Determine currency from first row or params
-    let currency = params
-        .currency
-        .as_deref()
-        .or_else(|| rows.first().map(|r| r.currency.as_str()))
-        .unwrap_or("USD");
-
-    // Determine account number from first row
-    let account_number = rows
-        .first()
-        .and_then(|r| r.account_number.as_deref())
-        .unwrap_or("unknown");
+    if account_ids.is_empty() {
+        return AppError::BadRequest("No accounts found for this tenant".to_string())
+            .into_response();
+    }
 
     let generated_at = Utc::now();
-    let csv = report::generate_settlement_csv(
-        &rows,
-        opening_balance,
-        account_number,
-        params.start_date,
-        params.end_date,
-        currency,
-        generated_at,
-    );
+    let mut full_csv = String::new();
 
-    let filename = format!(
-        "settlement_{}_{}_to_{}.csv",
-        params.bank_account_id, params.start_date, params.end_date
-    );
+    for (idx, account_id) in account_ids.iter().enumerate() {
+        // Fetch opening balance
+        let opening_balance = match client
+            .get_opening_balance(account_id.clone(), params.start_date, tenant_id)
+            .await
+        {
+            Ok(Some(balance)) => balance,
+            Ok(None) => Decimal::ZERO,
+            Err(err) => return AppError::InternalServerError(err.to_string()).into_response(),
+        };
+
+        // Fetch settlement report data
+        let rows = match client
+            .get_settlement_report_data(
+                account_id.clone(),
+                params.start_date,
+                params.end_date,
+                tenant_id,
+            )
+            .await
+        {
+            Ok(rows) => rows,
+            Err(err) => return AppError::InternalServerError(err.to_string()).into_response(),
+        };
+
+        // Determine currency from first row or params
+        let currency = params
+            .currency
+            .as_deref()
+            .or_else(|| rows.first().map(|r| r.currency.as_str()))
+            .unwrap_or("USD");
+
+        // Determine account number from first row
+        let account_number = rows
+            .first()
+            .and_then(|r| r.account_number.as_deref())
+            .unwrap_or("unknown");
+
+        let csv = report::generate_settlement_csv(
+            &rows,
+            opening_balance,
+            account_number,
+            params.start_date,
+            params.end_date,
+            currency,
+            generated_at,
+        );
+
+        if idx == 0 {
+            full_csv.push_str(&csv);
+        } else {
+            // Skip BOM for subsequent accounts, add separator
+            let csv_no_bom = csv.trim_start_matches(report::UTF8_BOM);
+            full_csv.push_str("\n");
+            full_csv.push_str(csv_no_bom);
+        }
+    }
+
+    let filename = if params.bank_account_id.is_some() {
+        format!(
+            "settlement_{}_{}_to_{}.csv",
+            account_ids[0], params.start_date, params.end_date
+        )
+    } else {
+        format!(
+            "settlement_all_{}_to_{}.csv",
+            params.start_date, params.end_date
+        )
+    };
 
     (
         StatusCode::OK,
@@ -518,7 +553,7 @@ pub async fn settlement_report_handler(
                 format!("attachment; filename=\"{}\"", filename),
             ),
         ],
-        csv,
+        full_csv,
     )
         .into_response()
 }
