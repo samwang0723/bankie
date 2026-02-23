@@ -13,7 +13,7 @@ Bankie is a banking/ledger system built in Rust implementing sub-account and led
 SQLX_OFFLINE=true cargo build
 cargo build --release --bin bankie
 
-# Run tests (107 unit tests, no DB needed)
+# Run tests (126 unit tests, no DB needed)
 SQLX_OFFLINE=true cargo test -- --nocapture
 cargo test test_name -- --nocapture      # Single test
 cargo llvm-cov nextest                   # Coverage (requires cargo-nextest + cargo-llvm-cov)
@@ -26,7 +26,7 @@ cargo check --all
 # Regenerate sqlx offline cache (REQUIRED after changing any SQL query)
 DATABASE_URL="postgres://bankie_app:password@localhost:5432/bankie_main" cargo sqlx prepare
 
-# E2E tests (39 tests, requires running stack)
+# E2E tests (59 tests, requires running stack)
 make docker-up && make docker-e2e        # Docker full-stack
 make local-setup && make local-e2e       # Local dev
 
@@ -34,6 +34,10 @@ make local-setup && make local-e2e       # Local dev
 make docker-up                           # Start full stack (postgres + redis + migrations + app)
 make docker-down                         # Stop (preserves data)
 make docker-clean                        # Stop + remove volumes (full data reset)
+
+# Interactive testing console (menu-driven, all API operations)
+make docker-interactive                  # Against Docker stack
+make local-interactive                   # Against local dev
 
 # Local dev lifecycle
 make local-setup                         # One-shot: infra + db + build + jwt + server
@@ -132,6 +136,20 @@ HTTP Request → JWT Auth (extracts tenant_id) → Idempotency Check → Route H
 
 Every deposit/withdrawal creates a `Transaction` + `JournalEntry` + `JournalLine`s. Journal lines have debit/credit amounts linking user ledger and house account ledger.
 
+### Sub-Account Architecture
+
+A user can have multiple account types (Checking, Interest, Yield) linked via `parent_id`:
+- **Master account** (Checking): `parent_id` is empty — the primary account
+- **Sub-accounts** (Interest, Yield): `parent_id` points to the master Checking account UUID
+- `find_checking_account` resolves the master by matching `external_reference_id` + `currency` + `kind=Checking` + `tenant_id`
+- Resolution happens during `OpenAccount` command handling in the aggregate
+
+**View projection gotcha**: When adding new event handlers in `query.rs`, never unconditionally overwrite `parent_id` (or similar fields set by earlier events). The `AccountKycApproved` event's `base_event` has an empty `parent_id` because `ApproveAccount` doesn't carry it — only update if the event value is non-empty. Same principle applies to any field set by `AccountOpened` but absent in later events.
+
+### Settlement Reports
+
+`GET /v1/report/settlement` returns a CSV with UTF-8 BOM (Excel-compatible), double-entry journal data, running balances, and CSV-injection prevention. Implementation in `src/report.rs`. Supports single-account or all-accounts-for-tenant, max 90-day date range.
+
 ### Structured Error Responses
 
 `AppError` enum (`src/common/error.rs`) maps to HTTP status codes with JSON `{code, message}` body:
@@ -151,6 +169,7 @@ Every deposit/withdrawal creates a `Transaction` + `JournalEntry` + `JournalLine
 - `src/configs/settings.rs` — Config loading from `config.{ENV}.yaml`
 - `src/domain/` — Domain models, events, finance structs, tenant, user views
 - `src/event_sourcing/` — Aggregates, commands, events, queries (CQRS view projections), helpers
+- `src/report.rs` — Settlement report CSV generation (running balances, CSV-injection prevention, currency precision)
 - `src/repository/adapter.rs` — `DatabaseClient` trait + `Adapter` wrapper (`mockall` for testing)
 - `src/repository/postgres.rs` — `DatabaseClient` impl for `PgPool` (all SQL queries with tenant filtering)
 - `src/repository/redis.rs` — Redis lock + get/set operations
@@ -174,19 +193,23 @@ Every deposit/withdrawal creates a `Transaction` + `JournalEntry` + `JournalLine
 | GET | `/v1/house_account?currency=` | Yes | List house accounts |
 | POST | `/v1/house_account` | Yes | Create house account |
 | GET | `/v1/user/:id` | Yes | Query user's bank accounts with ledger |
+| GET | `/v1/accounts?offset=&limit=` | Yes | List all accounts for tenant (paginated, max 100) |
 | GET | `/v1/transaction?bank_account_id=&offset=&limit=` | Yes | List transactions (filterable by date, type, status) |
 | GET | `/v1/bank_account/:id/balance-history?start_date=&end_date=` | Yes | Balance history from snapshots |
+| GET | `/v1/report/settlement?start_date=&end_date=&bank_account_id=&currency=` | Yes | Settlement report CSV (max 90-day range) |
 
 ## Testing Patterns
 
-- **107 unit tests** + **39 e2e tests**, unit tests need no DB (`SQLX_OFFLINE=true`)
+- **126 unit tests** + **59 e2e tests**, unit tests need no DB (`SQLX_OFFLINE=true`)
 - Aggregate tests use `cqrs_es::test::TestFramework` with given/when/then pattern and `test_case!`/`test_error_case!` macros
 - `MockBankAccountServices` (manual mock in `bank_account.rs`) with configurable responses via `Mutex<Option<Result<...>>>` fields for negative-path testing
 - DB layer uses `mockall::automock` on `DatabaseClient` trait
 - Auth middleware tests use `MockDatabaseClient` + tower's `oneshot`
 - `CommandExtractor` tests verify amount validation (zero/negative rejection) and tenant_id injection
-- View projection tests cover all `BankAccountEvent` and `LedgerEvent` variants
-- E2E tests (`scripts/e2e-test.sh`) cover the full banking lifecycle: house accounts, account opening/approval, deposit, withdrawal, transfer, freeze/unfreeze/close, query endpoints, and negative cases
+- View projection tests cover all `BankAccountEvent` and `LedgerEvent` variants, including parent_id preservation across event replay
+- Settlement report tests (`src/report.rs`) cover CSV formatting, injection prevention, running balance computation, multi-currency precision
+- E2E tests (`scripts/e2e-test.sh`) cover the full banking lifecycle: house accounts, account opening/approval, deposit, withdrawal, transfer, freeze/unfreeze/close, sub-accounts (master/interest/yield with parent_id linkage), settlement reports, query endpoints, and negative cases
+- Interactive testing console (`scripts/interactive.sh`) — menu-driven tool for manual API testing with state tracking
 
 ## SQLx Offline Mode
 
