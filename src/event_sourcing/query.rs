@@ -61,7 +61,11 @@ impl View<BankAccount> for BankAccountView {
                 base_event,
             } => {
                 self.id = base_event.get_aggregate_id();
-                self.parent_id = base_event.get_parent_id();
+                // Preserve parent_id from AccountOpened — ApproveAccount doesn't carry it
+                let event_parent = base_event.get_parent_id();
+                if !event_parent.is_empty() {
+                    self.parent_id = event_parent;
+                }
                 self.ledger_id = ledger_id.clone();
                 self.status = BankAccountStatus::Approved;
                 self.updated_at = base_event.get_created_at();
@@ -213,6 +217,35 @@ mod tests {
         assert_eq!(view.status, BankAccountStatus::Approved);
         assert_eq!(view.ledger_id, "ledger-123");
         assert_eq!(view.parent_id, "parent1");
+    }
+
+    // Q2b: AccountKycApproved with empty parent_id should NOT overwrite
+    #[test]
+    fn test_approve_preserves_parent_id() {
+        let mut view = BankAccountView {
+            parent_id: "master-uuid".to_string(),
+            ..Default::default()
+        };
+        let base_event = BaseEvent {
+            aggregate_id: "acc1".to_string(),
+            parent_id: "".to_string(), // ApproveAccount doesn't carry parent_id
+            created_at: Utc::now().to_string(),
+            tenant_id: 0,
+        };
+        let event = EventEnvelope {
+            aggregate_id: "acc1".to_string(),
+            metadata: Default::default(),
+            sequence: 2,
+            payload: BankAccountEvent::AccountKycApproved {
+                ledger_id: "ledger-123".to_string(),
+                base_event,
+            },
+        };
+        view.update(&event);
+
+        assert_eq!(view.parent_id, "master-uuid"); // preserved, not overwritten
+        assert_eq!(view.status, BankAccountStatus::Approved);
+        assert_eq!(view.ledger_id, "ledger-123");
     }
 
     // Q3: BankAccountView update for AccountFrozen, AccountUnfrozen, AccountClosed

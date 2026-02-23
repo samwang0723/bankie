@@ -5,7 +5,8 @@
 #
 # Tests the full account lifecycle: health checks, house account management,
 # account opening/approval, deposits, withdrawals, transfers, freeze/unfreeze,
-# close, query endpoints, and negative cases.
+# close, query endpoints, negative cases, and sub-account scenarios
+# (master/interest/yield with parent_id linkage and cross-account transfers).
 #
 # Prerequisites:
 #   make local-setup   (starts infra + DB + server)
@@ -719,6 +720,323 @@ http_post "${BASE_URL}/v1/house_account" '{
   "currency": "FAKECOIN"
 }'
 if assert_status "$HTTP_STATUS" "400" "unsupported currency 400"; then
+  pass
+fi
+
+# ===========================================================================
+# SUITE 10: Sub-Account Scenario
+# ===========================================================================
+suite "10. Sub-Account Scenario (Master + Interest + Yield)"
+
+SUB_USER_ID="e2e-sub-user-$(date +%s)"
+SUB_MASTER_ID=""
+SUB_MASTER_LEDGER_ID=""
+SUB_INTEREST_ID=""
+SUB_INTEREST_LEDGER_ID=""
+SUB_YIELD_ID=""
+SUB_YIELD_LEDGER_ID=""
+
+# --- Step 1: Open master Checking account ---
+run_test "POST /v1/bank_account -- OpenAccount master (USD Checking) for sub-account user"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"OpenAccount\": {
+    \"account_type\": \"Retail\",
+    \"kind\": \"Checking\",
+    \"currency\": \"USD\",
+    \"user_id\": \"${SUB_USER_ID}\"
+  }
+}"
+if assert_status "$HTTP_STATUS" "201" "open sub-account master"; then
+  SUB_MASTER_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+  if [[ -n "$SUB_MASTER_ID" ]]; then
+    pass
+  else
+    fail "open sub-account master: could not extract id"
+  fi
+fi
+
+sleep 2
+
+# --- Step 2: Approve master account ---
+run_test "POST /v1/bank_account -- ApproveAccount master"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"ApproveAccount\": {
+    \"id\": \"${SUB_MASTER_ID}\"
+  }
+}"
+if assert_status "$HTTP_STATUS" "200" "approve sub-account master"; then
+  pass
+fi
+
+sleep 2
+
+run_test "GET /v1/bank_account/:id -- get master ledger_id"
+http_get "${BASE_URL}/v1/bank_account/${SUB_MASTER_ID}"
+if assert_status "$HTTP_STATUS" "200" "query sub-account master"; then
+  SUB_MASTER_LEDGER_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['ledger_id'])" 2>/dev/null || echo "")
+  local_status=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo "")
+  if [[ "$local_status" == "Approved" && -n "$SUB_MASTER_LEDGER_ID" ]]; then
+    pass
+  else
+    fail "master not approved or missing ledger_id (status=${local_status}, ledger=${SUB_MASTER_LEDGER_ID})"
+  fi
+fi
+
+# --- Step 3: Open Interest sub-account (auto-resolves parent_id to master) ---
+run_test "POST /v1/bank_account -- OpenAccount Interest sub-account (USD)"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"OpenAccount\": {
+    \"account_type\": \"Retail\",
+    \"kind\": \"Interest\",
+    \"currency\": \"USD\",
+    \"user_id\": \"${SUB_USER_ID}\"
+  }
+}"
+if assert_status "$HTTP_STATUS" "201" "open interest sub-account"; then
+  SUB_INTEREST_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+  if [[ -n "$SUB_INTEREST_ID" ]]; then
+    pass
+  else
+    fail "open interest sub-account: could not extract id"
+  fi
+fi
+
+sleep 2
+
+# --- Step 4: Open Yield sub-account (auto-resolves parent_id to master) ---
+run_test "POST /v1/bank_account -- OpenAccount Yield sub-account (USD)"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"OpenAccount\": {
+    \"account_type\": \"Retail\",
+    \"kind\": \"Yield\",
+    \"currency\": \"USD\",
+    \"user_id\": \"${SUB_USER_ID}\"
+  }
+}"
+if assert_status "$HTTP_STATUS" "201" "open yield sub-account"; then
+  SUB_YIELD_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+  if [[ -n "$SUB_YIELD_ID" ]]; then
+    pass
+  else
+    fail "open yield sub-account: could not extract id"
+  fi
+fi
+
+sleep 2
+
+# --- Step 5: Approve Interest + Yield sub-accounts ---
+run_test "POST /v1/bank_account -- ApproveAccount Interest"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"ApproveAccount\": {
+    \"id\": \"${SUB_INTEREST_ID}\"
+  }
+}"
+if assert_status "$HTTP_STATUS" "200" "approve interest sub-account"; then
+  pass
+fi
+
+sleep 2
+
+run_test "GET /v1/bank_account/:id -- get Interest ledger_id"
+http_get "${BASE_URL}/v1/bank_account/${SUB_INTEREST_ID}"
+if assert_status "$HTTP_STATUS" "200" "query interest sub-account"; then
+  SUB_INTEREST_LEDGER_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['ledger_id'])" 2>/dev/null || echo "")
+  if [[ -n "$SUB_INTEREST_LEDGER_ID" ]]; then
+    pass
+  else
+    fail "interest sub-account missing ledger_id"
+  fi
+fi
+
+run_test "POST /v1/bank_account -- ApproveAccount Yield"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"ApproveAccount\": {
+    \"id\": \"${SUB_YIELD_ID}\"
+  }
+}"
+if assert_status "$HTTP_STATUS" "200" "approve yield sub-account"; then
+  pass
+fi
+
+sleep 2
+
+run_test "GET /v1/bank_account/:id -- get Yield ledger_id"
+http_get "${BASE_URL}/v1/bank_account/${SUB_YIELD_ID}"
+if assert_status "$HTTP_STATUS" "200" "query yield sub-account"; then
+  SUB_YIELD_LEDGER_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['ledger_id'])" 2>/dev/null || echo "")
+  if [[ -n "$SUB_YIELD_LEDGER_ID" ]]; then
+    pass
+  else
+    fail "yield sub-account missing ledger_id"
+  fi
+fi
+
+# --- Step 6: Verify parent_id linkage via sub-accounts endpoint ---
+run_test "GET /v1/bank_account/:id/sub-accounts -- verify master + sub-accounts structure"
+http_get "${BASE_URL}/v1/bank_account/${SUB_MASTER_ID}/sub-accounts"
+if assert_status "$HTTP_STATUS" "200" "sub-accounts query"; then
+  # Verify master exists
+  master_id=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['master']['id'])" 2>/dev/null || echo "")
+  sub_count=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['sub_accounts']))" 2>/dev/null || echo "0")
+  if [[ "$master_id" == "$SUB_MASTER_ID" && "$sub_count" -ge 2 ]]; then
+    pass
+  else
+    fail "sub-accounts: expected master=${SUB_MASTER_ID} with >= 2 subs, got master=${master_id} subs=${sub_count}"
+  fi
+fi
+
+run_test "GET /v1/bank_account/:id/sub-accounts -- verify parent_id on sub-accounts"
+http_get "${BASE_URL}/v1/bank_account/${SUB_MASTER_ID}/sub-accounts"
+if assert_status "$HTTP_STATUS" "200" "sub-accounts parent_id check"; then
+  # Check that all sub-accounts have parent_id matching master
+  parent_ids_valid=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+subs = data.get('sub_accounts', [])
+master_id = '${SUB_MASTER_ID}'
+all_valid = all(s.get('parent_id') == master_id for s in subs)
+print('true' if all_valid and len(subs) >= 2 else 'false')
+" 2>/dev/null || echo "false")
+  if [[ "$parent_ids_valid" == "true" ]]; then
+    pass
+  else
+    fail "sub-accounts parent_id mismatch -- expected all sub_accounts.parent_id == ${SUB_MASTER_ID}"
+  fi
+fi
+
+# --- Step 7: Deposit 500 USD into master ---
+run_test "POST /v1/bank_account -- Deposit 500 USD into master"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"Deposit\": {
+    \"id\": \"${SUB_MASTER_ID}\",
+    \"amount\": {
+      \"amount\": \"500\",
+      \"currency\": \"USD\"
+    }
+  }
+}"
+if assert_status "$HTTP_STATUS" "200" "deposit 500 to master"; then
+  pass
+fi
+
+wait_for_outbox
+
+run_test "GET /v1/ledger/:id -- verify master ledger = 500"
+if [[ -n "$SUB_MASTER_LEDGER_ID" ]]; then
+  http_get "${BASE_URL}/v1/ledger/${SUB_MASTER_LEDGER_ID}"
+  if assert_status "$HTTP_STATUS" "200" "master ledger after deposit"; then
+    available=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['available']['amount'])" 2>/dev/null || echo "")
+    if python3 -c "exit(0 if float('${available}') == 500.0 else 1)" 2>/dev/null; then
+      pass
+    else
+      fail "master ledger available expected 500, got ${available}"
+    fi
+  fi
+else
+  fail "no master ledger_id to query"
+fi
+
+# --- Step 8: Transfer 200 USD from master to Interest sub-account ---
+run_test "POST /v1/bank_account -- Transfer 200 USD from master to Interest"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"Transfer\": {
+    \"id\": \"${SUB_MASTER_ID}\",
+    \"to_account_id\": \"${SUB_INTEREST_ID}\",
+    \"amount\": {
+      \"amount\": \"200\",
+      \"currency\": \"USD\"
+    }
+  }
+}"
+if assert_status "$HTTP_STATUS" "200" "transfer 200 master->interest"; then
+  pass
+fi
+
+wait_for_outbox
+
+# --- Step 9: Verify ledger balances after transfer ---
+run_test "GET /v1/ledger/:id -- verify master ledger = 300 after transfer"
+if [[ -n "$SUB_MASTER_LEDGER_ID" ]]; then
+  http_get "${BASE_URL}/v1/ledger/${SUB_MASTER_LEDGER_ID}"
+  if assert_status "$HTTP_STATUS" "200" "master ledger after transfer"; then
+    available=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['available']['amount'])" 2>/dev/null || echo "")
+    if python3 -c "exit(0 if float('${available}') == 300.0 else 1)" 2>/dev/null; then
+      pass
+    else
+      fail "master ledger available expected 300, got ${available}"
+    fi
+  fi
+else
+  fail "no master ledger_id to query"
+fi
+
+run_test "GET /v1/ledger/:id -- verify Interest ledger = 200 after transfer"
+if [[ -n "$SUB_INTEREST_LEDGER_ID" ]]; then
+  http_get "${BASE_URL}/v1/ledger/${SUB_INTEREST_LEDGER_ID}"
+  if assert_status "$HTTP_STATUS" "200" "interest ledger after transfer"; then
+    available=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['available']['amount'])" 2>/dev/null || echo "")
+    if python3 -c "exit(0 if float('${available}') == 200.0 else 1)" 2>/dev/null; then
+      pass
+    else
+      fail "interest ledger available expected 200, got ${available}"
+    fi
+  fi
+else
+  fail "no interest ledger_id to query"
+fi
+
+run_test "GET /v1/ledger/:id -- verify Yield ledger = 0 (untouched)"
+if [[ -n "$SUB_YIELD_LEDGER_ID" ]]; then
+  http_get "${BASE_URL}/v1/ledger/${SUB_YIELD_LEDGER_ID}"
+  if assert_status "$HTTP_STATUS" "200" "yield ledger untouched"; then
+    available=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['available']['amount'])" 2>/dev/null || echo "")
+    if python3 -c "exit(0 if float('${available}') == 0.0 else 1)" 2>/dev/null; then
+      pass
+    else
+      fail "yield ledger available expected 0, got ${available}"
+    fi
+  fi
+else
+  fail "no yield ledger_id to query"
+fi
+
+# --- Step 10: Deposit directly into Yield sub-account ---
+run_test "POST /v1/bank_account -- Deposit 100 USD directly into Yield sub-account"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"Deposit\": {
+    \"id\": \"${SUB_YIELD_ID}\",
+    \"amount\": {
+      \"amount\": \"100\",
+      \"currency\": \"USD\"
+    }
+  }
+}"
+if assert_status "$HTTP_STATUS" "200" "deposit 100 to yield"; then
+  pass
+fi
+
+wait_for_outbox
+
+run_test "GET /v1/ledger/:id -- verify Yield ledger = 100 after direct deposit"
+if [[ -n "$SUB_YIELD_LEDGER_ID" ]]; then
+  http_get "${BASE_URL}/v1/ledger/${SUB_YIELD_LEDGER_ID}"
+  if assert_status "$HTTP_STATUS" "200" "yield ledger after deposit"; then
+    available=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['available']['amount'])" 2>/dev/null || echo "")
+    if python3 -c "exit(0 if float('${available}') == 100.0 else 1)" 2>/dev/null; then
+      pass
+    else
+      fail "yield ledger available expected 100, got ${available}"
+    fi
+  fi
+else
+  fail "no yield ledger_id to query"
+fi
+
+# --- Step 11: Query user view -- verify all 3 sub-account-user accounts ---
+run_test "GET /v1/user/:id -- verify sub-account user has 3 accounts"
+http_get "${BASE_URL}/v1/user/${SUB_USER_ID}"
+if assert_status "$HTTP_STATUS" "200" "sub-account user query" && \
+   assert_entries_count "$HTTP_BODY" 3 "sub-account user accounts (expected 3)"; then
   pass
 fi
 

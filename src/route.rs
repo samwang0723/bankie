@@ -524,7 +524,7 @@ pub async fn settlement_report_handler(
         } else {
             // Skip BOM for subsequent accounts, add separator
             let csv_no_bom = csv.trim_start_matches(report::UTF8_BOM);
-            full_csv.push_str("\n");
+            full_csv.push('\n');
             full_csv.push_str(csv_no_bom);
         }
     }
