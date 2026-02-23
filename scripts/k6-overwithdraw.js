@@ -2,18 +2,22 @@ import http from 'k6/http';
 import { check } from 'k6';
 
 export let options = {
-  vus: 2, // number of virtual users
-  duration: '1s', // duration of the test
+  vus: 10,
+  duration: '5s',
 };
 
+const BASE_URL = __ENV.BASE_URL || 'http://localhost:3030';
+const TOKEN = __ENV.TOKEN;
+const ACCOUNT_ID = __ENV.ACCOUNT_ID;
+
 export default function() {
-  const url = 'http://localhost:3030/v1/bank_account';
+  const url = `${BASE_URL}/v1/bank_account`;
   const payload = JSON.stringify({
     "Withdrawal": {
-      "id": "dfb15f11-9c54-4935-b071-148ca2df73d1",
+      "id": ACCOUNT_ID,
       "amount": {
         "amount": "100",
-        "currency": "TWD"
+        "currency": "USD"
       }
     }
   });
@@ -21,7 +25,7 @@ export default function() {
   const params = {
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': 'Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJiYW5raWUiLCJzdWIiOiJqYXJ2aXMtYXBpIiwiYXVkIjoic2VydmljZSIsImV4cCI6MTc1NTU2NTYzMCwiaWF0IjoxNzI0MDI5NjMwLCJzY29wZSI6WyJiYW5rLWFjY291bnQ6cmVhZCIsImJhbmstYWNjb3VudDp3cml0ZSIsImxlZGdlcjpyZWFkIl0sInRlbmFudF9pZCI6MX0.e2NP0iTucstXXWd7J9qwgOi5Bw-mkZQGKpaaA0mWlmo'
+      'Authorization': `Bearer ${TOKEN}`,
     },
   };
 

@@ -205,9 +205,11 @@ test:
 ##################
 # overdrawn test #
 ##################
-# Make sure to start local environment and use k6 to pressure testing
+# Requires: running stack, k6 installed, ACCOUNT_ID env var set
+# Example: ACCOUNT_ID=<uuid> make over-withdrawn-test
 over-withdrawn-test:
-	k6 run scripts/k6-overwithdraw.js
+	@TOKEN=$$(cat .docker-jwt-token 2>/dev/null || cat .local-jwt-token 2>/dev/null) && \
+	k6 run -e TOKEN=$$TOKEN -e ACCOUNT_ID=$(ACCOUNT_ID) scripts/k6-overwithdraw.js
 
 ########
 # lint #
