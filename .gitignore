@@ -7,3 +7,6 @@ config.prod.yaml
 config.stg.yaml
 config.dev.yaml
 .local-jwt-token
+.docker-jwt-token
+*.csv
+.claude/
