@@ -90,8 +90,9 @@ cargo fmt -- --check
 # Coverage
 cargo llvm-cov nextest
 
-# Concurrency pressure testing (requires k6 + running server)
-make over-withdrawn-test
+# Concurrency pressure testing (requires k6 + running stack)
+# Provide an approved account ID with funds loaded
+ACCOUNT_ID=<uuid> make over-withdrawn-test
 ```
 
 ## Configuration
