@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, status, account_number, account_name, account_type, ledger_id, currency, tenant_id\n            FROM house_accounts\n            WHERE currency = $1\n            AND tenant_id = $2\n            AND status = 'active'\n            ",
+  "query": "\n            SELECT id, status, account_number, account_name, account_type, ledger_id, currency, tenant_id\n            FROM house_accounts\n            WHERE ($1::text IS NULL OR currency = $1)\n            AND tenant_id = $2\n            AND status = 'active'\n            ",
   "describe": {
     "columns": [
       {
@@ -61,5 +61,5 @@
       false
     ]
   },
-  "hash": "75f38f9bcb7aba80877f06d67205a3becc4065aacbd285f4c1625bdba2de5267"
+  "hash": "b457c5875fbb77e66f4ac976f89a60b91f790cbb3470490ccb304efc8f429826"
 }

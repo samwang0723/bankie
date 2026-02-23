@@ -185,8 +185,8 @@ action_list_house_accounts() {
   echo -e "\n${CYAN}List House Accounts${NC}"
   separator
   local currency
-  currency=$(prompt "Currency (USD/TWD/BTC/ETH/USDT or blank for all)" "$LAST_CURRENCY")
-  LAST_CURRENCY="$currency"
+  currency=$(prompt "Currency (USD/TWD/BTC/ETH/USDT or blank for all)" "")
+  [[ -n "$currency" ]] && LAST_CURRENCY="$currency"
 
   local url="${BASE_URL}/v1/house_account"
   [[ -n "$currency" ]] && url="${url}?currency=${currency}"

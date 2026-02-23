@@ -45,7 +45,7 @@ pub trait DatabaseClient {
     ) -> Result<HouseAccount, Error>;
     async fn get_house_accounts(
         &self,
-        asset_code: &str,
+        asset_code: Option<String>,
         tenant_id: i32,
     ) -> Result<Vec<HouseAccount>, Error>;
     async fn validate_bank_account_exists(
@@ -208,7 +208,7 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
 
     pub async fn get_house_accounts(
         &self,
-        asset_code: &str,
+        asset_code: Option<String>,
         tenant_id: i32,
     ) -> Result<Vec<HouseAccount>, Error> {
         self.client.get_house_accounts(asset_code, tenant_id).await

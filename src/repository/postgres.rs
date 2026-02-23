@@ -278,7 +278,7 @@ impl DatabaseClient for PgPool {
 
     async fn get_house_accounts(
         &self,
-        asset_code: &str,
+        asset_code: Option<String>,
         tenant_id: i32,
     ) -> Result<Vec<HouseAccount>, Error> {
         let house_accounts = sqlx::query_as!(
@@ -286,7 +286,7 @@ impl DatabaseClient for PgPool {
             r#"
             SELECT id, status, account_number, account_name, account_type, ledger_id, currency, tenant_id
             FROM house_accounts
-            WHERE currency = $1
+            WHERE ($1::text IS NULL OR currency = $1)
             AND tenant_id = $2
             AND status = 'active'
             "#,
