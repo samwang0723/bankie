@@ -87,7 +87,7 @@ pub async fn create_transaction_with_journal(
         bank_account_id: Uuid::parse_str(&bank_account.id)
             .map_err(|e| error::BankAccountError::from(e.to_string().as_str()))?,
         transaction_reference: common::snowflake::generate_transaction_reference(key),
-        transaction_date: chrono::Utc::now().date_naive(),
+        transaction_date: chrono::Utc::now(),
         amount: amount.amount,
         currency: amount.currency.to_string(),
         description: None,

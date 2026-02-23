@@ -48,6 +48,16 @@ pub enum LedgerAction {
     Transfer,
 }
 
+impl fmt::Display for LedgerAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LedgerAction::Deposit => write!(f, "deposit"),
+            LedgerAction::Withdraw => write!(f, "withdrawal"),
+            LedgerAction::Transfer => write!(f, "transfer"),
+        }
+    }
+}
+
 #[derive(Serialize, Default, Deserialize)]
 pub struct BankAccount {
     pub id: String,

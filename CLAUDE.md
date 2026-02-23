@@ -9,41 +9,42 @@ Bankie is a banking/ledger system built in Rust implementing sub-account and led
 ## Build & Development Commands
 
 ```bash
-# Build
-cargo build
+# Build (use SQLX_OFFLINE=true when no live DB available)
+SQLX_OFFLINE=true cargo build
 cargo build --release --bin bankie
 
-# Run server (requires DB_PASSWD, JWT_SECRET env vars)
-cargo run --bin bankie -- --mode server
-
-# Run tests
-cargo test -- --nocapture                # All unit tests (107 tests)
-cargo llvm-cov nextest                   # Tests with coverage (requires cargo-nextest + cargo-llvm-cov)
-
-# Run a single test
-cargo test test_name -- --nocapture
+# Run tests (107 unit tests, no DB needed)
+SQLX_OFFLINE=true cargo test -- --nocapture
+cargo test test_name -- --nocapture      # Single test
+cargo llvm-cov nextest                   # Coverage (requires cargo-nextest + cargo-llvm-cov)
 
 # Lint (must pass CI — clippy treats warnings as errors)
 cargo clippy --all-targets --tests --benches --no-default-features -- -D warnings
 cargo fmt -- --check
 cargo check --all
 
-# Database setup
-make db-pg-init-main                     # Create DB user/database
-make db-pg-migrate                       # Run migrations
-cargo run --bin migrations               # Run migrations binary directly
+# Regenerate sqlx offline cache (REQUIRED after changing any SQL query)
+DATABASE_URL="postgres://bankie_app:password@localhost:5432/bankie_main" cargo sqlx prepare
 
-# Generate JWT secret
-cargo run --bin bankie -- --mode secret_key
+# E2E tests (39 tests, requires running stack)
+make docker-up && make docker-e2e        # Docker full-stack
+make local-setup && make local-e2e       # Local dev
 
-# Generate JWT for a tenant service
-cargo run --bin bankie -- --mode jwt --service {service_name}
+# Docker lifecycle
+make docker-up                           # Start full stack (postgres + redis + migrations + app)
+make docker-down                         # Stop (preserves data)
+make docker-clean                        # Stop + remove volumes (full data reset)
 
-# Concurrency pressure testing (requires k6 + running local env)
+# Local dev lifecycle
+make local-setup                         # One-shot: infra + db + build + jwt + server
+make local-stop                          # Stop server + tear down infra
+
+# Generate JWT
+cargo run --bin bankie -- --mode secret_key              # Generate secret
+cargo run --bin bankie -- --mode jwt --service {name}    # Generate tenant JWT
+
+# Concurrency pressure testing (requires k6)
 make over-withdrawn-test
-
-# Docker
-make docker-build                        # Lint + test + build (M1)
 ```
 
 ## Infrastructure Dependencies
@@ -52,7 +53,7 @@ make docker-build                        # Lint + test + build (M1)
 - **Redis** — distributed lock for outbox/snapshot jobs + idempotency key deduplication
 - Config: `config.local.yaml` (loaded via `ENV` env var, defaults to `local`)
 - Env vars: `DB_PASSWD`, `JWT_SECRET`, `RUST_LOG`, `SQLX_OFFLINE=true` (for offline builds)
-- Docker Compose at root provides PostgreSQL + Redis + app container
+- Docker Compose at root provides PostgreSQL + Redis + migrations + app container
 
 ## Architecture
 
@@ -74,6 +75,21 @@ Two aggregates using `cqrs-es`/`postgres-es`:
 - Tracks `available`, `pending`, and `current` balances using delta-based updates
 - Withdrawal uses debit-hold pattern: moves funds from `available` to `pending` immediately, then releases via outbox job
 
+### Tenant Isolation
+
+Every entity carries `tenant_id`. The flow:
+```
+JWT claims → auth middleware → Extension<i32> → CommandExtractor.set_tenant_id()
+  → Command.tenant_id → Aggregate → BaseEvent.tenant_id → View.update()
+  → JSON payload (tenant_id field) → DB trigger → indexed tenant_id column
+```
+
+Key design decisions:
+- **`#[serde(skip_deserializing)]`** on `tenant_id` in commands — clients cannot set it; only server-side injection from JWT
+- **DB triggers** sync `tenant_id` from cqrs-es JSON `payload` column to indexed columns on `bank_account_views` and `ledger_views` (the cqrs-es framework only writes JSON, we can't directly set denormalized columns)
+- **All SQL queries** filter by `AND tenant_id = $N`; all inserts include `tenant_id`
+- Outbox records carry `tenant_id` so background jobs inherit correct tenant context
+
 ### Multi-Asset Support
 
 - `Currency` enum (USD, TWD, BTC, ETH, USDT) with per-currency precision (2, 0, 8, 18, 6)
@@ -86,7 +102,7 @@ Two aggregates using `cqrs-es`/`postgres-es`:
 Execution order (outermost → innermost → handler):
 ```
 TraceLayer → CompressionLayer → AddExtension(State) → AddExtension(Redis)
-  → authorize (JWT auth + tenant extraction)
+  → authorize (JWT auth + tenant_id extraction into Extension<i32>)
   → idempotency_check (Redis SET NX EX, 24h TTL, tenant-scoped)
   → Handler
 ```
@@ -105,11 +121,11 @@ TraceLayer → CompressionLayer → AddExtension(State) → AddExtension(Redis)
 ### Key Data Flow
 
 ```
-HTTP Request → JWT Auth → Idempotency Check → Route Handler
-  → CommandExtractor (deserialize + generate IDs + validate amounts > 0)
+HTTP Request → JWT Auth (extracts tenant_id) → Idempotency Check → Route Handler
+  → CommandExtractor (deserialize + generate IDs + validate amounts > 0 + inject tenant_id)
   → mpsc channel (bounded, 10k) → process_commands() → Aggregate::handle()
-    → BankAccountServices (validates status/balance, creates transactions/journals/outbox)
-    → Outbox cron job → Ledger aggregate (credit/debit release)
+    → BankAccountServices (validates status/balance, creates transactions/journals/outbox with tenant_id)
+    → Outbox cron job → Ledger aggregate (credit/debit release with tenant_id from outbox record)
 ```
 
 ### Double-Entry Bookkeeping
@@ -124,7 +140,7 @@ Every deposit/withdrawal creates a `Transaction` + `JournalEntry` + `JournalLine
 ### Module Layout
 
 - `src/auth/` — JWT generation, validation, Axum auth middleware (tenant-based)
-- `src/command.rs` — `CommandExtractor` (validates amounts > 0, generates UUIDs and account numbers)
+- `src/command.rs` — `CommandExtractor` (validates amounts > 0, generates UUIDs/account numbers, injects tenant_id from JWT)
 - `src/house_account.rs` — `HouseAccountExtractor`
 - `src/common/money.rs` — `Money` type, `Currency` enum, precision functions
 - `src/common/asset.rs` — `AssetRegistry`, `Asset`, `AssetClass` (Fiat/Crypto)
@@ -136,10 +152,10 @@ Every deposit/withdrawal creates a `Transaction` + `JournalEntry` + `JournalLine
 - `src/domain/` — Domain models, events, finance structs, tenant, user views
 - `src/event_sourcing/` — Aggregates, commands, events, queries (CQRS view projections), helpers
 - `src/repository/adapter.rs` — `DatabaseClient` trait + `Adapter` wrapper (`mockall` for testing)
-- `src/repository/postgres.rs` — `DatabaseClient` impl for `PgPool` (all SQL)
+- `src/repository/postgres.rs` — `DatabaseClient` impl for `PgPool` (all SQL queries with tenant filtering)
 - `src/repository/redis.rs` — Redis lock + get/set operations
 - `src/repository/configs.rs` — CQRS framework wiring
-- `src/route.rs` — Axum route handlers
+- `src/route.rs` — Axum route handlers (all pass tenant_id to queries)
 - `src/service.rs` — `BankAccountApi` trait + `BankAccountLogic` (business logic)
 - `src/state.rs` — `ApplicationState` (DB pool, Redis, CQRS loaders, command sender, AssetRegistry)
 - `src/job.rs` — Outbox cron job + daily balance snapshot job
@@ -163,21 +179,25 @@ Every deposit/withdrawal creates a `Transaction` + `JournalEntry` + `JournalLine
 
 ## Testing Patterns
 
-- **107 unit tests**, no DB required (`SQLX_OFFLINE=true`)
+- **107 unit tests** + **39 e2e tests**, unit tests need no DB (`SQLX_OFFLINE=true`)
 - Aggregate tests use `cqrs_es::test::TestFramework` with given/when/then pattern and `test_case!`/`test_error_case!` macros
 - `MockBankAccountServices` (manual mock in `bank_account.rs`) with configurable responses via `Mutex<Option<Result<...>>>` fields for negative-path testing
 - DB layer uses `mockall::automock` on `DatabaseClient` trait
 - Auth middleware tests use `MockDatabaseClient` + tower's `oneshot`
-- `CommandExtractor` tests verify amount validation (zero/negative rejection)
+- `CommandExtractor` tests verify amount validation (zero/negative rejection) and tenant_id injection
 - View projection tests cover all `BankAccountEvent` and `LedgerEvent` variants
+- E2E tests (`scripts/e2e-test.sh`) cover the full banking lifecycle: house accounts, account opening/approval, deposit, withdrawal, transfer, freeze/unfreeze/close, query endpoints, and negative cases
+
+## SQLx Offline Mode
+
+Compile-time checked queries via `sqlx`. Set `SQLX_OFFLINE=true` and ensure `.sqlx/` directory has cached query metadata for builds without a live DB. **When any SQL query in `postgres.rs` changes**, you must regenerate the cache with a running DB:
+```bash
+DATABASE_URL="postgres://bankie_app:password@localhost:5432/bankie_main" cargo sqlx prepare
+```
 
 ## Pre-commit Hooks
 
 `.pre-commit-config.yaml`: `cargo fmt`, `cargo check`, `cargo clippy` (with `-D warnings`), `cargo test`.
-
-## SQLx Offline Mode
-
-Compile-time checked queries via `sqlx`. Set `SQLX_OFFLINE=true` and ensure `.sqlx/` directory has cached query metadata for builds without a live DB.
 
 ## Two Binary Targets
 

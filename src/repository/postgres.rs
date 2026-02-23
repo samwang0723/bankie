@@ -581,8 +581,8 @@ impl DatabaseClient for PgPool {
             FROM transactions
             WHERE bank_account_id = $1
               AND tenant_id = $8
-              AND ($4::date IS NULL OR transaction_date >= $4)
-              AND ($5::date IS NULL OR transaction_date <= $5)
+              AND ($4::date IS NULL OR transaction_date >= $4::date::timestamptz)
+              AND ($5::date IS NULL OR transaction_date < ($5::date + 1)::timestamptz)
               AND ($6::text IS NULL OR $6 = '' OR transaction_reference LIKE $6 || '%')
               AND ($7::text IS NULL OR status = $7)
             ORDER BY created_at DESC
@@ -627,8 +627,8 @@ impl DatabaseClient for PgPool {
             SELECT COUNT(1) FROM transactions
             WHERE bank_account_id = $1
               AND tenant_id = $6
-              AND ($2::date IS NULL OR transaction_date >= $2)
-              AND ($3::date IS NULL OR transaction_date <= $3)
+              AND ($2::date IS NULL OR transaction_date >= $2::date::timestamptz)
+              AND ($3::date IS NULL OR transaction_date < ($3::date + 1)::timestamptz)
               AND ($4::text IS NULL OR $4 = '' OR transaction_reference LIKE $4 || '%')
               AND ($5::text IS NULL OR status = $5)
             "#,
@@ -709,7 +709,7 @@ impl DatabaseClient for PgPool {
         .await?;
 
         let currency_str = amount.currency.to_string();
-        let now = chrono::Utc::now().date_naive();
+        let now = chrono::Utc::now();
 
         // Source transaction (debit/withdrawal side)
         let source_tx_id = Uuid::new_v4();
