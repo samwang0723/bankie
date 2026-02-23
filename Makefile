@@ -1,6 +1,6 @@
 .PHONY: help test lint changelog-gen changelog-commit docker-build \
-       local-setup local-infra local-init-db local-migrate local-build local-start local-stop local-jwt local-demo local-e2e \
-       docker-up docker-down docker-logs docker-clean docker-jwt docker-e2e
+       local-setup local-infra local-init-db local-migrate local-build local-start local-stop local-jwt local-demo local-e2e local-interactive \
+       docker-up docker-down docker-logs docker-clean docker-jwt docker-e2e docker-interactive
 
 help: ## show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {sub("\\\\n",sprintf("\n%22c"," "), $$2);printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -134,6 +134,9 @@ local-e2e: ## run E2E test suite (requires running server + JWT)
 	fi
 	@./scripts/e2e-test.sh "$$(cat .local-jwt-token)"
 
+local-interactive: ## interactive console for manual API testing
+	@./scripts/interactive.sh "$$(cat .local-jwt-token 2>/dev/null)"
+
 ######################
 # docker full stack  #
 ######################
@@ -180,6 +183,9 @@ docker-e2e: docker-jwt ## run E2E tests against Docker stack
 		exit 1; \
 	fi
 	@./scripts/e2e-test.sh "$$(cat .docker-jwt-token)"
+
+docker-interactive: ## interactive console against Docker stack
+	@./scripts/interactive.sh "$$(cat .docker-jwt-token 2>/dev/null)"
 
 docker-clean: ## stop containers and remove volumes (full reset)
 	@echo "[docker] Stopping containers and removing volumes..."

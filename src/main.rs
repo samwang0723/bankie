@@ -8,11 +8,11 @@ use common::idempotency::idempotency_check;
 use event_sourcing::command::BankAccountCommand;
 use job::{create_balance_snapshot_job, create_ledger_job};
 use route::{
-    balance_history_handler, bank_account_by_number_handler, bank_account_command_handler,
-    bank_account_query_handler, health_check_handler, house_account_create_handler,
-    house_account_query_handler, ledger_query_handler, readiness_check_handler,
-    settlement_report_handler, sub_account_query_handler, transaction_query_handler,
-    user_query_handler,
+    accounts_query_handler, balance_history_handler, bank_account_by_number_handler,
+    bank_account_command_handler, bank_account_query_handler, health_check_handler,
+    house_account_create_handler, house_account_query_handler, ledger_query_handler,
+    readiness_check_handler, settlement_report_handler, sub_account_query_handler,
+    transaction_query_handler, user_query_handler,
 };
 use sqlx::PgPool;
 use state::{new_application_state, ApplicationState};
@@ -170,6 +170,7 @@ async fn main() {
                     "/v1/bank_account/by-number/:account_number",
                     get(bank_account_by_number_handler),
                 )
+                .route("/v1/accounts", get(accounts_query_handler))
                 .route("/v1/bank_account", post(bank_account_command_handler))
                 .route("/v1/ledger/:id", get(ledger_query_handler))
                 .route(

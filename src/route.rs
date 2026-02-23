@@ -49,6 +49,43 @@ pub struct BalanceHistoryParams {
     pub end_date: NaiveDate,
 }
 
+#[derive(Deserialize)]
+pub struct AccountListParams {
+    #[serde(default)]
+    pub offset: i64,
+    #[serde(default = "default_limit")]
+    pub limit: i64,
+}
+
+pub async fn accounts_query_handler(
+    Extension(tenant_id): Extension<i32>,
+    Query(params): Query<AccountListParams>,
+    State(state): State<SharedState>,
+) -> Response {
+    let limit = params.limit.min(100);
+    let client = Arc::clone(&state.database);
+    let accounts = client.get_accounts(params.offset, limit, tenant_id).await;
+    let total = client.count_accounts(tenant_id).await;
+
+    match (accounts, total) {
+        (Ok(entries), Ok(count)) => (
+            StatusCode::OK,
+            Json(json!({
+                "entries": entries,
+                "pagination": {
+                    "total": count,
+                    "offset": params.offset,
+                    "limit": limit
+                }
+            })),
+        )
+            .into_response(),
+        (Err(err), _) | (_, Err(err)) => {
+            AppError::InternalServerError(err.to_string()).into_response()
+        }
+    }
+}
+
 pub async fn user_query_handler(
     Extension(tenant_id): Extension<i32>,
     Path(id): Path<String>,

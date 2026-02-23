@@ -148,6 +148,13 @@ pub trait DatabaseClient {
         start_date: NaiveDate,
         tenant_id: i32,
     ) -> Result<Option<Decimal>, Error>;
+    async fn get_accounts(
+        &self,
+        offset: i64,
+        limit: i64,
+        tenant_id: i32,
+    ) -> Result<Vec<BankAccountWithLedger>, Error>;
+    async fn count_accounts(&self, tenant_id: i32) -> Result<i64, Error>;
 }
 
 pub struct Adapter<C: DatabaseClient + Send + Sync> {
@@ -429,5 +436,18 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
         self.client
             .get_opening_balance(account_id, start_date, tenant_id)
             .await
+    }
+
+    pub async fn get_accounts(
+        &self,
+        offset: i64,
+        limit: i64,
+        tenant_id: i32,
+    ) -> Result<Vec<BankAccountWithLedger>, Error> {
+        self.client.get_accounts(offset, limit, tenant_id).await
+    }
+
+    pub async fn count_accounts(&self, tenant_id: i32) -> Result<i64, Error> {
+        self.client.count_accounts(tenant_id).await
     }
 }

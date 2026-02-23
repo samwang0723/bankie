@@ -1063,4 +1063,56 @@ impl DatabaseClient for PgPool {
 
         Ok(balance)
     }
+
+    async fn get_accounts(
+        &self,
+        offset: i64,
+        limit: i64,
+        tenant_id: i32,
+    ) -> Result<Vec<BankAccountWithLedger>, Error> {
+        let accounts = sqlx::query_as::<_, BankAccountWithLedger>(
+            r#"
+                select
+                    b.payload->>'id' as id,
+                    b.payload->>'account_number' as account_number,
+                    b.payload->>'parent_id' as parent_id,
+                    b.payload->>'status' as status,
+                    b.payload->>'account_type' as account_type,
+                    b.payload->>'kind' as kind,
+                    b.payload->>'currency' as currency,
+                    b.payload->>'ledger_id' as ledger_id,
+                    (l.payload->'available'->>'amount')::numeric as available,
+                    (l.payload->'pending'->>'amount')::numeric as pending,
+                    (l.payload->'current'->>'amount')::numeric as current,
+                    b.payload->>'created_at' as created_at,
+                    b.payload->>'updated_at' as updated_at,
+                    b.tenant_id
+                from bank_account_views b
+                left join ledger_views l on b.payload->>'ledger_id' = l.view_id
+                where b.tenant_id = $1
+                order by b.version desc
+                offset $2 limit $3
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(offset)
+        .bind(limit)
+        .fetch_all(self)
+        .await?;
+
+        Ok(accounts)
+    }
+
+    async fn count_accounts(&self, tenant_id: i32) -> Result<i64, Error> {
+        let count = sqlx::query_scalar::<_, i64>(
+            r#"
+                select count(*) from bank_account_views where tenant_id = $1
+            "#,
+        )
+        .bind(tenant_id)
+        .fetch_one(self)
+        .await?;
+
+        Ok(count)
+    }
 }
