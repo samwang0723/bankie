@@ -4,10 +4,14 @@ use mockall::automock;
 use sqlx::Error;
 use uuid::Uuid;
 
+use rust_decimal::Decimal;
+
 use crate::{
     common::money::Money,
     domain::{
-        finance::{BalanceSnapshot, JournalEntry, JournalLine, Outbox, Transaction},
+        finance::{
+            BalanceSnapshot, JournalEntry, JournalLine, Outbox, SettlementReportRow, Transaction,
+        },
         models::{BankAccountKind, HouseAccount},
         tenant::Tenant,
         user::BankAccountWithLedger,
@@ -131,6 +135,19 @@ pub trait DatabaseClient {
         tenant_id: i32,
     ) -> Result<Vec<BalanceSnapshot>, Error>;
     async fn get_all_active_account_balances(&self) -> Result<Vec<BankAccountWithLedger>, Error>;
+    async fn get_settlement_report_data(
+        &self,
+        bank_account_id: String,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+        tenant_id: i32,
+    ) -> Result<Vec<SettlementReportRow>, Error>;
+    async fn get_opening_balance(
+        &self,
+        account_id: String,
+        start_date: NaiveDate,
+        tenant_id: i32,
+    ) -> Result<Option<Decimal>, Error>;
 }
 
 pub struct Adapter<C: DatabaseClient + Send + Sync> {
@@ -389,5 +406,28 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
         &self,
     ) -> Result<Vec<BankAccountWithLedger>, Error> {
         self.client.get_all_active_account_balances().await
+    }
+
+    pub async fn get_settlement_report_data(
+        &self,
+        bank_account_id: String,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+        tenant_id: i32,
+    ) -> Result<Vec<SettlementReportRow>, Error> {
+        self.client
+            .get_settlement_report_data(bank_account_id, start_date, end_date, tenant_id)
+            .await
+    }
+
+    pub async fn get_opening_balance(
+        &self,
+        account_id: String,
+        start_date: NaiveDate,
+        tenant_id: i32,
+    ) -> Result<Option<Decimal>, Error> {
+        self.client
+            .get_opening_balance(account_id, start_date, tenant_id)
+            .await
     }
 }

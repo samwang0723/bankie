@@ -21,7 +21,7 @@
       {
         "ordinal": 3,
         "name": "transaction_date",
-        "type_info": "Date"
+        "type_info": "Timestamptz"
       },
       {
         "ordinal": 4,
