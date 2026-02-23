@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::Serialize;
 use serde_json::Value;
@@ -18,7 +18,7 @@ pub struct Transaction {
     pub id: Uuid,
     pub bank_account_id: Uuid,
     pub transaction_reference: String,
-    pub transaction_date: NaiveDate,
+    pub transaction_date: DateTime<Utc>,
     pub amount: Decimal,
     pub currency: String,
     pub description: Option<String>,
@@ -35,7 +35,8 @@ pub struct TransactionWithMoney {
     pub id: Uuid,
     pub bank_account_id: Uuid,
     pub transaction_reference: String,
-    pub transaction_date: NaiveDate,
+    pub transaction_type: String,
+    pub transaction_date: DateTime<Utc>,
     pub amount: String,
     pub currency: String,
     pub description: Option<String>,
@@ -59,10 +60,12 @@ impl Transaction {
     pub fn into_transaction_with_money(self) -> TransactionWithMoney {
         let precision = default_precision(&self.currency) as usize;
         let amount_str = format!("{:.prec$}", self.amount, prec = precision);
+        let tx_type = self.transaction_type().to_string();
         TransactionWithMoney {
             id: self.id,
             bank_account_id: self.bank_account_id,
             transaction_reference: self.transaction_reference,
+            transaction_type: tx_type,
             transaction_date: self.transaction_date,
             amount: amount_str,
             currency: self.currency,
@@ -120,7 +123,7 @@ mod tests {
             id: Uuid::new_v4(),
             bank_account_id: Uuid::new_v4(),
             transaction_reference: reference.to_string(),
-            transaction_date: NaiveDate::from_ymd_opt(2025, 1, 15).unwrap(),
+            transaction_date: Utc::now(),
             amount,
             currency: currency.to_string(),
             description: Some("test".to_string()),
@@ -185,7 +188,7 @@ mod tests {
             id: original_id,
             bank_account_id: account_id,
             transaction_reference: "DE-999".to_string(),
-            transaction_date: NaiveDate::from_ymd_opt(2025, 6, 1).unwrap(),
+            transaction_date: Utc::now(),
             amount: dec!(100),
             currency: "USD".to_string(),
             description: Some("Test deposit".to_string()),
@@ -201,6 +204,21 @@ mod tests {
         assert_eq!(with_money.description, Some("Test deposit".to_string()));
         assert_eq!(with_money.status, "posted");
     }
+}
+
+/// A row in a settlement report, joining transaction + journal line data.
+#[derive(FromRow, Debug, Serialize)]
+pub struct SettlementReportRow {
+    pub transaction_date: DateTime<Utc>,
+    pub transaction_reference: String,
+    pub amount: Decimal,
+    pub currency: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub journal_entry_id: Option<Uuid>,
+    pub debit_amount: Decimal,
+    pub credit_amount: Decimal,
+    pub account_number: Option<String>,
 }
 
 #[derive(FromRow, Debug, Serialize)]

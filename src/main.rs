@@ -11,7 +11,8 @@ use route::{
     balance_history_handler, bank_account_by_number_handler, bank_account_command_handler,
     bank_account_query_handler, health_check_handler, house_account_create_handler,
     house_account_query_handler, ledger_query_handler, readiness_check_handler,
-    sub_account_query_handler, transaction_query_handler, user_query_handler,
+    settlement_report_handler, sub_account_query_handler, transaction_query_handler,
+    user_query_handler,
 };
 use sqlx::PgPool;
 use state::{new_application_state, ApplicationState};
@@ -33,6 +34,7 @@ mod domain;
 mod event_sourcing;
 mod house_account;
 mod job;
+mod report;
 mod repository;
 mod route;
 mod service;
@@ -180,6 +182,7 @@ async fn main() {
                     "/v1/bank_account/:id/balance-history",
                     get(balance_history_handler),
                 )
+                .route("/v1/report/settlement", get(settlement_report_handler))
                 .layer(middleware::from_fn(idempotency_check))
                 .layer(middleware::from_fn(authorize::<PgPool>))
                 .layer(AddExtensionLayer::new(redis_client))
