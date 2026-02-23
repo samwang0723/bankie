@@ -218,10 +218,7 @@ pub async fn house_account_query_handler(
     Query(params): Query<HouseAccountParams>,
 ) -> Response {
     let client = Arc::clone(&state.database);
-    match client
-        .get_house_accounts(params.currency, tenant_id)
-        .await
-    {
+    match client.get_house_accounts(params.currency, tenant_id).await {
         Ok(accounts) => (StatusCode::OK, Json(json!({ "entries": accounts }))).into_response(),
         Err(err) => AppError::InternalServerError(err.to_string()).into_response(),
     }
