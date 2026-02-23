@@ -560,7 +560,7 @@ action_settlement_report() {
   [[ -n "$currency" ]] && url="${url}&currency=${currency}"
 
   read -rp "  Save to file? (y/N): " save
-  if [[ "${save,,}" == "y" ]]; then
+  if [[ "$save" == "y" || "$save" == "Y" ]]; then
     local filename="settlement_${id:0:8}_${start_date}_${end_date}.csv"
     curl -s "$url" -H "$AUTH" -o "$filename"
     echo -e "  ${GREEN}Saved to ${filename}${NC}"
