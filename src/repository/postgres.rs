@@ -38,7 +38,7 @@ impl DatabaseClient for PgPool {
                     b.payload->>'ledger_id' as ledger_id,
                     (l.payload->'available'->>'amount')::numeric as available,
                     (l.payload->'pending'->>'amount')::numeric as pending,
-                    (l.payload->'current'->>'amount')::numeric as current,
+                    (l.payload->'book_balance'->>'amount')::numeric as book_balance,
                     b.payload->>'created_at' as created_at,
                     b.payload->>'updated_at' as updated_at,
                     b.tenant_id
@@ -380,7 +380,7 @@ impl DatabaseClient for PgPool {
                 b.payload->>'ledger_id' as ledger_id,
                 (l.payload->'available'->>'amount')::numeric as available,
                 (l.payload->'pending'->>'amount')::numeric as pending,
-                (l.payload->'current'->>'amount')::numeric as current,
+                (l.payload->'book_balance'->>'amount')::numeric as book_balance,
                 b.payload->>'created_at' as created_at,
                 b.payload->>'updated_at' as updated_at,
                 b.tenant_id
@@ -418,7 +418,7 @@ impl DatabaseClient for PgPool {
                 b.payload->>'ledger_id' as ledger_id,
                 (l.payload->'available'->>'amount')::numeric as available,
                 (l.payload->'pending'->>'amount')::numeric as pending,
-                (l.payload->'current'->>'amount')::numeric as current,
+                (l.payload->'book_balance'->>'amount')::numeric as book_balance,
                 b.payload->>'created_at' as created_at,
                 b.payload->>'updated_at' as updated_at,
                 b.tenant_id
@@ -972,7 +972,7 @@ impl DatabaseClient for PgPool {
                 b.payload->>'ledger_id' as ledger_id,
                 (l.payload->'available'->>'amount')::numeric as available,
                 (l.payload->'pending'->>'amount')::numeric as pending,
-                (l.payload->'current'->>'amount')::numeric as current,
+                (l.payload->'book_balance'->>'amount')::numeric as book_balance,
                 b.payload->>'created_at' as created_at,
                 b.payload->>'updated_at' as updated_at,
                 b.tenant_id
@@ -1083,7 +1083,7 @@ impl DatabaseClient for PgPool {
                     b.payload->>'ledger_id' as ledger_id,
                     (l.payload->'available'->>'amount')::numeric as available,
                     (l.payload->'pending'->>'amount')::numeric as pending,
-                    (l.payload->'current'->>'amount')::numeric as current,
+                    (l.payload->'book_balance'->>'amount')::numeric as book_balance,
                     b.payload->>'created_at' as created_at,
                     b.payload->>'updated_at' as updated_at,
                     b.tenant_id

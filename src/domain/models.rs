@@ -113,7 +113,6 @@ pub struct Ledger {
     pub account_id: String,
     pub available: Money,
     pub pending: Money,
-    pub amount: Money,
     pub timestamp: String,
 }
 
@@ -124,7 +123,8 @@ pub struct LedgerView {
     pub account_id: String,
     pub available: Money,
     pub pending: Money,
-    pub current: Money,
+    #[serde(alias = "current")]
+    pub book_balance: Money,
     pub created_at: String,
     pub updated_at: String,
     #[serde(default)]

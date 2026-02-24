@@ -122,7 +122,7 @@ impl View<Ledger> for LedgerView {
                 self.updated_at = base_event.get_created_at();
                 self.available = *amount;
                 self.pending = Money::new(Decimal::ZERO, amount.currency);
-                self.current = *amount;
+                self.book_balance = *amount;
                 self.tenant_id = base_event.get_tenant_id();
             }
             LedgerEvent::LedgerUpdated {
@@ -138,7 +138,7 @@ impl View<Ledger> for LedgerView {
                 self.account_id = account_id.clone();
                 self.available = self.available + *available_delta;
                 self.pending = self.pending + *pending_delta;
-                self.current = self.available + self.pending;
+                self.book_balance = self.available + self.pending;
                 self.updated_at = base_event.get_created_at();
                 self.tenant_id = base_event.get_tenant_id();
             }
@@ -344,7 +344,7 @@ mod tests {
         });
         assert_eq!(view.available.amount, Decimal::new(1000, 0));
         assert_eq!(view.pending.amount, Decimal::ZERO);
-        assert_eq!(view.current.amount, Decimal::new(1000, 0));
+        assert_eq!(view.book_balance.amount, Decimal::new(1000, 0));
 
         // Credit $500 (hold + release)
         view.update(&EventEnvelope {
@@ -378,7 +378,7 @@ mod tests {
         });
         assert_eq!(view.available.amount, Decimal::new(1500, 0));
         assert_eq!(view.pending.amount, Decimal::ZERO);
-        assert_eq!(view.current.amount, Decimal::new(1500, 0));
+        assert_eq!(view.book_balance.amount, Decimal::new(1500, 0));
 
         // DebitHold $200
         view.update(&EventEnvelope {
@@ -396,7 +396,7 @@ mod tests {
         });
         assert_eq!(view.available.amount, Decimal::new(1300, 0));
         assert_eq!(view.pending.amount, Decimal::new(200, 0));
-        assert_eq!(view.current.amount, Decimal::new(1500, 0));
+        assert_eq!(view.book_balance.amount, Decimal::new(1500, 0));
     }
 
     #[test]
@@ -430,7 +430,7 @@ mod tests {
             ledger_view.pending,
             Money::new(Decimal::ZERO, amount.currency)
         );
-        assert_eq!(ledger_view.current, amount);
+        assert_eq!(ledger_view.book_balance, amount);
     }
 
     #[test]
@@ -464,7 +464,7 @@ mod tests {
         assert_eq!(ledger_view.account_id, base_event.get_parent_id());
         assert_eq!(ledger_view.available, available_delta);
         assert_eq!(ledger_view.pending, pending_delta);
-        assert_eq!(ledger_view.current, available_delta + pending_delta);
+        assert_eq!(ledger_view.book_balance, available_delta + pending_delta);
         assert_eq!(ledger_view.updated_at, base_event.get_created_at());
     }
 }

@@ -129,13 +129,12 @@ impl Aggregate for models::Ledger {
             events::LedgerEvent::LedgerInitiated { base_event, amount } => {
                 self.id = base_event.get_aggregate_id();
                 self.account_id = base_event.get_parent_id();
-                self.amount = amount;
                 self.available = amount;
                 self.pending = Money::new(Decimal::ZERO, amount.currency);
                 self.timestamp = base_event.get_created_at();
             }
             events::LedgerEvent::LedgerUpdated {
-                amount,
+                amount: _,
                 transaction_id: _,
                 transaction_type: _,
                 available_delta,
@@ -143,7 +142,6 @@ impl Aggregate for models::Ledger {
                 base_event,
             } => {
                 self.id = base_event.get_aggregate_id();
-                self.amount = amount;
                 self.available = self.available + available_delta;
                 self.pending = self.pending + pending_delta;
                 self.account_id = base_event.get_parent_id();

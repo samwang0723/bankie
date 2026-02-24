@@ -24,7 +24,7 @@ pub struct BankAccountWithLedger {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending: Option<Decimal>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub current: Option<Decimal>,
+    pub book_balance: Option<Decimal>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
