@@ -1,0 +1,10 @@
+database:
+  host: "bankie-postgres"
+  port: "5432"
+  user: "bankie_app"
+  dbname: "bankie_main"
+redis:
+  host: "bankie-redis"
+  port: "6379"
+core_url: "http://bankie:3030"
+listen_addr: "0.0.0.0:4040"
