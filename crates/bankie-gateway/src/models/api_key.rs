@@ -1,51 +1,30 @@
-// JUSTIFICATION: Public API for portal key management — route handlers (dev-2 scope) will use these.
-#![allow(dead_code)]
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-/// Base62 charset for API key generation.
-const BASE62_CHARSET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+// === Key Status ===
 
-/// Length of the random portion of an API key.
-const KEY_RANDOM_LENGTH: usize = 32;
-
-/// API key environment prefixes.
-const LIVE_PREFIX: &str = "bnk_live_";
-const TEST_PREFIX: &str = "bnk_test_";
-
-/// Represents an API key stored in the database.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiKey {
-    pub id: Uuid,
-    pub org_id: Uuid,
-    pub key_prefix: String,
-    pub key_hash: String,
-    pub key_hint: String,
-    pub name: String,
-    pub environment: String,
-    pub scopes: serde_json::Value,
-    pub status: String,
-    pub rotated_from_id: Option<Uuid>,
-    pub grace_expires_at: Option<DateTime<Utc>>,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub last_used_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub revoked_at: Option<DateTime<Utc>>,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyStatus {
+    Active,
+    Rotated,
+    Revoked,
 }
 
-/// Result of generating a new API key. Contains the raw key (shown once) and the DB record.
-#[derive(Debug)]
-pub struct GeneratedApiKey {
-    /// The full raw API key (e.g., "bnk_live_Ab3x..."). Only returned at creation time.
-    pub raw_key: String,
-    /// The database record (contains hash, not raw key).
-    pub record: ApiKey,
-}
+/// Valid API key scopes for the portal.
+pub const VALID_SCOPES: &[&str] = &[
+    "accounts:read",
+    "accounts:write",
+    "ledgers:read",
+    "transactions:read",
+    "house_accounts:read",
+    "house_accounts:write",
+];
 
-/// API key environment.
+// === API key environment ===
+
+/// API key environment (live vs test).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Environment {
     Live,
@@ -56,64 +35,113 @@ impl Environment {
     /// Returns the prefix string for this environment.
     pub fn prefix(&self) -> &'static str {
         match self {
-            Environment::Live => LIVE_PREFIX,
-            Environment::Test => TEST_PREFIX,
+            Environment::Live => "bnk_live_",
+            Environment::Test => "bnk_test_",
         }
     }
+}
 
-    /// Parse from string.
-    pub fn from_str(s: &str) -> Option<Self> {
+impl std::str::FromStr for Environment {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "live" => Some(Environment::Live),
-            "test" => Some(Environment::Test),
-            _ => None,
+            "live" => Ok(Environment::Live),
+            "test" => Ok(Environment::Test),
+            _ => Err(format!("unknown environment: {s}")),
         }
     }
 }
 
-/// Generate a new API key with the specified environment and metadata.
-pub fn generate_api_key(
-    org_id: Uuid,
-    name: &str,
-    environment: Environment,
-    scopes: Vec<String>,
-) -> GeneratedApiKey {
-    let prefix = environment.prefix();
-    let random_part = generate_base62(KEY_RANDOM_LENGTH);
-    let raw_key = format!("{}{}", prefix, random_part);
+// === ApiKey model ===
 
-    let key_hash = hash_api_key(&raw_key);
-    let key_hint = extract_hint(&raw_key);
-
-    let record = ApiKey {
-        id: Uuid::new_v4(),
-        org_id,
-        key_prefix: prefix.to_string(),
-        key_hash,
-        key_hint,
-        name: name.to_string(),
-        environment: match environment {
-            Environment::Live => "live".to_string(),
-            Environment::Test => "test".to_string(),
-        },
-        scopes: serde_json::to_value(scopes).unwrap_or_default(),
-        status: "active".to_string(),
-        rotated_from_id: None,
-        grace_expires_at: None,
-        expires_at: None,
-        last_used_at: None,
-        created_at: Utc::now(),
-        revoked_at: None,
-    };
-
-    GeneratedApiKey { raw_key, record }
+#[derive(Debug, Clone, Serialize)]
+pub struct ApiKey {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    pub tenant_id: i32,
+    pub name: String,
+    pub key_prefix: String,
+    #[serde(skip_serializing)]
+    pub key_hash: String,
+    pub scopes: Vec<String>,
+    pub status: KeyStatus,
+    pub grace_expires_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
-/// SHA-256 hash an API key, returning the hex-encoded digest.
-pub fn hash_api_key(raw_key: &str) -> String {
+// === Request/Response DTOs ===
+
+#[derive(Debug, Deserialize)]
+pub struct CreateKeyRequest {
+    pub name: String,
+    pub scopes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateKeyResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub key_prefix: String,
+    pub raw_key: String,
+    pub scopes: Vec<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct KeyListItem {
+    pub id: Uuid,
+    pub name: String,
+    pub key_prefix: String,
+    pub scopes: Vec<String>,
+    pub status: KeyStatus,
+    pub grace_expires_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RotateKeyResponse {
+    pub new_key: CreateKeyResponse,
+    pub old_key_id: Uuid,
+    pub grace_expires_at: DateTime<Utc>,
+}
+
+// === Key generation & hashing ===
+
+/// Generate a random API key with the `bk_live_` prefix.
+pub fn generate_raw_key() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let random_part: String = (0..48)
+        .map(|_| {
+            let idx = rng.gen_range(0..36u8);
+            if idx < 10 {
+                (b'0' + idx) as char
+            } else {
+                (b'a' + idx - 10) as char
+            }
+        })
+        .collect();
+    format!("bk_live_{random_part}")
+}
+
+/// Extract the display prefix from a raw key (first 16 chars).
+pub fn key_prefix(raw_key: &str) -> String {
+    raw_key.chars().take(16).collect()
+}
+
+/// Hash a raw API key with SHA-256.
+pub fn hash_key(raw_key: &str) -> String {
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(raw_key.as_bytes());
     hex::encode(hasher.finalize())
+}
+
+/// Alias for gateway middleware compatibility.
+pub fn hash_api_key(raw_key: &str) -> String {
+    hash_key(raw_key)
 }
 
 /// Extract the last 4 characters of the raw key as a hint.
@@ -126,117 +154,75 @@ pub fn extract_hint(raw_key: &str) -> String {
     }
 }
 
-/// Generate a random base62 string of the given length.
-fn generate_base62(length: usize) -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    (0..length)
-        .map(|_| {
-            let idx = rng.gen_range(0..BASE62_CHARSET.len());
-            BASE62_CHARSET[idx] as char
-        })
-        .collect()
+/// Validate that all requested scopes are in the allowed set.
+pub fn validate_scopes(scopes: &[String]) -> Result<(), Vec<String>> {
+    let invalid: Vec<String> = scopes
+        .iter()
+        .filter(|s| !VALID_SCOPES.contains(&s.as_str()))
+        .cloned()
+        .collect();
+    if invalid.is_empty() {
+        Ok(())
+    } else {
+        Err(invalid)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_generate_api_key_live_prefix() {
-        let org_id = Uuid::new_v4();
-        let generated = generate_api_key(
-            org_id,
-            "test-key",
-            Environment::Live,
-            vec!["bank-account:read".to_string()],
-        );
+    // --- Key generation tests ---
 
-        assert!(
-            generated.raw_key.starts_with("bnk_live_"),
-            "Live key should start with bnk_live_ prefix"
-        );
-        assert_eq!(generated.record.environment, "live");
-        assert_eq!(generated.record.key_prefix, "bnk_live_");
+    #[test]
+    fn test_generate_raw_key_format() {
+        let key = generate_raw_key();
+        assert!(key.starts_with("bk_live_"));
+        assert_eq!(key.len(), 56); // "bk_live_" (8) + 48
     }
 
     #[test]
-    fn test_generate_api_key_test_prefix() {
-        let org_id = Uuid::new_v4();
-        let generated = generate_api_key(
-            org_id,
-            "test-key",
-            Environment::Test,
-            vec!["bank-account:read".to_string()],
-        );
-
-        assert!(
-            generated.raw_key.starts_with("bnk_test_"),
-            "Test key should start with bnk_test_ prefix"
-        );
-        assert_eq!(generated.record.environment, "test");
-        assert_eq!(generated.record.key_prefix, "bnk_test_");
+    fn test_generate_raw_key_uniqueness() {
+        let k1 = generate_raw_key();
+        let k2 = generate_raw_key();
+        assert_ne!(k1, k2);
     }
 
     #[test]
-    fn test_generate_api_key_length() {
-        let org_id = Uuid::new_v4();
-        let generated = generate_api_key(org_id, "test-key", Environment::Live, vec![]);
+    fn test_key_prefix_extraction() {
+        let raw = "bk_live_abcdefghijklmnop1234567890abcdefghijklmnop12";
+        let prefix = key_prefix(raw);
+        assert_eq!(prefix, "bk_live_abcdefgh");
+    }
 
-        // prefix (9 chars "bnk_live_") + 32 base62 chars = 41
-        assert_eq!(
-            generated.raw_key.len(),
-            LIVE_PREFIX.len() + KEY_RANDOM_LENGTH,
-            "Key should be prefix + 32 random chars"
-        );
+    // --- Hash tests ---
+
+    #[test]
+    fn test_hash_key_deterministic() {
+        let key = "bk_live_testkey123";
+        let h1 = hash_key(key);
+        let h2 = hash_key(key);
+        assert_eq!(h1, h2);
     }
 
     #[test]
-    fn test_generate_api_key_base62_chars_only() {
-        let org_id = Uuid::new_v4();
-        let generated = generate_api_key(org_id, "test-key", Environment::Live, vec![]);
-
-        let random_part = &generated.raw_key[LIVE_PREFIX.len()..];
-        for ch in random_part.chars() {
-            assert!(
-                ch.is_ascii_alphanumeric(),
-                "Random portion should be base62 (alphanumeric), got: {}",
-                ch
-            );
-        }
-    }
-
-    #[test]
-    fn test_hash_api_key_deterministic() {
-        let key = "bnk_live_abc123";
-        let hash1 = hash_api_key(key);
-        let hash2 = hash_api_key(key);
-        assert_eq!(hash1, hash2, "Same key should produce same hash");
+    fn test_hash_key_different_inputs() {
+        let h1 = hash_key("key1");
+        let h2 = hash_key("key2");
+        assert_ne!(h1, h2);
     }
 
     #[test]
     fn test_hash_api_key_is_sha256_hex() {
         let key = "bnk_live_testkey";
         let hash = hash_api_key(key);
-
-        // SHA-256 hex digest is 64 chars
         assert_eq!(hash.len(), 64, "SHA-256 hex should be 64 chars");
-
-        // All hex chars
         for ch in hash.chars() {
             assert!(ch.is_ascii_hexdigit(), "Hash should be hex, got: {}", ch);
         }
     }
 
-    #[test]
-    fn test_hash_api_key_different_keys_different_hashes() {
-        let hash1 = hash_api_key("bnk_live_key1");
-        let hash2 = hash_api_key("bnk_live_key2");
-        assert_ne!(
-            hash1, hash2,
-            "Different keys should produce different hashes"
-        );
-    }
+    // --- Hint tests ---
 
     #[test]
     fn test_extract_hint_last_4_chars() {
@@ -250,49 +236,58 @@ mod tests {
         assert_eq!(hint, "ab", "Short keys return the whole string");
     }
 
+    // --- Scope validation tests ---
+
     #[test]
-    fn test_generated_key_hint_matches_raw_key() {
-        let org_id = Uuid::new_v4();
-        let generated = generate_api_key(org_id, "test", Environment::Live, vec![]);
-        let expected_hint = &generated.raw_key[generated.raw_key.len() - 4..];
-        assert_eq!(generated.record.key_hint, expected_hint);
+    fn test_validate_scopes_valid() {
+        let scopes = vec!["accounts:read".to_string(), "ledgers:read".to_string()];
+        assert!(validate_scopes(&scopes).is_ok());
     }
 
     #[test]
-    fn test_generated_key_hash_matches_raw_key() {
-        let org_id = Uuid::new_v4();
-        let generated = generate_api_key(org_id, "test", Environment::Live, vec![]);
-        let expected_hash = hash_api_key(&generated.raw_key);
-        assert_eq!(generated.record.key_hash, expected_hash);
+    fn test_validate_scopes_invalid() {
+        let scopes = vec!["accounts:read".to_string(), "invalid:scope".to_string()];
+        let result = validate_scopes(&scopes);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), vec!["invalid:scope".to_string()]);
     }
 
     #[test]
-    fn test_generated_key_metadata() {
-        let org_id = Uuid::new_v4();
-        let scopes = vec!["bank-account:read".to_string(), "ledger:read".to_string()];
-        let generated = generate_api_key(org_id, "my-api-key", Environment::Live, scopes.clone());
+    fn test_validate_scopes_empty() {
+        let scopes: Vec<String> = vec![];
+        assert!(validate_scopes(&scopes).is_ok());
+    }
 
-        assert_eq!(generated.record.org_id, org_id);
-        assert_eq!(generated.record.name, "my-api-key");
-        assert_eq!(generated.record.status, "active");
-        assert!(generated.record.rotated_from_id.is_none());
-        assert!(generated.record.revoked_at.is_none());
+    // --- Serialization tests ---
 
-        let stored_scopes: Vec<String> = serde_json::from_value(generated.record.scopes).unwrap();
-        assert_eq!(stored_scopes, scopes);
+    #[test]
+    fn test_key_status_serialization() {
+        let status = KeyStatus::Active;
+        let json = serde_json::to_string(&status).unwrap();
+        assert_eq!(json, "\"active\"");
     }
 
     #[test]
-    fn test_uniqueness_of_generated_keys() {
-        let org_id = Uuid::new_v4();
-        let key1 = generate_api_key(org_id, "k1", Environment::Live, vec![]);
-        let key2 = generate_api_key(org_id, "k2", Environment::Live, vec![]);
-        assert_ne!(
-            key1.raw_key, key2.raw_key,
-            "Each generation should be unique"
-        );
-        assert_ne!(key1.record.id, key2.record.id);
+    fn test_key_hash_not_serialized() {
+        let key = ApiKey {
+            id: Uuid::new_v4(),
+            org_id: Uuid::new_v4(),
+            tenant_id: 1,
+            name: "test".to_string(),
+            key_prefix: "bk_live_abc".to_string(),
+            key_hash: "secret_hash_value".to_string(),
+            scopes: vec!["accounts:read".to_string()],
+            status: KeyStatus::Active,
+            grace_expires_at: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let json = serde_json::to_string(&key).unwrap();
+        assert!(!json.contains("secret_hash_value"));
+        assert!(!json.contains("key_hash"));
     }
+
+    // --- Environment tests ---
 
     #[test]
     fn test_environment_prefix() {
@@ -302,8 +297,8 @@ mod tests {
 
     #[test]
     fn test_environment_from_str() {
-        assert_eq!(Environment::from_str("live"), Some(Environment::Live));
-        assert_eq!(Environment::from_str("test"), Some(Environment::Test));
-        assert_eq!(Environment::from_str("unknown"), None);
+        assert_eq!("live".parse::<Environment>(), Ok(Environment::Live));
+        assert_eq!("test".parse::<Environment>(), Ok(Environment::Test));
+        assert!("unknown".parse::<Environment>().is_err());
     }
 }

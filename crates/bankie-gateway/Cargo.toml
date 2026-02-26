@@ -28,11 +28,18 @@ hex = { workspace = true }
 async-trait = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+argon2 = "0.5"
+axum-extra = { version = "0.9", features = ["cookie"] }
+http = "1"
 
 [dev-dependencies]
 mockall = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 tokio = { workspace = true, features = ["full", "test-util"] }
+
+[lib]
+name = "bankie_gateway"
+path = "src/lib.rs"
 
 [[bin]]
 name = "bankie-gateway"

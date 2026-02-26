@@ -1,10 +1,3 @@
-mod config;
-mod middleware;
-mod models;
-mod proxy;
-mod redis_ops;
-mod repo;
-
 use axum::{
     middleware as axum_middleware,
     routing::{any, get},
@@ -14,7 +7,9 @@ use serde_json::{json, Value};
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 use tracing::info;
 
-use crate::config::SETTINGS;
+use bankie_gateway::config::SETTINGS;
+use bankie_gateway::middleware;
+use bankie_gateway::proxy;
 
 async fn health() -> Json<Value> {
     Json(json!({"status": "ok", "service": "bankie-gateway"}))
@@ -58,10 +53,14 @@ async fn main() {
         .layer(axum::extract::Extension(pool))
         .with_state(settings.clone());
 
+    // TODO: Wire portal routes when PortalState repos have SQL implementations
+    // let portal_routes = bankie_gateway::routes::portal_router(portal_state);
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
         .merge(api_routes)
+        // .merge(portal_routes)  // TODO: enable after SQL repo implementations
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http());
 
