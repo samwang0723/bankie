@@ -19,7 +19,7 @@ pub async fn set_ex(
     ttl_seconds: i64,
 ) -> Result<(), redis::RedisError> {
     let mut con = client.get_multiplexed_async_connection().await?;
-    con.set_ex(key, value, ttl_seconds as u64).await?;
+    con.set_ex::<_, _, ()>(key, value, ttl_seconds as u64).await?;
     Ok(())
 }
 

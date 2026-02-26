@@ -17,7 +17,8 @@ RUN mkdir -p crates/bankie-common/src && \
     echo "fn main() {}" > crates/bankie-core/src/main.rs && \
     echo "fn main() {}" > crates/bankie-core/src/repository/migrate.rs && \
     mkdir -p crates/bankie-gateway/src && \
-    echo "fn main() {}" > crates/bankie-gateway/src/main.rs
+    echo "fn main() {}" > crates/bankie-gateway/src/main.rs && \
+    echo "" > crates/bankie-gateway/src/lib.rs
 RUN cargo build --release --bin bankie --bin migrations --bin bankie-gateway || true
 
 # Copy real source code
@@ -27,7 +28,7 @@ COPY crates/bankie-core/.sqlx crates/bankie-core/.sqlx
 
 ENV SQLX_OFFLINE=true
 
-RUN touch crates/bankie-common/src/lib.rs crates/bankie-core/src/main.rs crates/bankie-core/src/repository/migrate.rs crates/bankie-gateway/src/main.rs
+RUN touch crates/bankie-common/src/lib.rs crates/bankie-core/src/main.rs crates/bankie-core/src/repository/migrate.rs crates/bankie-gateway/src/main.rs crates/bankie-gateway/src/lib.rs
 RUN cargo build --release --bin bankie --bin migrations --bin bankie-gateway
 
 RUN strip target/release/bankie target/release/migrations target/release/bankie-gateway
