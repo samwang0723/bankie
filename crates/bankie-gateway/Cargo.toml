@@ -22,6 +22,19 @@ rand = { workspace = true }
 sqlx = { workspace = true }
 redis = { workspace = true }
 config = { workspace = true }
+async-trait = "0.1"
+argon2 = "0.5"
+sha2 = "0.10"
+hex = "0.4"
+axum-extra = { version = "0.9", features = ["cookie"] }
+http = "1"
+
+[dev-dependencies]
+mockall = { workspace = true }
+
+[lib]
+name = "bankie_gateway"
+path = "src/lib.rs"
 
 [[bin]]
 name = "bankie-gateway"
