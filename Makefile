@@ -246,10 +246,10 @@ db-pg-migrate:
 	-e "s/DB_PORT/$$DB_PORT/g" \
 	-e "s/DB_PASSWORD/$$DB_PASSWORD/g" \
 	-e "s/APP_NAME_UND/$(APP_NAME_UND)/g" \
-	./src/repository/migrate.rs && \
+	./crates/bankie-core/src/repository/migrate.rs && \
 	cargo run --bin migrations && \
 	git stash push -m "Stash changes made by db-pg-migrate" && \
-	mv ./src/repository/migrate.rs.bak ./src/repository/migrate.rs \
+	mv ./crates/bankie-core/src/repository/migrate.rs.bak ./crates/bankie-core/src/repository/migrate.rs \
 	)
 
 #########

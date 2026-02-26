@@ -1,56 +1,38 @@
-[package]
-name = "bankie"
+[workspace]
+members = [
+    "crates/bankie-core",
+    "crates/bankie-common",
+    "crates/bankie-gateway",
+]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
-cqrs-es = "0.4.11"
-postgres-es = "0.4.11"
-async-trait = "0.1.52"
-serde = { version = "1.0", features = ["derive"]}
+[workspace.dependencies]
+# Shared across crates
+serde = { version = "1.0", features = ["derive"] }
 serde_derive = "1.0"
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
 rust_decimal = "1.35.0"
 rust_decimal_macros = "1.35.0"
-sqlx = { version = "0.7.4", features = ["postgres", "runtime-tokio-rustls", "json", "uuid", "chrono", "rust_decimal"] }
-lazy_static = "1.5"
-config = "0.14"
-dotenv = "0.15.0"
 chrono = { version = "^0.4.20", default-features = false, features = ["clock", "serde"] }
 anyhow = "1"
-rs-snowflake = "0.6"
+uuid = { version = "1.10.0", features = ["v4", "fast-rng", "macro-diagnostics", "serde"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
 axum = "0.7"
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["compression-full", "cors", "validate-request", "add-extension", "trace"] }
 jsonwebtoken = "9.3"
 rand = "0.8"
-clap = "4.5"
-clap_derive = "4.5"
-tracing = "0.1"
-tracing-subscriber = "0.3"
+sqlx = { version = "0.7.4", features = ["postgres", "runtime-tokio-rustls", "json", "uuid", "chrono", "rust_decimal"] }
+redis = { version = "*", features = ["tokio-comp"] }
+lazy_static = "1.5"
+config = "0.14"
 mockall = "0.10"
-tokio-cron-scheduler = { version = "*", features = ["signal"] }
 
-[dependencies.uuid]
-version = "1.10.0"
-features = [
-    "v4",                # Lets you generate random UUIDs
-    "fast-rng",          # Use a faster (but still sufficiently random) RNG
-    "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
-    "serde",
-]
-
-[dependencies.redis]
-version = "*"
-features = [
-  "tokio-comp"
-]
-
-[[bin]]
-name = "bankie"
-path = "src/main.rs"
-
-[[bin]]
-name = "migrations"
-path = "src/repository/migrate.rs"
+# Internal crates
+bankie-common = { path = "crates/bankie-common" }
