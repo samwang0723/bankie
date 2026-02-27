@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Wallet, Search, Eye } from "lucide-react";
 import { api } from "../api/client.ts";
@@ -46,8 +46,17 @@ function formatBalance(value: string | undefined, currency: string): string {
 
 const ACCOUNTS_PAGE_SIZE = 10;
 
+function formatDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  });
+}
+
 export function Accounts() {
   const [search, setSearch] = useState("");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
 
   const { data: accountData, isLoading } = useQuery({
@@ -216,31 +225,75 @@ export function Accounts() {
             </thead>
             <tbody className="divide-y divide-slate-200">
               {filtered.map((account) => (
-                <tr key={account.id} className="hover:bg-slate-50 h-14">
-                  <td className="px-6 text-[13px] font-mono font-medium text-slate-900">
-                    {formatAccountNumber(account.account_number)}
-                  </td>
-                  <td className="px-6 text-[13px] text-slate-900 w-[100px]">
-                    {account.kind}
-                  </td>
-                  <td className="px-6 font-mono text-xs font-semibold text-slate-500 w-[80px]">
-                    {account.currency}
-                  </td>
-                  <td className="px-6 w-[100px]">
-                    <StatusBadge status={account.status} />
-                  </td>
-                  <td className="px-6 font-mono text-[13px] font-semibold text-slate-900">
-                    {formatBalance(account.available, account.currency)}
-                  </td>
-                  <td className="px-6 text-right w-[80px]">
-                    <button
-                      className="p-1.5 text-[#94A3B8] hover:text-cyan-500 transition-colors"
-                      aria-label={`View details for ${account.account_number}`}
-                    >
-                      <Eye className="w-4 h-4" />
-                    </button>
-                  </td>
-                </tr>
+                <React.Fragment key={account.id}>
+                  <tr className="hover:bg-slate-50 h-14">
+                    <td className="px-6 text-[13px] font-mono font-medium text-slate-900">
+                      {formatAccountNumber(account.account_number)}
+                    </td>
+                    <td className="px-6 text-[13px] text-slate-900 w-[100px]">
+                      {account.kind}
+                    </td>
+                    <td className="px-6 font-mono text-xs font-semibold text-slate-500 w-[80px]">
+                      {account.currency}
+                    </td>
+                    <td className="px-6 w-[100px]">
+                      <StatusBadge status={account.status} />
+                    </td>
+                    <td className="px-6 font-mono text-[13px] font-semibold text-slate-900">
+                      {formatBalance(account.available, account.currency)}
+                    </td>
+                    <td className="px-6 text-right w-[80px]">
+                      <button
+                        onClick={() =>
+                          setExpandedId(
+                            expandedId === account.id ? null : account.id
+                          )
+                        }
+                        className="p-1.5 text-[#94A3B8] hover:text-cyan-500 transition-colors"
+                        aria-label={`View details for ${account.account_number}`}
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                  {expandedId === account.id && (
+                    <tr>
+                      <td
+                        colSpan={6}
+                        className="px-6 py-4 bg-slate-50 border-t border-slate-100"
+                      >
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                          <div>
+                            <p className="text-slate-500">Account ID</p>
+                            <p className="font-mono text-slate-900 mt-1 text-xs break-all">
+                              {account.id}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500">External Reference</p>
+                            <p className="font-mono text-slate-900 mt-1 text-xs break-all">
+                              {account.external_reference_id || "--"}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500">Parent Account</p>
+                            <p className="font-mono text-slate-900 mt-1 text-xs break-all">
+                              {account.parent_id || "None (master)"}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500">Created</p>
+                            <p className="font-medium text-slate-900 mt-1">
+                              {account.created_at
+                                ? formatDate(account.created_at)
+                                : "--"}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               ))}
             </tbody>
           </table>
