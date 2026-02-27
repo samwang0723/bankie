@@ -10,3 +10,6 @@ config.dev.yaml
 .docker-jwt-token
 *.csv
 .claude/
+node_modules/
+portal-spa/dist/
+.claude/

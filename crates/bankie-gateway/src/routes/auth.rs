@@ -4,9 +4,11 @@ use axum::{extract::State, http::header, response::Response, routing::post, Json
 
 use bankie_common::error::AppError;
 
-use crate::models::auth::{AuthResponse, LoginRequest, SessionClaims, SignupRequest};
+use crate::models::auth::{
+    AuthOrganization, AuthResponse, AuthUser, LoginRequest, SessionClaims, SignupRequest,
+};
 use crate::models::member::{MemberStatus, OrgMember};
-use crate::models::org::slugify;
+use crate::models::org::{slugify, Organization};
 use crate::state::PortalState;
 
 /// Public auth routes (no session required).
@@ -48,12 +50,12 @@ async fn signup(
         return Err(AppError::Conflict("Email already registered".to_string()));
     }
 
-    // Create organization
+    // Create organization (tenant_id is auto-assigned by DB sequence)
     let org_id = uuid::Uuid::new_v4();
     let slug = slugify(&req.org_name);
     let org = state
         .org_repo
-        .create(org_id, req.tenant_id, req.org_name.clone(), slug)
+        .create(org_id, 0, req.org_name.clone(), slug)
         .await
         .map_err(AppError::internal)?;
 
@@ -75,7 +77,7 @@ async fn signup(
         .map_err(AppError::internal)?;
 
     // Generate session
-    build_session_response(&state, &member, &org.id.to_string(), org.tenant_id)
+    build_session_response(&state, &member, &org)
 }
 
 /// POST /portal/v1/auth/login
@@ -98,8 +100,15 @@ async fn login(
 
     verify_password(&req.password, &member.password_hash)?;
 
-    build_session_response(&state, &member, &member.org_id.to_string(), 0)
-    // Note: tenant_id will come from the org, but for now we get it from the member's org
+    // Resolve tenant_id from the organization
+    let org = state
+        .org_repo
+        .find_by_id(member.org_id)
+        .await
+        .map_err(AppError::internal)?
+        .ok_or_else(|| AppError::internal("Organization not found for member"))?;
+
+    build_session_response(&state, &member, &org)
 }
 
 /// POST /portal/v1/auth/logout
@@ -124,8 +133,7 @@ async fn logout() -> Response {
 fn build_session_response(
     state: &PortalState,
     member: &OrgMember,
-    org_id: &str,
-    tenant_id: i32,
+    org: &Organization,
 ) -> Result<Response, AppError> {
     use jsonwebtoken::{encode, EncodingKey, Header};
     use rand::Rng;
@@ -141,8 +149,8 @@ fn build_session_response(
 
     let claims = SessionClaims {
         sub: member.id.to_string(),
-        org_id: org_id.to_string(),
-        tenant_id,
+        org_id: org.id.to_string(),
+        tenant_id: org.tenant_id,
         role: serde_json::to_value(&member.role)
             .ok()
             .and_then(|v| v.as_str().map(String::from))
@@ -159,10 +167,20 @@ fn build_session_response(
     .map_err(AppError::internal)?;
 
     let auth_resp = AuthResponse {
-        member_id: member.id,
-        org_id: member.org_id,
-        email: member.email.clone(),
-        role: member.role.clone(),
+        token: jwt.clone(),
+        user: AuthUser {
+            id: member.id,
+            email: member.email.clone(),
+            role: member.role.clone(),
+            created_at: member.created_at,
+        },
+        organization: AuthOrganization {
+            id: org.id,
+            name: org.name.clone(),
+            slug: org.slug.clone(),
+            environment: "live".to_string(),
+            created_at: org.created_at,
+        },
     };
 
     let session_cookie =
@@ -210,7 +228,7 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::models::member::MemberRole;
-    use crate::models::org::{OrgStatus, Organization};
+    use crate::models::org::OrgStatus;
     use crate::repo::api_key::MockApiKeyRepository;
     use crate::repo::member::MockMemberRepository;
     use crate::repo::org::MockOrgRepository;
@@ -302,7 +320,6 @@ mod tests {
 
         let body = serde_json::json!({
             "org_name": "Test Org",
-            "tenant_id": 1,
             "email": "new@example.com",
             "password": "password123"
         });
@@ -339,7 +356,6 @@ mod tests {
 
         let body = serde_json::json!({
             "org_name": "",
-            "tenant_id": 1,
             "email": "test@example.com",
             "password": "password123"
         });
@@ -366,7 +382,6 @@ mod tests {
 
         let body = serde_json::json!({
             "org_name": "Test",
-            "tenant_id": 1,
             "email": "not-an-email",
             "password": "password123"
         });
@@ -393,7 +408,6 @@ mod tests {
 
         let body = serde_json::json!({
             "org_name": "Test",
-            "tenant_id": 1,
             "email": "test@example.com",
             "password": "short"
         });
@@ -426,7 +440,6 @@ mod tests {
 
         let body = serde_json::json!({
             "org_name": "Test",
-            "tenant_id": 1,
             "email": "test@example.com",
             "password": "password123"
         });
@@ -450,13 +463,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_login_success() {
+        let org_id = uuid::Uuid::new_v4();
+        let mut org_repo = MockOrgRepository::new();
+        let org = test_org(org_id, 42);
+        org_repo
+            .expect_find_by_id()
+            .returning(move |_| Ok(Some(org.clone())));
+
         let mut member_repo = MockMemberRepository::new();
-        let member = test_member(uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+        let member = test_member(uuid::Uuid::new_v4(), org_id);
         member_repo
             .expect_find_by_email()
             .returning(move |_| Ok(Some(member.clone())));
 
-        let state = test_state_with(MockOrgRepository::new(), member_repo);
+        let state = test_state_with(org_repo, member_repo);
         let app = signup_app(state);
 
         let body = serde_json::json!({

@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+// === Key Status ===
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum KeyStatus {
@@ -15,10 +17,45 @@ pub const VALID_SCOPES: &[&str] = &[
     "accounts:read",
     "accounts:write",
     "ledgers:read",
+    "ledgers:write",
     "transactions:read",
+    "reports:read",
     "house_accounts:read",
     "house_accounts:write",
 ];
+
+// === API key environment ===
+
+/// API key environment (live vs test).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Environment {
+    Live,
+    Test,
+}
+
+impl Environment {
+    /// Returns the prefix string for this environment.
+    pub fn prefix(&self) -> &'static str {
+        match self {
+            Environment::Live => "bnk_live_",
+            Environment::Test => "bnk_test_",
+        }
+    }
+}
+
+impl std::str::FromStr for Environment {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "live" => Ok(Environment::Live),
+            "test" => Ok(Environment::Test),
+            _ => Err(format!("unknown environment: {s}")),
+        }
+    }
+}
+
+// === ApiKey model ===
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ApiKey {
@@ -36,9 +73,13 @@ pub struct ApiKey {
     pub updated_at: DateTime<Utc>,
 }
 
+// === Request/Response DTOs ===
+
 #[derive(Debug, Deserialize)]
 pub struct CreateKeyRequest {
     pub name: String,
+    #[serde(default)]
+    pub environment: Option<String>,
     pub scopes: Vec<String>,
 }
 
@@ -70,6 +111,8 @@ pub struct RotateKeyResponse {
     pub grace_expires_at: DateTime<Utc>,
 }
 
+// === Key generation & hashing ===
+
 /// Generate a random API key with the `bk_live_` prefix.
 pub fn generate_raw_key() -> String {
     use rand::Rng;
@@ -100,6 +143,21 @@ pub fn hash_key(raw_key: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// Alias for gateway middleware compatibility.
+pub fn hash_api_key(raw_key: &str) -> String {
+    hash_key(raw_key)
+}
+
+/// Extract the last 4 characters of the raw key as a hint.
+pub fn extract_hint(raw_key: &str) -> String {
+    let len = raw_key.len();
+    if len >= 4 {
+        raw_key[len - 4..].to_string()
+    } else {
+        raw_key.to_string()
+    }
+}
+
 /// Validate that all requested scopes are in the allowed set.
 pub fn validate_scopes(scopes: &[String]) -> Result<(), Vec<String>> {
     let invalid: Vec<String> = scopes
@@ -117,6 +175,8 @@ pub fn validate_scopes(scopes: &[String]) -> Result<(), Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- Key generation tests ---
 
     #[test]
     fn test_generate_raw_key_format() {
@@ -139,6 +199,8 @@ mod tests {
         assert_eq!(prefix, "bk_live_abcdefgh");
     }
 
+    // --- Hash tests ---
+
     #[test]
     fn test_hash_key_deterministic() {
         let key = "bk_live_testkey123";
@@ -153,6 +215,32 @@ mod tests {
         let h2 = hash_key("key2");
         assert_ne!(h1, h2);
     }
+
+    #[test]
+    fn test_hash_api_key_is_sha256_hex() {
+        let key = "bnk_live_testkey";
+        let hash = hash_api_key(key);
+        assert_eq!(hash.len(), 64, "SHA-256 hex should be 64 chars");
+        for ch in hash.chars() {
+            assert!(ch.is_ascii_hexdigit(), "Hash should be hex, got: {}", ch);
+        }
+    }
+
+    // --- Hint tests ---
+
+    #[test]
+    fn test_extract_hint_last_4_chars() {
+        let hint = extract_hint("bnk_live_abcdefghijklmnop");
+        assert_eq!(hint, "mnop", "Hint should be last 4 chars");
+    }
+
+    #[test]
+    fn test_extract_hint_short_key() {
+        let hint = extract_hint("ab");
+        assert_eq!(hint, "ab", "Short keys return the whole string");
+    }
+
+    // --- Scope validation tests ---
 
     #[test]
     fn test_validate_scopes_valid() {
@@ -173,6 +261,8 @@ mod tests {
         let scopes: Vec<String> = vec![];
         assert!(validate_scopes(&scopes).is_ok());
     }
+
+    // --- Serialization tests ---
 
     #[test]
     fn test_key_status_serialization() {
@@ -199,5 +289,20 @@ mod tests {
         let json = serde_json::to_string(&key).unwrap();
         assert!(!json.contains("secret_hash_value"));
         assert!(!json.contains("key_hash"));
+    }
+
+    // --- Environment tests ---
+
+    #[test]
+    fn test_environment_prefix() {
+        assert_eq!(Environment::Live.prefix(), "bnk_live_");
+        assert_eq!(Environment::Test.prefix(), "bnk_test_");
+    }
+
+    #[test]
+    fn test_environment_from_str() {
+        assert_eq!("live".parse::<Environment>(), Ok(Environment::Live));
+        assert_eq!("test".parse::<Environment>(), Ok(Environment::Test));
+        assert!("unknown".parse::<Environment>().is_err());
     }
 }

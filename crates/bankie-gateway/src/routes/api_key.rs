@@ -20,11 +20,17 @@ use crate::state::PortalState;
 const DEFAULT_GRACE_HOURS: i64 = 24;
 
 /// Protected API key management routes (session auth required).
+/// Supports both org-scoped paths (`/orgs/:org_id/keys`) and flat paths (`/api-keys`).
 pub fn api_key_routes() -> Router<Arc<PortalState>> {
     Router::new()
+        // Org-scoped routes
         .route("/orgs/:org_id/keys", post(create_key).get(list_keys))
         .route("/orgs/:org_id/keys/:id", delete(revoke_key))
         .route("/orgs/:org_id/keys/:id/rotate", post(rotate_key))
+        // Flat routes (org_id from session claims)
+        .route("/api-keys", post(create_key_flat).get(list_keys_flat))
+        .route("/api-keys/:id", delete(revoke_key_flat))
+        .route("/api-keys/:id/rotate", post(rotate_key_flat))
 }
 
 /// POST /portal/v1/orgs/:org_id/keys
@@ -211,6 +217,54 @@ async fn rotate_key(
         old_key_id: old_key.id,
         grace_expires_at,
     }))
+}
+
+// ─── Flat route handlers (org_id from session claims) ───
+
+fn parse_org_id(claims: &SessionClaims) -> Result<uuid::Uuid, AppError> {
+    claims
+        .org_id
+        .parse()
+        .map_err(|_| AppError::internal("Invalid org_id in session"))
+}
+
+/// POST /portal/v1/api-keys
+async fn create_key_flat(
+    state: State<Arc<PortalState>>,
+    claims: axum::Extension<SessionClaims>,
+    json: Json<CreateKeyRequest>,
+) -> Result<Json<CreateKeyResponse>, AppError> {
+    let org_id = parse_org_id(&claims)?;
+    create_key(state, claims, Path(org_id), json).await
+}
+
+/// GET /portal/v1/api-keys
+async fn list_keys_flat(
+    state: State<Arc<PortalState>>,
+    claims: axum::Extension<SessionClaims>,
+) -> Result<Json<Vec<KeyListItem>>, AppError> {
+    let org_id = parse_org_id(&claims)?;
+    list_keys(state, claims, Path(org_id)).await
+}
+
+/// DELETE /portal/v1/api-keys/:id
+async fn revoke_key_flat(
+    state: State<Arc<PortalState>>,
+    claims: axum::Extension<SessionClaims>,
+    Path(key_id): Path<uuid::Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let org_id = parse_org_id(&claims)?;
+    revoke_key(state, claims, Path((org_id, key_id))).await
+}
+
+/// POST /portal/v1/api-keys/:id/rotate
+async fn rotate_key_flat(
+    state: State<Arc<PortalState>>,
+    claims: axum::Extension<SessionClaims>,
+    Path(key_id): Path<uuid::Uuid>,
+) -> Result<Json<RotateKeyResponse>, AppError> {
+    let org_id = parse_org_id(&claims)?;
+    rotate_key(state, claims, Path((org_id, key_id))).await
 }
 
 /// Verify that the caller's session belongs to the given org.

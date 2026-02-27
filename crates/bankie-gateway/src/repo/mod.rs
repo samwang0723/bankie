@@ -1,6 +1,7 @@
 pub mod api_key;
 pub mod member;
 pub mod org;
+pub mod pg;
 
 use std::fmt;
 

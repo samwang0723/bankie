@@ -315,6 +315,28 @@ if assert_status "$HTTP_STATUS" "200" "query pending account" && \
   pass
 fi
 
+run_test "GET /v1/bank_account/:id -- verify external_reference_id on pending account"
+http_get "${BASE_URL}/v1/bank_account/${ACCOUNT_ID_1}"
+if assert_status "$HTTP_STATUS" "200" "query ext_ref on pending account"; then
+  ext_ref=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('external_reference_id',''))" 2>/dev/null || echo "")
+  if [[ "$ext_ref" == "$USER_ID" ]]; then
+    pass
+  else
+    fail "external_reference_id expected '${USER_ID}', got '${ext_ref}'"
+  fi
+fi
+
+run_test "GET /v1/bank_account/:id -- verify kind=Checking on account 1"
+http_get "${BASE_URL}/v1/bank_account/${ACCOUNT_ID_1}"
+if assert_status "$HTTP_STATUS" "200" "query kind on account 1"; then
+  kind_val=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('kind',''))" 2>/dev/null || echo "")
+  if [[ "$kind_val" == "Checking" ]]; then
+    pass
+  else
+    fail "kind expected 'Checking', got '${kind_val}'"
+  fi
+fi
+
 run_test "POST /v1/bank_account -- ApproveAccount (creates ledger)"
 http_post "${BASE_URL}/v1/bank_account" "{
   \"ApproveAccount\": {
@@ -375,6 +397,21 @@ else
   fail "no ledger_id to query"
 fi
 
+run_test "GET /v1/ledger/:id -- verify book_balance after deposit"
+if [[ -n "$LEDGER_ID_1" ]]; then
+  http_get "${BASE_URL}/v1/ledger/${LEDGER_ID_1}"
+  if assert_status "$HTTP_STATUS" "200" "ledger book_balance after deposit"; then
+    book_balance=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['book_balance']['amount'])" 2>/dev/null || echo "")
+    if python3 -c "exit(0 if float('${book_balance}') == 1000.0 else 1)" 2>/dev/null; then
+      pass
+    else
+      fail "ledger book_balance expected 1000, got ${book_balance}"
+    fi
+  fi
+else
+  fail "no ledger_id to query"
+fi
+
 # ===========================================================================
 # SUITE 5: Withdrawal + Ledger Verification
 # ===========================================================================
@@ -405,6 +442,21 @@ if [[ -n "$LEDGER_ID_1" ]]; then
       pass
     else
       fail "ledger available expected 750, got ${available}"
+    fi
+  fi
+else
+  fail "no ledger_id to query"
+fi
+
+run_test "GET /v1/ledger/:id -- verify book_balance after withdrawal"
+if [[ -n "$LEDGER_ID_1" ]]; then
+  http_get "${BASE_URL}/v1/ledger/${LEDGER_ID_1}"
+  if assert_status "$HTTP_STATUS" "200" "ledger book_balance after withdrawal"; then
+    book_balance=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['book_balance']['amount'])" 2>/dev/null || echo "")
+    if python3 -c "exit(0 if float('${book_balance}') == 750.0 else 1)" 2>/dev/null; then
+      pass
+    else
+      fail "ledger book_balance expected 750, got ${book_balance}"
     fi
   fi
 else
@@ -611,6 +663,53 @@ if assert_status "$HTTP_STATUS" "200" "user query" && \
   pass
 fi
 
+run_test "GET /v1/user/:id -- verify entries contain book_balance field"
+http_get "${BASE_URL}/v1/user/${USER_ID}"
+if assert_status "$HTTP_STATUS" "200" "user query book_balance"; then
+  has_book_balance=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+entries = data.get('entries', [])
+all_have = all('book_balance' in e for e in entries if e.get('status') == 'Approved')
+print('true' if all_have and len(entries) > 0 else 'false')
+" 2>/dev/null || echo "false")
+  if [[ "$has_book_balance" == "true" ]]; then
+    pass
+  else
+    fail "user entries missing book_balance field"
+  fi
+fi
+
+run_test "GET /v1/user/:id -- verify account 1 available balance in user view"
+http_get "${BASE_URL}/v1/user/${USER_ID}"
+if assert_status "$HTTP_STATUS" "200" "user query account 1 balance"; then
+  acct1_available=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for e in data.get('entries', []):
+    if e.get('id') == '${ACCOUNT_ID_1}':
+        print(e.get('available', ''))
+        sys.exit(0)
+print('')
+" 2>/dev/null || echo "")
+  if python3 -c "exit(0 if float('${acct1_available}') == 650.0 else 1)" 2>/dev/null; then
+    pass
+  else
+    fail "user view account 1 available expected 650, got ${acct1_available}"
+  fi
+fi
+
+run_test "GET /v1/user/:id -- nonexistent user returns empty entries"
+http_get "${BASE_URL}/v1/user/nonexistent-user-id-00000"
+if assert_status "$HTTP_STATUS" "200" "nonexistent user query"; then
+  count=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('entries', [])))" 2>/dev/null || echo "-1")
+  if [[ "$count" == "0" ]]; then
+    pass
+  else
+    fail "nonexistent user expected 0 entries, got ${count}"
+  fi
+fi
+
 run_test "GET /v1/transaction -- list transactions for account 1"
 http_get "${BASE_URL}/v1/transaction?bank_account_id=${ACCOUNT_ID_1}&offset=0&limit=10"
 if assert_status "$HTTP_STATUS" "200" "transaction list"; then
@@ -619,6 +718,57 @@ if assert_status "$HTTP_STATUS" "200" "transaction list"; then
     pass
   else
     fail "transaction list: expected >= 1 transactions, got ${count}"
+  fi
+fi
+
+run_test "GET /v1/transaction -- verify transaction_type field present"
+http_get "${BASE_URL}/v1/transaction?bank_account_id=${ACCOUNT_ID_1}&offset=0&limit=10"
+if assert_status "$HTTP_STATUS" "200" "transaction type field"; then
+  has_type=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+entries = data.get('entries', [])
+all_have = all('transaction_type' in e for e in entries)
+print('true' if all_have and len(entries) > 0 else 'false')
+" 2>/dev/null || echo "false")
+  if [[ "$has_type" == "true" ]]; then
+    pass
+  else
+    fail "transaction entries missing transaction_type field"
+  fi
+fi
+
+run_test "GET /v1/transaction -- filter by transaction_type=deposit"
+http_get "${BASE_URL}/v1/transaction?bank_account_id=${ACCOUNT_ID_1}&offset=0&limit=10&transaction_type=deposit"
+if assert_status "$HTTP_STATUS" "200" "transaction filter by type"; then
+  all_deposits=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+entries = data.get('entries', [])
+all_match = all(e.get('transaction_type') == 'deposit' for e in entries)
+print('true' if all_match and len(entries) >= 1 else 'false')
+" 2>/dev/null || echo "false")
+  if [[ "$all_deposits" == "true" ]]; then
+    pass
+  else
+    fail "filtered transactions should all be deposits"
+  fi
+fi
+
+run_test "GET /v1/transaction -- filter by date range"
+TODAY=$(date +%Y-%m-%d)
+YESTERDAY=$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d "yesterday" +%Y-%m-%d 2>/dev/null || echo "$TODAY")
+http_get "${BASE_URL}/v1/transaction?bank_account_id=${ACCOUNT_ID_1}&offset=0&limit=10&start_date=${YESTERDAY}&end_date=${TODAY}"
+if assert_status "$HTTP_STATUS" "200" "transaction filter by date"; then
+  has_pagination=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+print('true' if 'pagination' in data else 'false')
+" 2>/dev/null || echo "false")
+  if [[ "$has_pagination" == "true" ]]; then
+    pass
+  else
+    fail "filtered transaction query should include pagination"
   fi
 fi
 
@@ -638,11 +788,64 @@ else
   fail "no account_number captured"
 fi
 
+run_test "GET /v1/bank_account/by-number/:num -- verify returned fields match"
+if [[ -n "$ACCOUNT_NUM_1" ]]; then
+  http_get "${BASE_URL}/v1/bank_account/by-number/${ACCOUNT_NUM_1}"
+  if assert_status "$HTTP_STATUS" "200" "by-number field check"; then
+    returned_id=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+    if [[ "$returned_id" == "$ACCOUNT_ID_1" ]]; then
+      pass
+    else
+      fail "by-number lookup returned id '${returned_id}', expected '${ACCOUNT_ID_1}'"
+    fi
+  fi
+else
+  fail "no account_number captured"
+fi
+
+run_test "GET /v1/accounts -- paginated account list"
+http_get "${BASE_URL}/v1/accounts?offset=0&limit=10"
+if assert_status "$HTTP_STATUS" "200" "accounts list"; then
+  has_pagination=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+p = data.get('pagination', {})
+has_fields = 'total' in p and 'offset' in p and 'limit' in p
+has_entries = len(data.get('entries', [])) >= 1
+print('true' if has_fields and has_entries else 'false')
+" 2>/dev/null || echo "false")
+  if [[ "$has_pagination" == "true" ]]; then
+    pass
+  else
+    fail "accounts list missing pagination fields or entries"
+  fi
+fi
+
+run_test "GET /v1/accounts -- verify pagination offset/limit"
+http_get "${BASE_URL}/v1/accounts?offset=0&limit=1"
+if assert_status "$HTTP_STATUS" "200" "accounts list limit=1"; then
+  entry_count=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('entries', [])))" 2>/dev/null || echo "0")
+  limit_val=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('pagination',{}).get('limit',0))" 2>/dev/null || echo "0")
+  if [[ "$entry_count" -le 1 && "$limit_val" == "1" ]]; then
+    pass
+  else
+    fail "accounts list limit=1: entries=${entry_count}, pagination.limit=${limit_val}"
+  fi
+fi
+
 run_test "GET /v1/bank_account/:id/balance-history -- balance history"
 TODAY=$(date +%Y-%m-%d)
 YESTERDAY=$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d "yesterday" +%Y-%m-%d 2>/dev/null || echo "$TODAY")
 http_get "${BASE_URL}/v1/bank_account/${ACCOUNT_ID_1}/balance-history?start_date=${YESTERDAY}&end_date=${TODAY}"
 if assert_status "$HTTP_STATUS" "200" "balance history"; then
+  pass
+fi
+
+run_test "GET /v1/report/settlement -- settlement report CSV"
+TODAY=$(date +%Y-%m-%d)
+YESTERDAY=$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d "yesterday" +%Y-%m-%d 2>/dev/null || echo "$TODAY")
+http_get "${BASE_URL}/v1/report/settlement?start_date=${YESTERDAY}&end_date=${TODAY}"
+if assert_status "$HTTP_STATUS" "200" "settlement report"; then
   pass
 fi
 
@@ -722,6 +925,11 @@ http_post "${BASE_URL}/v1/house_account" '{
 if assert_status "$HTTP_STATUS" "400" "unsupported currency 400"; then
   pass
 fi
+
+# NOTE: Business rule violations (overdraft, frozen ops, duplicate close, etc.)
+# return 200 at HTTP level because CQRS commands are accepted into the async
+# processing channel. Errors surface during aggregate processing, not at HTTP layer.
+# Only input validation (zero amount, invalid JSON, unsupported currency) returns 400.
 
 # ===========================================================================
 # SUITE 10: Sub-Account Scenario
@@ -1038,6 +1246,408 @@ http_get "${BASE_URL}/v1/user/${SUB_USER_ID}"
 if assert_status "$HTTP_STATUS" "200" "sub-account user query" && \
    assert_entries_count "$HTTP_BODY" 3 "sub-account user accounts (expected 3)"; then
   pass
+fi
+
+# --- Step 12: Verify kind on sub-accounts ---
+run_test "GET /v1/bank_account/:id -- verify master kind=Checking"
+http_get "${BASE_URL}/v1/bank_account/${SUB_MASTER_ID}"
+if assert_status "$HTTP_STATUS" "200" "master kind check"; then
+  kind_val=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('kind',''))" 2>/dev/null || echo "")
+  if [[ "$kind_val" == "Checking" ]]; then
+    pass
+  else
+    fail "master kind expected 'Checking', got '${kind_val}'"
+  fi
+fi
+
+run_test "GET /v1/bank_account/:id -- verify Interest kind=Interest"
+http_get "${BASE_URL}/v1/bank_account/${SUB_INTEREST_ID}"
+if assert_status "$HTTP_STATUS" "200" "interest kind check"; then
+  kind_val=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('kind',''))" 2>/dev/null || echo "")
+  if [[ "$kind_val" == "Interest" ]]; then
+    pass
+  else
+    fail "interest kind expected 'Interest', got '${kind_val}'"
+  fi
+fi
+
+run_test "GET /v1/bank_account/:id -- verify Yield kind=Yield"
+http_get "${BASE_URL}/v1/bank_account/${SUB_YIELD_ID}"
+if assert_status "$HTTP_STATUS" "200" "yield kind check"; then
+  kind_val=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('kind',''))" 2>/dev/null || echo "")
+  if [[ "$kind_val" == "Yield" ]]; then
+    pass
+  else
+    fail "yield kind expected 'Yield', got '${kind_val}'"
+  fi
+fi
+
+# --- Step 13: Verify external_reference_id on all sub-account views ---
+run_test "GET /v1/bank_account/:id -- verify external_reference_id on master"
+http_get "${BASE_URL}/v1/bank_account/${SUB_MASTER_ID}"
+if assert_status "$HTTP_STATUS" "200" "master ext_ref check"; then
+  ext_ref=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('external_reference_id',''))" 2>/dev/null || echo "")
+  if [[ "$ext_ref" == "$SUB_USER_ID" ]]; then
+    pass
+  else
+    fail "master external_reference_id expected '${SUB_USER_ID}', got '${ext_ref}'"
+  fi
+fi
+
+run_test "GET /v1/bank_account/:id -- verify external_reference_id on Interest sub"
+http_get "${BASE_URL}/v1/bank_account/${SUB_INTEREST_ID}"
+if assert_status "$HTTP_STATUS" "200" "interest ext_ref check"; then
+  ext_ref=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('external_reference_id',''))" 2>/dev/null || echo "")
+  if [[ "$ext_ref" == "$SUB_USER_ID" ]]; then
+    pass
+  else
+    fail "interest external_reference_id expected '${SUB_USER_ID}', got '${ext_ref}'"
+  fi
+fi
+
+run_test "GET /v1/bank_account/:id -- verify external_reference_id on Yield sub"
+http_get "${BASE_URL}/v1/bank_account/${SUB_YIELD_ID}"
+if assert_status "$HTTP_STATUS" "200" "yield ext_ref check"; then
+  ext_ref=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('external_reference_id',''))" 2>/dev/null || echo "")
+  if [[ "$ext_ref" == "$SUB_USER_ID" ]]; then
+    pass
+  else
+    fail "yield external_reference_id expected '${SUB_USER_ID}', got '${ext_ref}'"
+  fi
+fi
+
+# --- Step 14: Verify sub-accounts kinds in sub-accounts endpoint ---
+run_test "GET /v1/bank_account/:id/sub-accounts -- verify sub-account kinds"
+http_get "${BASE_URL}/v1/bank_account/${SUB_MASTER_ID}/sub-accounts"
+if assert_status "$HTTP_STATUS" "200" "sub-accounts kinds check"; then
+  kinds_valid=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+subs = data.get('sub_accounts', [])
+kinds = set(s.get('kind') for s in subs)
+expected = {'Interest', 'Yield'}
+print('true' if kinds == expected else 'false')
+" 2>/dev/null || echo "false")
+  if [[ "$kinds_valid" == "true" ]]; then
+    pass
+  else
+    fail "sub-accounts should have kinds {Interest, Yield}"
+  fi
+fi
+
+# --- Step 15: Verify book_balance on sub-account ledgers ---
+run_test "GET /v1/ledger/:id -- verify Interest book_balance = 200"
+if [[ -n "$SUB_INTEREST_LEDGER_ID" ]]; then
+  http_get "${BASE_URL}/v1/ledger/${SUB_INTEREST_LEDGER_ID}"
+  if assert_status "$HTTP_STATUS" "200" "interest book_balance check"; then
+    book_balance=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['book_balance']['amount'])" 2>/dev/null || echo "")
+    if python3 -c "exit(0 if float('${book_balance}') == 200.0 else 1)" 2>/dev/null; then
+      pass
+    else
+      fail "interest book_balance expected 200, got ${book_balance}"
+    fi
+  fi
+else
+  fail "no interest ledger_id to query"
+fi
+
+run_test "GET /v1/ledger/:id -- verify Yield book_balance = 100"
+if [[ -n "$SUB_YIELD_LEDGER_ID" ]]; then
+  http_get "${BASE_URL}/v1/ledger/${SUB_YIELD_LEDGER_ID}"
+  if assert_status "$HTTP_STATUS" "200" "yield book_balance check"; then
+    book_balance=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['book_balance']['amount'])" 2>/dev/null || echo "")
+    if python3 -c "exit(0 if float('${book_balance}') == 100.0 else 1)" 2>/dev/null; then
+      pass
+    else
+      fail "yield book_balance expected 100, got ${book_balance}"
+    fi
+  fi
+else
+  fail "no yield ledger_id to query"
+fi
+
+# ===========================================================================
+# SUITE 11: external_reference_id Comprehensive Testing
+# ===========================================================================
+suite "11. external_reference_id Comprehensive Testing"
+
+EXT_REF_USER="e2e-extref-user-$(date +%s)"
+EXTREF_ACCT_ID=""
+EXTREF_ACCT_NUM=""
+
+run_test "POST /v1/bank_account -- OpenAccount with external_reference_id field"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"OpenAccount\": {
+    \"account_type\": \"Retail\",
+    \"kind\": \"Checking\",
+    \"currency\": \"USD\",
+    \"external_reference_id\": \"${EXT_REF_USER}\"
+  }
+}"
+if assert_status "$HTTP_STATUS" "201" "open account with external_reference_id"; then
+  EXTREF_ACCT_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+  EXTREF_ACCT_NUM=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['account_number'])" 2>/dev/null || echo "")
+  if [[ -n "$EXTREF_ACCT_ID" ]]; then
+    pass
+  else
+    fail "could not extract id from external_reference_id account"
+  fi
+fi
+
+sleep 2
+
+run_test "GET /v1/bank_account/:id -- verify external_reference_id set correctly"
+if [[ -n "$EXTREF_ACCT_ID" ]]; then
+  http_get "${BASE_URL}/v1/bank_account/${EXTREF_ACCT_ID}"
+  if assert_status "$HTTP_STATUS" "200" "query extref account"; then
+    ext_ref=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('external_reference_id',''))" 2>/dev/null || echo "")
+    if [[ "$ext_ref" == "$EXT_REF_USER" ]]; then
+      pass
+    else
+      fail "external_reference_id expected '${EXT_REF_USER}', got '${ext_ref}'"
+    fi
+  fi
+else
+  fail "no extref account id"
+fi
+
+run_test "POST /v1/bank_account -- ApproveAccount for extref account"
+if [[ -n "$EXTREF_ACCT_ID" ]]; then
+  http_post "${BASE_URL}/v1/bank_account" "{
+    \"ApproveAccount\": {
+      \"id\": \"${EXTREF_ACCT_ID}\"
+    }
+  }"
+  if assert_status "$HTTP_STATUS" "200" "approve extref account"; then
+    pass
+  fi
+else
+  fail "no extref account id"
+fi
+
+sleep 2
+
+run_test "GET /v1/user/:id -- query by external_reference_id returns the account"
+http_get "${BASE_URL}/v1/user/${EXT_REF_USER}"
+if assert_status "$HTTP_STATUS" "200" "user query by ext_ref"; then
+  found=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+entries = data.get('entries', [])
+ids = [e.get('id') for e in entries]
+print('true' if '${EXTREF_ACCT_ID}' in ids else 'false')
+" 2>/dev/null || echo "false")
+  if [[ "$found" == "true" ]]; then
+    pass
+  else
+    fail "user query by ext_ref did not return account ${EXTREF_ACCT_ID}"
+  fi
+fi
+
+run_test "GET /v1/user/:id -- verify external_reference_id survives approval"
+if [[ -n "$EXTREF_ACCT_ID" ]]; then
+  http_get "${BASE_URL}/v1/bank_account/${EXTREF_ACCT_ID}"
+  if assert_status "$HTTP_STATUS" "200" "extref after approval"; then
+    ext_ref=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('external_reference_id',''))" 2>/dev/null || echo "")
+    acct_status=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
+    if [[ "$ext_ref" == "$EXT_REF_USER" && "$acct_status" == "Approved" ]]; then
+      pass
+    else
+      fail "extref after approval: ext_ref='${ext_ref}', status='${acct_status}'"
+    fi
+  fi
+else
+  fail "no extref account id"
+fi
+
+run_test "POST /v1/bank_account -- OpenAccount with no external_reference_id"
+http_post "${BASE_URL}/v1/bank_account" '{
+  "OpenAccount": {
+    "account_type": "Retail",
+    "kind": "Checking",
+    "currency": "USD"
+  }
+}'
+if assert_status "$HTTP_STATUS" "201" "open account without ext_ref"; then
+  NO_EXTREF_ACCT_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+  if [[ -n "$NO_EXTREF_ACCT_ID" ]]; then
+    pass
+  else
+    fail "could not extract id from no-extref account"
+  fi
+fi
+
+sleep 2
+
+run_test "GET /v1/bank_account/:id -- verify external_reference_id is null when not set"
+if [[ -n "$NO_EXTREF_ACCT_ID" ]]; then
+  http_get "${BASE_URL}/v1/bank_account/${NO_EXTREF_ACCT_ID}"
+  if assert_status "$HTTP_STATUS" "200" "query no-extref account"; then
+    ext_ref_check=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+ref = data.get('external_reference_id')
+print('null' if ref is None or ref == '' else ref)
+" 2>/dev/null || echo "")
+    if [[ "$ext_ref_check" == "null" || "$ext_ref_check" == "" ]]; then
+      pass
+    else
+      fail "expected null/empty external_reference_id, got '${ext_ref_check}'"
+    fi
+  fi
+else
+  fail "no no-extref account id"
+fi
+
+# NOTE: Duplicate account creation (same ext_ref + currency + kind) is not
+# rejected at HTTP level -- OpenAccount always returns 201 (CQRS async).
+
+# ===========================================================================
+# SUITE 12: Frozen Account Operations
+# ===========================================================================
+suite "12. Frozen Account Operations"
+
+FREEZE_USER_ID="e2e-freeze-user-$(date +%s)"
+FREEZE_ACCT_ID=""
+FREEZE_LEDGER_ID=""
+
+run_test "POST /v1/bank_account -- OpenAccount for freeze tests"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"OpenAccount\": {
+    \"account_type\": \"Retail\",
+    \"kind\": \"Checking\",
+    \"currency\": \"USD\",
+    \"user_id\": \"${FREEZE_USER_ID}\"
+  }
+}"
+if assert_status "$HTTP_STATUS" "201" "open freeze-test account"; then
+  FREEZE_ACCT_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+  if [[ -n "$FREEZE_ACCT_ID" ]]; then
+    pass
+  else
+    fail "could not extract freeze-test account id"
+  fi
+fi
+
+sleep 2
+
+run_test "POST /v1/bank_account -- Approve freeze-test account"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"ApproveAccount\": {
+    \"id\": \"${FREEZE_ACCT_ID}\"
+  }
+}"
+if assert_status "$HTTP_STATUS" "200" "approve freeze-test account"; then
+  pass
+fi
+
+sleep 2
+
+run_test "GET /v1/bank_account/:id -- get freeze-test ledger_id"
+http_get "${BASE_URL}/v1/bank_account/${FREEZE_ACCT_ID}"
+if assert_status "$HTTP_STATUS" "200" "query freeze-test account"; then
+  FREEZE_LEDGER_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['ledger_id'])" 2>/dev/null || echo "")
+  if [[ -n "$FREEZE_LEDGER_ID" ]]; then
+    pass
+  else
+    fail "freeze-test account missing ledger_id"
+  fi
+fi
+
+run_test "POST /v1/bank_account -- Deposit 500 USD into freeze-test account"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"Deposit\": {
+    \"id\": \"${FREEZE_ACCT_ID}\",
+    \"amount\": {
+      \"amount\": \"500\",
+      \"currency\": \"USD\"
+    }
+  }
+}"
+if assert_status "$HTTP_STATUS" "200" "deposit to freeze-test account"; then
+  pass
+fi
+
+wait_for_outbox
+
+run_test "POST /v1/bank_account -- Freeze the account"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"FreezeAccount\": {
+    \"id\": \"${FREEZE_ACCT_ID}\"
+  }
+}"
+if assert_status "$HTTP_STATUS" "200" "freeze account"; then
+  pass
+fi
+
+sleep 1
+
+# NOTE: CQRS async — commands to frozen accounts are accepted (200) at HTTP level
+# but fail during aggregate processing. We verify the ledger stays unchanged below.
+run_test "POST /v1/bank_account -- Deposit to frozen account -- accepted (async fail)"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"Deposit\": {
+    \"id\": \"${FREEZE_ACCT_ID}\",
+    \"amount\": {
+      \"amount\": \"100\",
+      \"currency\": \"USD\"
+    }
+  }
+}"
+if assert_status "$HTTP_STATUS" "200" "deposit to frozen accepted"; then
+  pass
+fi
+
+run_test "POST /v1/bank_account -- Withdrawal from frozen account -- accepted (async fail)"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"Withdrawal\": {
+    \"id\": \"${FREEZE_ACCT_ID}\",
+    \"amount\": {
+      \"amount\": \"100\",
+      \"currency\": \"USD\"
+    }
+  }
+}"
+if assert_status "$HTTP_STATUS" "200" "withdrawal from frozen accepted"; then
+  pass
+fi
+
+run_test "GET /v1/ledger/:id -- verify frozen account ledger unchanged"
+if [[ -n "$FREEZE_LEDGER_ID" ]]; then
+  http_get "${BASE_URL}/v1/ledger/${FREEZE_LEDGER_ID}"
+  if assert_status "$HTTP_STATUS" "200" "frozen ledger check"; then
+    available=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['available']['amount'])" 2>/dev/null || echo "")
+    if python3 -c "exit(0 if float('${available}') == 500.0 else 1)" 2>/dev/null; then
+      pass
+    else
+      fail "frozen ledger available expected 500, got ${available}"
+    fi
+  fi
+else
+  fail "no freeze ledger_id to query"
+fi
+
+run_test "POST /v1/bank_account -- Unfreeze account for cleanup"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"UnfreezeAccount\": {
+    \"id\": \"${FREEZE_ACCT_ID}\"
+  }
+}"
+if assert_status "$HTTP_STATUS" "200" "unfreeze for cleanup"; then
+  pass
+fi
+
+sleep 1
+
+run_test "GET /v1/bank_account/:id -- verify account is Approved after unfreeze"
+http_get "${BASE_URL}/v1/bank_account/${FREEZE_ACCT_ID}"
+if assert_status "$HTTP_STATUS" "200" "query unfrozen freeze-test account"; then
+  local_status=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo "")
+  if [[ "$local_status" == "Approved" ]]; then
+    pass
+  else
+    fail "freeze-test account expected Approved, got ${local_status}"
+  fi
 fi
 
 # ===========================================================================

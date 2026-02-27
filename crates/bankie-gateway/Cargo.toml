@@ -22,15 +22,20 @@ rand = { workspace = true }
 sqlx = { workspace = true }
 redis = { workspace = true }
 config = { workspace = true }
-async-trait = "0.1"
+lazy_static = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+async-trait = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
 argon2 = "0.5"
-sha2 = "0.10"
-hex = "0.4"
 axum-extra = { version = "0.9", features = ["cookie"] }
 http = "1"
 
 [dev-dependencies]
 mockall = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+tokio = { workspace = true, features = ["full", "test-util"] }
 
 [lib]
 name = "bankie_gateway"

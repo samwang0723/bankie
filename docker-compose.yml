@@ -112,6 +112,46 @@ services:
     networks:
       - bankie-net
 
+  bankie-gateway:
+    container_name: bankie-gateway
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: gateway
+    ports:
+      - '${GATEWAY_PORT:-4040}:4040'
+    environment:
+      - ENV=docker
+      - DB_PASSWD=${DB_PASSWD:-localpass}
+      - JWT_SECRET=${JWT_SECRET:-LocalDevSecretKey1234567890abcdefghijklmnop}
+      - CORE_URL=http://bankie:3030
+      - RUST_LOG=${RUST_LOG:-info}
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+      bankie:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - bankie-net
+
+  portal-spa:
+    container_name: portal-spa
+    build:
+      context: ./portal-spa
+      dockerfile: Dockerfile
+    ports:
+      - '${PORTAL_PORT:-8080}:80'
+    depends_on:
+      - bankie-gateway
+    restart: unless-stopped
+    networks:
+      - bankie-net
+
 volumes:
   postgresql_data:
     driver: local

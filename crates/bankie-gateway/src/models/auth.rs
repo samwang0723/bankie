@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -6,7 +7,6 @@ use super::member::MemberRole;
 #[derive(Debug, Deserialize)]
 pub struct SignupRequest {
     pub org_name: String,
-    pub tenant_id: i32,
     pub email: String,
     pub password: String,
 }
@@ -27,10 +27,28 @@ pub struct SessionClaims {
     pub exp: usize,
 }
 
+/// Auth response matching SPA's expected format:
+/// `{ token, user: { id, email, role, created_at }, organization: { id, name, slug, environment, created_at } }`
 #[derive(Debug, Serialize)]
 pub struct AuthResponse {
-    pub member_id: Uuid,
-    pub org_id: Uuid,
+    pub token: String,
+    pub user: AuthUser,
+    pub organization: AuthOrganization,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuthUser {
+    pub id: Uuid,
     pub email: String,
     pub role: MemberRole,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuthOrganization {
+    pub id: Uuid,
+    pub name: String,
+    pub slug: String,
+    pub environment: String,
+    pub created_at: DateTime<Utc>,
 }
