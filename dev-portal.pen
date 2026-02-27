@@ -3653,6 +3653,24 @@
                     },
                     {
                       "type": "frame",
+                      "id": "P4F1n",
+                      "name": "athc5",
+                      "width": "fill_container",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "V1U87",
+                          "name": "athc5t",
+                          "fill": "#64748B",
+                          "content": "Balance",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
                       "id": "j2WuT",
                       "name": "athc6",
                       "width": 80,
@@ -3774,6 +3792,24 @@
                               "fontWeight": "600"
                             }
                           ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "WTbJV",
+                      "name": "ar1c5",
+                      "width": "fill_container",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "QLYgH",
+                          "name": "ar1c5t",
+                          "fill": "#0F172A",
+                          "content": "$12,450.00",
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 13,
+                          "fontWeight": "600"
                         }
                       ]
                     },
@@ -3905,6 +3941,24 @@
                     },
                     {
                       "type": "frame",
+                      "id": "JilbN",
+                      "name": "ar2c5",
+                      "width": "fill_container",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "16fWG",
+                          "name": "ar2c5t",
+                          "fill": "#0F172A",
+                          "content": "$3,200.50",
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
                       "id": "v6lII",
                       "name": "ar2c6",
                       "width": 80,
@@ -4026,6 +4080,24 @@
                               "fontWeight": "600"
                             }
                           ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Fot1W",
+                      "name": "ar3c5",
+                      "width": "fill_container",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ZDksO",
+                          "name": "ar3c5t",
+                          "fill": "#0F172A",
+                          "content": "0.85420000",
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 13,
+                          "fontWeight": "600"
                         }
                       ]
                     },
@@ -4692,7 +4764,7 @@
                           "id": "P6iVd",
                           "name": "tthc2t",
                           "fill": "#64748B",
-                          "content": "Account Number",
+                          "content": "Account",
                           "fontFamily": "Inter",
                           "fontSize": 12,
                           "fontWeight": "600"
