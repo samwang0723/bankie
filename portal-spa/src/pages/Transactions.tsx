@@ -151,9 +151,25 @@ export function Transactions() {
   });
 
   const allAccounts = accountsData ?? [];
-  const firstAccount = useMemo(() => {
-    const active = allAccounts.find((a) => a.status === "Approved");
-    return active ?? (allAccounts.length > 0 ? allAccounts[0] : null);
+
+  // Aggregate balances across ALL accounts for summary cards
+  const balanceSummary = useMemo(() => {
+    if (allAccounts.length === 0) return null;
+    let totalAvailable = 0;
+    let totalPending = 0;
+    let totalBookBalance = 0;
+    const currencies = new Set<string>();
+    for (const a of allAccounts) {
+      currencies.add(a.currency);
+      const av = parseFloat(a.available ?? "0");
+      const pn = parseFloat(a.pending ?? "0");
+      const bb = parseFloat(a.book_balance ?? "0");
+      if (!isNaN(av)) totalAvailable += av;
+      if (!isNaN(pn)) totalPending += pn;
+      if (!isNaN(bb)) totalBookBalance += bb;
+    }
+    const currency = currencies.size === 1 ? [...currencies][0] : "USD";
+    return { totalAvailable, totalPending, totalBookBalance, currency };
   }, [allAccounts]);
 
   // Build account ID → account_number lookup map
@@ -295,19 +311,19 @@ export function Transactions() {
         </select>
       </div>
 
-      {/* Ledger balance cards */}
+      {/* Ledger balance cards — aggregated across all accounts */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-xl border border-slate-200 p-5">
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs font-medium text-slate-500">Available</p>
             <span className="font-mono text-[11px] font-semibold text-[#94A3B8]">
-              {firstAccount?.currency ?? ""}
+              {balanceSummary?.currency ?? ""}
             </span>
           </div>
           <p className="text-2xl font-bold font-mono text-slate-900">
             {formatBalance(
-              firstAccount?.available,
-              firstAccount?.currency ?? "USD"
+              balanceSummary?.totalAvailable.toString(),
+              balanceSummary?.currency ?? "USD"
             )}
           </p>
         </div>
@@ -315,13 +331,13 @@ export function Transactions() {
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs font-medium text-slate-500">Pending</p>
             <span className="font-mono text-[11px] font-semibold text-[#94A3B8]">
-              {firstAccount?.currency ?? ""}
+              {balanceSummary?.currency ?? ""}
             </span>
           </div>
           <p className="text-2xl font-bold font-mono text-[#F59E0B]">
             {formatBalance(
-              firstAccount?.pending,
-              firstAccount?.currency ?? "USD"
+              balanceSummary?.totalPending.toString(),
+              balanceSummary?.currency ?? "USD"
             )}
           </p>
         </div>
@@ -329,13 +345,13 @@ export function Transactions() {
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs font-medium text-slate-500">Current</p>
             <span className="font-mono text-[11px] font-semibold text-[#94A3B8]">
-              {firstAccount?.currency ?? ""}
+              {balanceSummary?.currency ?? ""}
             </span>
           </div>
           <p className="text-2xl font-bold font-mono text-slate-900">
             {formatBalance(
-              firstAccount?.book_balance,
-              firstAccount?.currency ?? "USD"
+              balanceSummary?.totalBookBalance.toString(),
+              balanceSummary?.currency ?? "USD"
             )}
           </p>
         </div>
@@ -396,7 +412,7 @@ export function Transactions() {
             <tbody className="divide-y divide-slate-200">
               {transactions.map((tx) => (
                 <tr key={tx.id} className="hover:bg-slate-50 h-[52px]">
-                  <td className="px-6 font-mono text-xs font-medium text-slate-900 w-[160px]">
+                  <td className="px-6 font-mono text-xs font-medium text-slate-900 w-[160px] whitespace-nowrap">
                     {formatDateTime(tx.transaction_date)}
                   </td>
                   <td className="px-6 font-mono text-xs font-medium text-slate-900">
