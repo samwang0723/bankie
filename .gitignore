@@ -14,4 +14,3 @@ config.dev.yaml
 tasks/
 node_modules/
 portal-spa/dist/
-*.pen
