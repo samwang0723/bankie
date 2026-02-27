@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { api } from "../api/client.ts";
 import { handleApiError } from "../hooks/useAuth.ts";
+import { Pagination } from "../components/Pagination.tsx";
 import type { Transaction, BankAccountView } from "../types/index.ts";
 
 const TYPE_LABELS: Record<string, string> = {
@@ -96,11 +97,14 @@ function todayStr(): string {
   return new Date().toISOString().split("T")[0];
 }
 
+const PAGE_SIZE = 10;
+
 export function Transactions() {
   const [startDate, setStartDate] = useState(todayStr);
   const [endDate, setEndDate] = useState(todayStr);
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [offset, setOffset] = useState(0);
 
   // Fetch accounts and pick the first active (Approved) one for balance summary
   const { data: firstAccount } = useQuery({
@@ -121,27 +125,45 @@ export function Transactions() {
 
   // Build query params for transactions
   const queryParams = new URLSearchParams();
-  queryParams.set("offset", "0");
-  queryParams.set("limit", "50");
+  queryParams.set("offset", String(offset));
+  queryParams.set("limit", String(PAGE_SIZE));
   if (startDate) queryParams.set("start_date", startDate);
   if (endDate) queryParams.set("end_date", endDate);
   if (typeFilter !== "all") queryParams.set("transaction_type", typeFilter);
   if (statusFilter !== "all") queryParams.set("status", statusFilter);
 
-  const { data: transactions = [], isLoading } = useQuery({
-    queryKey: ["transactions", startDate, endDate, typeFilter, statusFilter],
+  const { data: txData, isLoading } = useQuery({
+    queryKey: [
+      "transactions",
+      startDate,
+      endDate,
+      typeFilter,
+      statusFilter,
+      offset
+    ],
     queryFn: async () => {
       try {
-        const resp = await api.get<{ entries: Transaction[] }>(
-          `/data/transactions?${queryParams}`
-        );
-        return resp.entries;
+        const resp = await api.get<{
+          entries: Transaction[];
+          pagination: { total: number; offset: number; limit: number };
+        }>(`/data/transactions?${queryParams}`);
+        return resp;
       } catch (err) {
         handleApiError(err);
-        return [];
+        return {
+          entries: [],
+          pagination: { total: 0, offset: 0, limit: PAGE_SIZE }
+        };
       }
     }
   });
+
+  const transactions = txData?.entries ?? [];
+  const pagination = txData?.pagination ?? {
+    total: 0,
+    offset: 0,
+    limit: PAGE_SIZE
+  };
 
   function handleExportCsv() {
     const today = new Date();
@@ -194,7 +216,10 @@ export function Transactions() {
             <input
               type="date"
               value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              onChange={(e) => {
+                setStartDate(e.target.value);
+                setOffset(0);
+              }}
               className="h-9 px-3 bg-white border border-slate-200 rounded-lg text-sm text-slate-900
                 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent"
             />
@@ -206,7 +231,10 @@ export function Transactions() {
             <input
               type="date"
               value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
+              onChange={(e) => {
+                setEndDate(e.target.value);
+                setOffset(0);
+              }}
               className="h-9 px-3 bg-white border border-slate-200 rounded-lg text-sm text-slate-900
                 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent"
             />
@@ -217,7 +245,10 @@ export function Transactions() {
             </label>
             <select
               value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
+              onChange={(e) => {
+                setTypeFilter(e.target.value);
+                setOffset(0);
+              }}
               className="h-9 px-3 bg-white border border-slate-200 rounded-lg text-sm text-slate-900
                 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent"
             >
@@ -233,7 +264,10 @@ export function Transactions() {
             </label>
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => {
+                setStatusFilter(e.target.value);
+                setOffset(0);
+              }}
               className="h-9 px-3 bg-white border border-slate-200 rounded-lg text-sm text-slate-900
                 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent"
             >
@@ -327,7 +361,7 @@ export function Transactions() {
                 <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
                   Date
                 </th>
-                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
+                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono min-w-[220px]">
                   Account
                 </th>
                 <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
@@ -350,8 +384,8 @@ export function Transactions() {
                   <td className="px-6 py-3 text-sm text-slate-600">
                     {formatDateTime(tx.transaction_date)}
                   </td>
-                  <td className="px-6 py-3 text-sm font-mono text-slate-900 text-xs">
-                    {tx.bank_account_id.substring(0, 8)}...
+                  <td className="px-6 py-3 font-mono text-slate-900 text-xs">
+                    {tx.bank_account_id.substring(0, 20)}...
                   </td>
                   <td className="px-6 py-3">
                     <TypeBadge txType={tx.transaction_type} />
@@ -377,6 +411,12 @@ export function Transactions() {
               ))}
             </tbody>
           </table>
+          <Pagination
+            offset={pagination.offset}
+            limit={pagination.limit}
+            total={pagination.total}
+            onPageChange={setOffset}
+          />
         </div>
       )}
     </div>

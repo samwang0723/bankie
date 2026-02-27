@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Wallet, Search, Eye, ChevronDown, ChevronRight } from "lucide-react";
 import { api } from "../api/client.ts";
 import { handleApiError } from "../hooks/useAuth.ts";
+import { Pagination } from "../components/Pagination.tsx";
 import type { BankAccountView } from "../types/index.ts";
 
 function StatusBadge({ status }: { status: string }) {
@@ -48,25 +49,38 @@ function formatDate(dateStr: string): string {
   });
 }
 
+const ACCOUNTS_PAGE_SIZE = 10;
+
 export function Accounts() {
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [offset, setOffset] = useState(0);
 
-  const { data: accounts = [], isLoading } = useQuery({
-    queryKey: ["accounts"],
+  const { data: accountData, isLoading } = useQuery({
+    queryKey: ["accounts", offset],
     queryFn: async () => {
       try {
         const resp = await api.get<{
           entries: BankAccountView[];
-          pagination: { total: number };
-        }>("/data/accounts?offset=0&limit=100");
-        return resp.entries;
+          pagination: { total: number; offset: number; limit: number };
+        }>(`/data/accounts?offset=${offset}&limit=${ACCOUNTS_PAGE_SIZE}`);
+        return resp;
       } catch (err) {
         handleApiError(err);
-        return [];
+        return {
+          entries: [],
+          pagination: { total: 0, offset: 0, limit: ACCOUNTS_PAGE_SIZE }
+        };
       }
     }
   });
+
+  const accounts = accountData?.entries ?? [];
+  const pagination = accountData?.pagination ?? {
+    total: 0,
+    offset: 0,
+    limit: ACCOUNTS_PAGE_SIZE
+  };
 
   const filtered = accounts.filter((a) => {
     if (!search) return true;
@@ -79,7 +93,7 @@ export function Accounts() {
     );
   });
 
-  const totalCount = accounts.length;
+  const totalCount = pagination.total;
   const activeCount = accounts.filter((a) => a.status === "Approved").length;
   const pendingCount = accounts.filter((a) => a.status === "Pending").length;
   const frozenCount = accounts.filter((a) => a.status === "Freeze").length;
@@ -217,6 +231,12 @@ export function Accounts() {
               ))}
             </tbody>
           </table>
+          <Pagination
+            offset={pagination.offset}
+            limit={pagination.limit}
+            total={pagination.total}
+            onPageChange={setOffset}
+          />
         </div>
       )}
     </div>
