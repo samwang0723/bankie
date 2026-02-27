@@ -4,7 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Bankie is a banking/ledger system built in Rust implementing sub-account and ledger management using **CQRS/Event Sourcing** (via `cqrs-es` + `postgres-es`). It provides a REST API for managing bank accounts, ledgers, transactions, and house accounts with JWT-based multi-tenant authentication. Supports both fiat (USD, TWD) and crypto assets (BTC, ETH, USDT) with currency-aware precision.
+Bankie is a multi-tenant banking/ledger system built in Rust as a **Cargo workspace** with three crates. It implements sub-account and ledger management using **CQRS/Event Sourcing** (via `cqrs-es` + `postgres-es`), a **Developer Portal Gateway** with session auth and API key management, and a **Portal SPA** (React + TypeScript). Supports both fiat (USD, TWD) and crypto assets (BTC, ETH, USDT) with currency-aware precision.
+
+## Workspace Structure
+
+```
+crates/
+├── bankie-core/     — Banking engine: CQRS aggregates, REST API (:3030), JWT tenant auth
+├── bankie-common/   — Shared types (AppError)
+└── bankie-gateway/  — Developer Portal: session auth, API key CRUD, rate limiting, reverse proxy (:4040)
+portal-spa/          — React SPA: dashboard, API keys, org settings, data views (:8080 via nginx)
+```
 
 ## Build & Development Commands
 
@@ -12,11 +22,13 @@ Bankie is a banking/ledger system built in Rust implementing sub-account and led
 # Build (use SQLX_OFFLINE=true when no live DB available)
 SQLX_OFFLINE=true cargo build
 cargo build --release --bin bankie
+cargo build --release --bin bankie-gateway
 
-# Run tests (126 unit tests, no DB needed)
+# Run tests (230 unit tests: 118 core + 104 gateway + 8 common, no DB needed)
 SQLX_OFFLINE=true cargo test -- --nocapture
-cargo test test_name -- --nocapture      # Single test
-cargo llvm-cov nextest                   # Coverage (requires cargo-nextest + cargo-llvm-cov)
+cargo test -p bankie-core test_name -- --nocapture    # Single test in specific crate
+cargo test -p bankie-gateway test_name -- --nocapture
+cargo llvm-cov nextest                                # Coverage (requires cargo-nextest + cargo-llvm-cov)
 
 # Lint (must pass CI — clippy treats warnings as errors)
 cargo clippy --all-targets --tests --benches --no-default-features -- -D warnings
@@ -24,24 +36,31 @@ cargo fmt -- --check
 cargo check --all
 
 # Regenerate sqlx offline cache (REQUIRED after changing any SQL query)
+# Core queries cached in crates/bankie-core/.sqlx/
 DATABASE_URL="postgres://bankie_app:password@localhost:5432/bankie_main" cargo sqlx prepare
 
 # E2E tests (59 tests, requires running stack)
 make docker-up && make docker-e2e        # Docker full-stack
 make local-setup && make local-e2e       # Local dev
 
-# Docker lifecycle
-make docker-up                           # Start full stack (postgres + redis + migrations + app)
+# Docker lifecycle (5 services: postgres, redis, migrations, bankie-core, bankie-gateway, portal-spa)
+make docker-up                           # Build and start full stack
 make docker-down                         # Stop (preserves data)
 make docker-clean                        # Stop + remove volumes (full data reset)
+
+# Local dev lifecycle
+make local-setup                         # One-shot: infra + db + build + jwt + server
+make local-gateway                       # Start gateway server (background)
+make local-portal                        # Start SPA dev server (:5173)
+make local-stop                          # Stop server + gateway + tear down infra
+
+# Portal SPA development
+cd portal-spa && npm install && npm run dev   # Vite dev server on :5173 (proxies /api to :4040)
+cd portal-spa && npm run build                # Production build to dist/
 
 # Interactive testing console (menu-driven, all API operations)
 make docker-interactive                  # Against Docker stack
 make local-interactive                   # Against local dev
-
-# Local dev lifecycle
-make local-setup                         # One-shot: infra + db + build + jwt + server
-make local-stop                          # Stop server + tear down infra
 
 # Generate JWT
 cargo run --bin bankie -- --mode secret_key              # Generate secret
@@ -53,83 +72,139 @@ make over-withdrawn-test
 
 ## Infrastructure Dependencies
 
-- **PostgreSQL 16** — event store, views, transactions, journals, outbox, balance snapshots
-- **Redis** — distributed lock for outbox/snapshot jobs + idempotency key deduplication
-- Config: `config.local.yaml` (loaded via `ENV` env var, defaults to `local`)
-- Env vars: `DB_PASSWD`, `JWT_SECRET`, `RUST_LOG`, `SQLX_OFFLINE=true` (for offline builds)
-- Docker Compose at root provides PostgreSQL + Redis + migrations + app container
+- **PostgreSQL 16** — event store, views, transactions, journals, outbox, balance snapshots, portal schema
+- **Redis** — distributed lock, idempotency dedup, API key cache, rate limiting (token bucket via Lua script)
+- **Config files**: `config.{ENV}.yaml` for core, `config.gateway.{ENV}.yaml` for gateway (ENV defaults to `local`, set to `docker` in containers)
+- **Env vars**: `DB_PASSWD`, `JWT_SECRET`, `CORE_URL`, `RUST_LOG`, `SQLX_OFFLINE=true`
+- **Docker Compose**: 6 services — PostgreSQL (:5432), Redis (:6379), migrations, bankie-core (:3030), bankie-gateway (:4040), portal-spa/nginx (:8080)
 
 ## Architecture
+
+### System Overview
+
+```
+Portal SPA (React :8080)
+  └→ nginx proxy /api/portal/* → Gateway :4040/portal/*
+
+Gateway (:4040)
+  ├→ Portal API (/portal/v1/*) — session cookie auth + CSRF
+  │   ├→ Auth: signup, login, logout
+  │   ├→ Org CRUD, member management
+  │   ├→ API key lifecycle: create, rotate (grace period), revoke
+  │   ├→ Dashboard stats
+  │   └→ Data proxy: mints 60s JWT → forwards to Core
+  └→ External API (/*) — API key auth
+      └→ api_key_resolver → rate_limiter → jwt_minter → reverse_proxy → Core :3030
+
+Core (:3030) — CQRS/Event Sourcing banking engine
+  └→ JWT tenant auth → all operations scoped to tenant_id
+```
+
+### Dual Auth Model
+
+**Portal SPA users** (session-based):
+- `POST /portal/v1/auth/login` → argon2id password verification → `portal_session` HttpOnly cookie + `csrf_token` cookie
+- CSRF double-submit: `X-CSRF-Token` header validated against cookie for mutating requests
+- `SessionClaims`: sub (member_id), org_id, tenant_id, role, csrf, exp (24h)
+
+**External API consumers** (API key-based):
+- `Authorization: Bearer bk_live_...` → SHA-256 hash lookup → `ResolvedApiKey` (org_id, tenant_id, scopes)
+- Gateway mints short-lived internal JWT (60s, `iss: "bankie-gateway"`) matching Core's Claims format
+- Rate limiting: Redis token bucket (burst 100, sustained 1000/min) per API key
 
 ### CQRS/Event Sourcing Core
 
 Two aggregates using `cqrs-es`/`postgres-es`:
 
-**BankAccount aggregate** (`src/event_sourcing/aggregate/bank_account.rs`)
+**BankAccount aggregate** (`crates/bankie-core/src/event_sourcing/aggregate/bank_account.rs`)
 - Commands: `OpenAccount`, `ApproveAccount`, `FreezeAccount`, `UnfreezeAccount`, `CloseAccount`, `Deposit`, `Withdrawal`, `Transfer`
-- Events: `AccountOpened`, `AccountKycApproved`, `AccountFrozen`, `AccountUnfrozen`, `AccountClosed`, `CustomerDepositedCash`, `CustomerWithdrewCash`
 - Commands sent via a **bounded** `mpsc` channel (capacity 10,000) and processed sequentially
 - Deposit/Withdrawal create transactions + journal entries + outbox records (not aggregate events)
-- Transfer creates paired debit/credit transactions between two accounts
 - Account lifecycle: `Pending` → `Approved` → `Freeze`/`CustomerClosed`
 
-**Ledger aggregate** (`src/event_sourcing/aggregate/ledger.rs`)
+**Ledger aggregate** (`crates/bankie-core/src/event_sourcing/aggregate/ledger.rs`)
 - Commands: `Init`, `Credit`, `DebitHold`, `DebitRelease`
-- Events: `LedgerInitiated`, `LedgerUpdated`
 - Tracks `available`, `pending`, and `current` balances using delta-based updates
-- Withdrawal uses debit-hold pattern: moves funds from `available` to `pending` immediately, then releases via outbox job
+- Withdrawal uses debit-hold pattern: moves funds from `available` to `pending`, releases via outbox job
 
 ### Tenant Isolation
 
-Every entity carries `tenant_id`. The flow:
+Every entity carries `tenant_id`. Two paths:
+
+**Core path** (direct JWT):
 ```
 JWT claims → auth middleware → Extension<i32> → CommandExtractor.set_tenant_id()
   → Command.tenant_id → Aggregate → BaseEvent.tenant_id → View.update()
-  → JSON payload (tenant_id field) → DB trigger → indexed tenant_id column
+  → JSON payload → DB trigger → indexed tenant_id column
+```
+
+**Gateway path** (API key → minted JWT):
+```
+API key → SHA-256 hash → DB lookup → ResolvedApiKey.tenant_id
+  → jwt_minter (60s internal JWT) → Core auth middleware → same flow as above
+```
+
+**Portal path** (session → data proxy):
+```
+Session cookie → SessionClaims.tenant_id → data_proxy mints JWT → Core
 ```
 
 Key design decisions:
-- **`#[serde(skip_deserializing)]`** on `tenant_id` in commands — clients cannot set it; only server-side injection from JWT
-- **DB triggers** sync `tenant_id` from cqrs-es JSON `payload` column to indexed columns on `bank_account_views` and `ledger_views` (the cqrs-es framework only writes JSON, we can't directly set denormalized columns)
-- **All SQL queries** filter by `AND tenant_id = $N`; all inserts include `tenant_id`
-- Outbox records carry `tenant_id` so background jobs inherit correct tenant context
+- `#[serde(skip_deserializing)]` on `tenant_id` in commands — only server-side injection
+- DB triggers sync `tenant_id` from cqrs-es JSON `payload` to indexed columns
+- Portal organizations auto-sync to Core tenants via PostgreSQL trigger (`portal.organizations` INSERT → `public.tenants`)
 
-### Multi-Asset Support
+### Portal Schema (in `portal` PostgreSQL schema)
 
-- `Currency` enum (USD, TWD, BTC, ETH, USDT) with per-currency precision (2, 0, 8, 18, 6)
-- `AssetRegistry` (`src/common/asset.rs`) — `Arc<RwLock<HashMap<String, Asset>>>` loaded at startup, validates asset codes at API boundary
-- `Money` type carries `amount: Decimal` + `currency: Currency`, use `money.asset_code()` (not `.currency.to_string()`)
-- Asset validation happens in route handlers before command dispatch
+7 tables: `organizations`, `org_members`, `api_keys`, `webhook_endpoints`, `webhook_deliveries`, `api_logs` (range-partitioned by month), `audit_logs`. Migration at `db/migrations/20260226000001_portal_schema.sql`. Tenant sync trigger at `20260226000002_portal_tenant_sync.sql`.
 
-### Middleware Stack
+### Gateway Middleware Stack
 
-Execution order (outermost → innermost → handler):
+**Portal routes** (`/portal/v1/*`):
+```
+Public: auth_routes (login/signup/logout) — no middleware
+Protected: session_auth (cookie JWT + CSRF validation) → org/api-key/dashboard/data-proxy handlers
+```
+
+**API proxy routes** (`/*` fallback):
+```
+api_key_resolver (Bearer → DB lookup + Redis cache 5min)
+  → rate_limiter (Redis token bucket via Lua script)
+  → jwt_minter (60s internal JWT)
+  → reverse_proxy → Core :3030
+```
+
+### Core Middleware Stack
+
 ```
 TraceLayer → CompressionLayer → AddExtension(State) → AddExtension(Redis)
-  → authorize (JWT auth + tenant_id extraction into Extension<i32>)
+  → authorize (JWT auth + tenant_id extraction)
   → idempotency_check (Redis SET NX EX, 24h TTL, tenant-scoped)
   → Handler
 ```
 
-### Idempotency
+### Multi-Asset Support
 
-`Idempotency-Key` HTTP header → Redis `SET NX EX 86400` scoped by `idempotency:{tenant_id}:{key}`. Duplicate requests return 409 Conflict. Fails open on Redis errors.
+- `Currency` enum (USD, TWD, BTC, ETH, USDT) with per-currency precision (2, 0, 8, 18, 6)
+- `AssetRegistry` — `Arc<RwLock<HashMap<String, Asset>>>` loaded at startup
+- `Money` type carries `amount: Decimal` + `currency: Currency`, use `money.asset_code()`
 
-### Outbox Pattern + Cron Jobs
+### Key Data Flows
 
-| Job | Schedule | Purpose |
-|-----|----------|---------|
-| Ledger job | Every 10s | Polls outbox → executes `LedgerCommand::Credit` or `DebitRelease`. Redis-locked. Retries with dead letter after 5 failures. |
-| Balance snapshot | Daily midnight UTC | Snapshots all active account balances to `balance_snapshots` table. Redis-locked. |
-
-### Key Data Flow
-
+**Banking operation** (via Core or Gateway proxy):
 ```
-HTTP Request → JWT Auth (extracts tenant_id) → Idempotency Check → Route Handler
+HTTP Request → Auth → Idempotency Check → Route Handler
   → CommandExtractor (deserialize + generate IDs + validate amounts > 0 + inject tenant_id)
-  → mpsc channel (bounded, 10k) → process_commands() → Aggregate::handle()
-    → BankAccountServices (validates status/balance, creates transactions/journals/outbox with tenant_id)
-    → Outbox cron job → Ledger aggregate (credit/debit release with tenant_id from outbox record)
+  → mpsc channel (bounded, 10k) → Aggregate::handle()
+    → BankAccountServices (validates status/balance, creates transactions/journals/outbox)
+    → Outbox cron job → Ledger aggregate (credit/debit release)
+```
+
+**API key rotation** (via Portal):
+```
+POST /portal/v1/api-keys/:id/rotate → creates new key (active) + marks old key (rotated)
+  → grace_expires_at set (default 24h) → both keys valid during grace period
+  → after grace period, old key stops working
 ```
 
 ### Double-Entry Bookkeeping
@@ -138,82 +213,90 @@ Every deposit/withdrawal creates a `Transaction` + `JournalEntry` + `JournalLine
 
 ### Sub-Account Architecture
 
-A user can have multiple account types (Checking, Interest, Yield) linked via `parent_id`:
-- **Master account** (Checking): `parent_id` is empty — the primary account
-- **Sub-accounts** (Interest, Yield): `parent_id` points to the master Checking account UUID
-- `find_checking_account` resolves the master by matching `external_reference_id` + `currency` + `kind=Checking` + `tenant_id`
-- Resolution happens during `OpenAccount` command handling in the aggregate
+Multiple account types (Checking, Interest, Yield) linked via `parent_id`. Master account (Checking) has empty `parent_id`; sub-accounts point to the master.
 
-**View projection gotcha**: When adding new event handlers in `query.rs`, never unconditionally overwrite `parent_id` (or similar fields set by earlier events). The `AccountKycApproved` event's `base_event` has an empty `parent_id` because `ApproveAccount` doesn't carry it — only update if the event value is non-empty. Same principle applies to any field set by `AccountOpened` but absent in later events.
+**View projection gotcha**: When adding new event handlers in `query.rs`, never unconditionally overwrite `parent_id` (or similar fields set by earlier events). Only update if the event value is non-empty.
 
-### Settlement Reports
+### Outbox Pattern + Cron Jobs
 
-`GET /v1/report/settlement` returns a CSV with UTF-8 BOM (Excel-compatible), double-entry journal data, running balances, and CSV-injection prevention. Implementation in `src/report.rs`. Supports single-account or all-accounts-for-tenant, max 90-day date range.
+| Job | Schedule | Purpose |
+|-----|----------|---------|
+| Ledger job | Every 10s | Polls outbox → executes `LedgerCommand::Credit` or `DebitRelease`. Redis-locked. |
+| Balance snapshot | Daily midnight UTC | Snapshots all active account balances. Redis-locked. |
 
 ### Structured Error Responses
 
-`AppError` enum (`src/common/error.rs`) maps to HTTP status codes with JSON `{code, message}` body:
+`AppError` enum in `crates/bankie-common/src/error.rs` (shared by both core and gateway):
 - `BadRequest(400)`, `Unauthorized(401)`, `Forbidden(403)`, `NotFound(404)`, `Conflict(409)`, `UnprocessableEntity(422)`, `InternalServerError(500)`
 
-### Module Layout
+## API Endpoints
 
-- `src/auth/` — JWT generation, validation, Axum auth middleware (tenant-based)
-- `src/command.rs` — `CommandExtractor` (validates amounts > 0, generates UUIDs/account numbers, injects tenant_id from JWT)
-- `src/house_account.rs` — `HouseAccountExtractor`
-- `src/common/money.rs` — `Money` type, `Currency` enum, precision functions
-- `src/common/asset.rs` — `AssetRegistry`, `Asset`, `AssetClass` (Fiat/Crypto)
-- `src/common/error.rs` — `AppError` structured HTTP error responses
-- `src/common/idempotency.rs` — Idempotency-Key middleware (Redis-backed)
-- `src/common/snowflake.rs` — Snowflake ID generation
-- `src/common/account.rs` — Bank account number generation
-- `src/configs/settings.rs` — Config loading from `config.{ENV}.yaml`
-- `src/domain/` — Domain models, events, finance structs, tenant, user views
-- `src/event_sourcing/` — Aggregates, commands, events, queries (CQRS view projections), helpers
-- `src/report.rs` — Settlement report CSV generation (running balances, CSV-injection prevention, currency precision)
-- `src/repository/adapter.rs` — `DatabaseClient` trait + `Adapter` wrapper (`mockall` for testing)
-- `src/repository/postgres.rs` — `DatabaseClient` impl for `PgPool` (all SQL queries with tenant filtering)
-- `src/repository/redis.rs` — Redis lock + get/set operations
-- `src/repository/configs.rs` — CQRS framework wiring
-- `src/route.rs` — Axum route handlers (all pass tenant_id to queries)
-- `src/service.rs` — `BankAccountApi` trait + `BankAccountLogic` (business logic)
-- `src/state.rs` — `ApplicationState` (DB pool, Redis, CQRS loaders, command sender, AssetRegistry)
-- `src/job.rs` — Outbox cron job + daily balance snapshot job
-
-### API Endpoints
+### Core (:3030)
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/health` | No | Liveness check |
 | GET | `/ready` | No | Readiness check (DB + Redis) |
-| GET | `/v1/bank_account/:id` | Yes | Query bank account view |
-| GET | `/v1/bank_account/:id/sub-accounts` | Yes | List sub-accounts under a master |
-| GET | `/v1/bank_account/by-number/:account_number` | Yes | Lookup by account number |
-| POST | `/v1/bank_account` | Yes | Execute bank account command |
-| GET | `/v1/ledger/:id` | Yes | Query ledger view |
-| GET | `/v1/house_account?currency=` | Yes | List house accounts |
-| POST | `/v1/house_account` | Yes | Create house account |
-| GET | `/v1/user/:id` | Yes | Query user's bank accounts with ledger |
-| GET | `/v1/accounts?offset=&limit=` | Yes | List all accounts for tenant (paginated, max 100) |
-| GET | `/v1/transaction?bank_account_id=&offset=&limit=` | Yes | List transactions (filterable by date, type, status) |
-| GET | `/v1/bank_account/:id/balance-history?start_date=&end_date=` | Yes | Balance history from snapshots |
-| GET | `/v1/report/settlement?start_date=&end_date=&bank_account_id=&currency=` | Yes | Settlement report CSV (max 90-day range) |
+| GET | `/v1/bank_account/:id` | JWT | Query bank account view |
+| GET | `/v1/bank_account/:id/sub-accounts` | JWT | List sub-accounts |
+| GET | `/v1/bank_account/by-number/:account_number` | JWT | Lookup by account number |
+| POST | `/v1/bank_account` | JWT | Execute bank account command |
+| GET | `/v1/ledger/:id` | JWT | Query ledger view |
+| GET | `/v1/house_account?currency=` | JWT | List house accounts |
+| POST | `/v1/house_account` | JWT | Create house account |
+| GET | `/v1/user/:id` | JWT | Query user's accounts with ledger |
+| GET | `/v1/accounts?offset=&limit=` | JWT | List accounts (paginated, max 100) |
+| GET | `/v1/transaction?bank_account_id=&offset=&limit=` | JWT | List transactions |
+| GET | `/v1/bank_account/:id/balance-history` | JWT | Balance history from snapshots |
+| GET | `/v1/report/settlement` | JWT | Settlement report CSV (max 90-day range) |
+
+### Gateway (:4040) — Portal API
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/portal/v1/auth/signup` | None | Create org + owner member |
+| POST | `/portal/v1/auth/login` | None | Login → session cookie |
+| POST | `/portal/v1/auth/logout` | None | Clear cookies |
+| GET | `/portal/v1/dashboard/stats` | Session | Org stats + key counts |
+| GET | `/portal/v1/organization` | Session | Get org details |
+| PUT | `/portal/v1/organization` | Session | Update org |
+| GET | `/portal/v1/api-keys` | Session | List API keys |
+| POST | `/portal/v1/api-keys` | Session | Create key (returns raw key once) |
+| POST | `/portal/v1/api-keys/:id/rotate` | Session | Rotate key (grace period) |
+| DELETE | `/portal/v1/api-keys/:id` | Session | Revoke key |
+| GET | `/portal/v1/data/*` | Session | Data proxy → Core (accounts, transactions, reports) |
+
+### Gateway (:4040) — External API Proxy
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| ANY | `/*` | API Key | Proxied to Core with minted JWT |
+
+## Portal SPA
+
+React 19 + Vite + TailwindCSS 4 + TanStack Query. Source at `portal-spa/src/`.
+
+- **API client** (`api/client.ts`): base URL `/api/portal/v1`, CSRF token from cookie, credentials `same-origin`
+- **Auth** (`hooks/useAuth.ts`): context provider, login/signup/logout, 401 redirect
+- **Pages**: Login, Signup, Dashboard, ApiKeys, Organization, Accounts, Transactions, Reports, ApiDocs
+- **Types** (`types/index.ts`): TypeScript interfaces matching gateway response shapes
+- **Vite proxy**: `/api` → `http://localhost:4040` (dev only; production uses nginx)
+- **Production**: nginx serves SPA at `:80`, proxies `/api/portal/` → `http://bankie-gateway:4040/portal/`
 
 ## Testing Patterns
 
-- **126 unit tests** + **59 e2e tests**, unit tests need no DB (`SQLX_OFFLINE=true`)
-- Aggregate tests use `cqrs_es::test::TestFramework` with given/when/then pattern and `test_case!`/`test_error_case!` macros
-- `MockBankAccountServices` (manual mock in `bank_account.rs`) with configurable responses via `Mutex<Option<Result<...>>>` fields for negative-path testing
-- DB layer uses `mockall::automock` on `DatabaseClient` trait
-- Auth middleware tests use `MockDatabaseClient` + tower's `oneshot`
-- `CommandExtractor` tests verify amount validation (zero/negative rejection) and tenant_id injection
-- View projection tests cover all `BankAccountEvent` and `LedgerEvent` variants, including parent_id preservation across event replay
-- Settlement report tests (`src/report.rs`) cover CSV formatting, injection prevention, running balance computation, multi-currency precision
-- E2E tests (`scripts/e2e-test.sh`) cover the full banking lifecycle: house accounts, account opening/approval, deposit, withdrawal, transfer, freeze/unfreeze/close, sub-accounts (master/interest/yield with parent_id linkage), settlement reports, query endpoints, and negative cases
-- Interactive testing console (`scripts/interactive.sh`) — menu-driven tool for manual API testing with state tracking
+- **230 unit tests** (118 core + 104 gateway + 8 common) + **59 e2e tests**, unit tests need no DB (`SQLX_OFFLINE=true`)
+- Core aggregate tests use `cqrs_es::test::TestFramework` with given/when/then pattern and `test_case!`/`test_error_case!` macros
+- `MockBankAccountServices` (manual mock) with `Mutex<Option<Result<...>>>` fields for negative-path testing
+- Core DB layer uses `mockall::automock` on `DatabaseClient` trait
+- Gateway uses `mockall` on `OrgRepository`, `MemberRepository`, `ApiKeyRepository` traits
+- Gateway middleware tests (session, JWT minter, scope enforcer) use mock repos + tower's `oneshot`
+- E2E tests (`scripts/e2e-test.sh`) cover full banking lifecycle
+- Interactive testing console (`scripts/interactive.sh`) for manual API testing
 
 ## SQLx Offline Mode
 
-Compile-time checked queries via `sqlx`. Set `SQLX_OFFLINE=true` and ensure `.sqlx/` directory has cached query metadata for builds without a live DB. **When any SQL query in `postgres.rs` changes**, you must regenerate the cache with a running DB:
+Compile-time checked queries via `sqlx`. Core cache at `crates/bankie-core/.sqlx/`. When any SQL query changes, regenerate with a running DB:
 ```bash
 DATABASE_URL="postgres://bankie_app:password@localhost:5432/bankie_main" cargo sqlx prepare
 ```
@@ -222,7 +305,8 @@ DATABASE_URL="postgres://bankie_app:password@localhost:5432/bankie_main" cargo s
 
 `.pre-commit-config.yaml`: `cargo fmt`, `cargo check`, `cargo clippy` (with `-D warnings`), `cargo test`.
 
-## Two Binary Targets
+## Three Binary Targets
 
-- `bankie` (`src/main.rs`) — Main server with CLI modes: `server`, `secret_key`, `jwt`. Graceful shutdown via `SIGINT`.
-- `migrations` (`src/repository/migrate.rs`) — Database migration runner
+- `bankie` (`crates/bankie-core/src/main.rs`) — Core banking server (:3030). CLI modes: `server`, `secret_key`, `jwt`. Graceful shutdown via `SIGINT`.
+- `bankie-gateway` (`crates/bankie-gateway/src/main.rs`) — Developer Portal gateway (:4040). Graceful shutdown via `SIGINT`.
+- `migrations` (`crates/bankie-core/src/repository/migrate.rs`) — Database migration runner.
