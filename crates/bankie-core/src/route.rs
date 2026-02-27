@@ -28,7 +28,7 @@ pub struct HouseAccountParams {
 
 #[derive(Deserialize)]
 pub struct TransactionParams {
-    pub bank_account_id: String,
+    pub bank_account_id: Option<String>,
     #[serde(default)]
     pub offset: i64,
     #[serde(default = "default_limit")]

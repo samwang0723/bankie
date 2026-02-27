@@ -9,13 +9,22 @@ import {
 } from "lucide-react";
 import { api } from "../api/client.ts";
 import { handleApiError } from "../hooks/useAuth.ts";
-import type {
-  Transaction,
-  LedgerView,
-  BankAccountView
-} from "../types/index.ts";
+import type { Transaction, BankAccountView } from "../types/index.ts";
 
-function TypeBadge({ kind }: { kind: string }) {
+const TYPE_LABELS: Record<string, string> = {
+  deposit: "Deposit",
+  withdrawal: "Withdrawal",
+  transfer: "Transfer"
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  posted: "Completed",
+  pending: "Pending",
+  failed: "Failed"
+};
+
+function TypeBadge({ txType }: { txType: string }) {
+  const label = TYPE_LABELS[txType] ?? txType;
   const styles: Record<string, string> = {
     Deposit: "bg-green-50 text-green-700",
     Withdrawal: "bg-red-50 text-red-700",
@@ -24,15 +33,16 @@ function TypeBadge({ kind }: { kind: string }) {
   return (
     <span
       className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-        styles[kind] ?? "bg-slate-100 text-slate-600"
+        styles[label] ?? "bg-slate-100 text-slate-600"
       }`}
     >
-      {kind}
+      {label}
     </span>
   );
 }
 
 function StatusBadge({ status }: { status: string }) {
+  const label = STATUS_LABELS[status] ?? status;
   const styles: Record<string, string> = {
     Completed: "bg-green-50 text-green-700",
     Pending: "bg-amber-50 text-amber-700",
@@ -41,10 +51,10 @@ function StatusBadge({ status }: { status: string }) {
   return (
     <span
       className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-        styles[status] ?? "bg-slate-100 text-slate-600"
+        styles[label] ?? "bg-slate-100 text-slate-600"
       }`}
     >
-      {status}
+      {label}
     </span>
   );
 }
@@ -59,9 +69,9 @@ function formatDateTime(dateStr: string): string {
   });
 }
 
-function formatAmount(amount: string, kind: string): string {
+function formatAmount(amount: string, txType: string): string {
   const num = parseFloat(amount);
-  const prefix = kind === "Withdrawal" ? "-" : "+";
+  const prefix = txType === "withdrawal" ? "-" : "+";
   return `${prefix}${Math.abs(num).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 })}`;
 }
 
@@ -82,40 +92,31 @@ function downloadReport(params: {
   );
 }
 
+function todayStr(): string {
+  return new Date().toISOString().split("T")[0];
+}
+
 export function Transactions() {
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  const [startDate, setStartDate] = useState(todayStr);
+  const [endDate, setEndDate] = useState(todayStr);
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  // Fetch accounts to get the first account's ledger for balance cards
-  const { data: accounts = [] } = useQuery({
-    queryKey: ["accounts-for-ledger"],
+  // Fetch accounts and pick the first active (Approved) one for balance summary
+  const { data: firstAccount } = useQuery({
+    queryKey: ["accounts-for-balance"],
     queryFn: async () => {
       try {
         const resp = await api.get<{ entries: BankAccountView[] }>(
-          "/data/accounts?offset=0&limit=1"
+          "/data/accounts?offset=0&limit=100"
         );
-        return resp.entries;
+        const active = resp.entries.find((a) => a.status === "Approved");
+        return active ?? (resp.entries.length > 0 ? resp.entries[0] : null);
       } catch (err) {
         handleApiError(err);
-        return [];
+        return null;
       }
     }
-  });
-
-  const firstAccountId = accounts.length > 0 ? accounts[0].view_id : null;
-
-  const { data: ledger } = useQuery({
-    queryKey: ["ledger", firstAccountId],
-    queryFn: async () => {
-      try {
-        return await api.get<LedgerView>(`/data/ledger/${firstAccountId}`);
-      } catch (err) {
-        handleApiError(err);
-      }
-    },
-    enabled: !!firstAccountId
   });
 
   // Build query params for transactions
@@ -151,6 +152,13 @@ export function Transactions() {
       start_date: startDate || thirtyDaysAgo.toISOString().split("T")[0],
       end_date: endDate || today.toISOString().split("T")[0]
     });
+  }
+
+  function formatBalance(value: string | undefined): string {
+    if (value == null) return "--";
+    const num = parseFloat(value);
+    if (isNaN(num)) return "--";
+    return num.toLocaleString("en-US", { minimumFractionDigits: 2 });
   }
 
   return (
@@ -214,9 +222,9 @@ export function Transactions() {
                 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent"
             >
               <option value="all">All</option>
-              <option value="Deposit">Deposit</option>
-              <option value="Withdrawal">Withdrawal</option>
-              <option value="Transfer">Transfer</option>
+              <option value="deposit">Deposit</option>
+              <option value="withdrawal">Withdrawal</option>
+              <option value="transfer">Transfer</option>
             </select>
           </div>
           <div>
@@ -230,15 +238,15 @@ export function Transactions() {
                 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent"
             >
               <option value="all">All</option>
-              <option value="Completed">Completed</option>
-              <option value="Pending">Pending</option>
-              <option value="Failed">Failed</option>
+              <option value="posted">Completed</option>
+              <option value="pending">Pending</option>
+              <option value="failed">Failed</option>
             </select>
           </div>
         </div>
       </div>
 
-      {/* Balance cards */}
+      {/* Balance cards — uses inline balances from accounts endpoint */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-xl border border-slate-200 p-5">
           <div className="flex items-center gap-2 mb-2">
@@ -246,14 +254,12 @@ export function Transactions() {
             <p className="text-sm font-medium text-slate-500">Available</p>
           </div>
           <p className="text-2xl font-semibold text-slate-900">
-            {ledger
-              ? parseFloat(ledger.available).toLocaleString("en-US", {
-                  minimumFractionDigits: 2
-                })
-              : "--"}
+            {formatBalance(firstAccount?.available)}
           </p>
-          {ledger && (
-            <p className="text-xs text-slate-400 mt-1">{ledger.currency}</p>
+          {firstAccount && (
+            <p className="text-xs text-slate-400 mt-1">
+              {firstAccount.currency}
+            </p>
           )}
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-5">
@@ -262,30 +268,26 @@ export function Transactions() {
             <p className="text-sm font-medium text-slate-500">Pending</p>
           </div>
           <p className="text-2xl font-semibold text-amber-600">
-            {ledger
-              ? parseFloat(ledger.pending).toLocaleString("en-US", {
-                  minimumFractionDigits: 2
-                })
-              : "--"}
+            {formatBalance(firstAccount?.pending)}
           </p>
-          {ledger && (
-            <p className="text-xs text-slate-400 mt-1">{ledger.currency}</p>
+          {firstAccount && (
+            <p className="text-xs text-slate-400 mt-1">
+              {firstAccount.currency}
+            </p>
           )}
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-5">
           <div className="flex items-center gap-2 mb-2">
             <TrendingUp className="w-4 h-4 text-cyan-500" />
-            <p className="text-sm font-medium text-slate-500">Current</p>
+            <p className="text-sm font-medium text-slate-500">Balance</p>
           </div>
           <p className="text-2xl font-semibold text-slate-900">
-            {ledger
-              ? parseFloat(ledger.current).toLocaleString("en-US", {
-                  minimumFractionDigits: 2
-                })
-              : "--"}
+            {formatBalance(firstAccount?.book_balance)}
           </p>
-          {ledger && (
-            <p className="text-xs text-slate-400 mt-1">{ledger.currency}</p>
+          {firstAccount && (
+            <p className="text-xs text-slate-400 mt-1">
+              {firstAccount.currency}
+            </p>
           )}
         </div>
       </div>
@@ -346,29 +348,29 @@ export function Transactions() {
               {transactions.map((tx) => (
                 <tr key={tx.id} className="hover:bg-slate-50 h-14">
                   <td className="px-6 py-3 text-sm text-slate-600">
-                    {formatDateTime(tx.created_at)}
+                    {formatDateTime(tx.transaction_date)}
                   </td>
                   <td className="px-6 py-3 text-sm font-mono text-slate-900 text-xs">
                     {tx.bank_account_id.substring(0, 8)}...
                   </td>
                   <td className="px-6 py-3">
-                    <TypeBadge kind={tx.kind} />
+                    <TypeBadge txType={tx.transaction_type} />
                   </td>
                   <td
                     className={`px-6 py-3 text-sm font-mono text-right font-medium ${
-                      tx.kind === "Withdrawal"
+                      tx.transaction_type === "withdrawal"
                         ? "text-red-600"
                         : "text-green-600"
                     }`}
                   >
-                    {formatAmount(tx.amount, tx.kind)} {tx.currency}
+                    {formatAmount(tx.amount, tx.transaction_type)} {tx.currency}
                   </td>
                   <td className="px-6 py-3">
                     <StatusBadge status={tx.status} />
                   </td>
                   <td className="px-6 py-3 text-sm font-mono text-slate-500 text-xs">
-                    {tx.reference_id
-                      ? `${tx.reference_id.substring(0, 12)}...`
+                    {tx.transaction_reference
+                      ? `${tx.transaction_reference.substring(0, 12)}...`
                       : "--"}
                   </td>
                 </tr>

@@ -96,28 +96,36 @@ export interface DashboardStats {
   environment: Environment;
 }
 
-// Bank Accounts (from bankie-core views)
+// Bank Accounts (matches BankAccountWithLedger from Core /v1/accounts)
 export interface BankAccountView {
-  view_id: string;
+  id: string;
   account_number: string;
   kind: string;
   currency: string;
   status: string;
-  external_reference_id: string;
+  account_type?: string;
+  external_reference_id: string | null;
   parent_id: string | null;
+  ledger_id?: string;
+  available?: string;
+  pending?: string;
+  book_balance?: string;
   created_at?: string;
+  updated_at?: string;
 }
 
-// Transactions
+// Transactions (matches TransactionWithMoney from Core)
 export interface Transaction {
   id: string;
   bank_account_id: string;
-  kind: string;
+  transaction_type: string;
+  transaction_reference: string;
+  transaction_date: string;
   amount: string;
   currency: string;
+  description: string | null;
+  metadata: Record<string, unknown>;
   status: string;
-  reference_id: string;
-  created_at: string;
 }
 
 // Ledger

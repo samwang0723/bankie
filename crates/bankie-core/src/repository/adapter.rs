@@ -77,14 +77,14 @@ pub trait DatabaseClient {
     async fn get_unprocessed_outbox(&self) -> Result<Vec<Outbox>, Error>;
     async fn get_transactions(
         &self,
-        bank_account_id: String,
+        bank_account_id: Option<String>,
         offset: i64,
         limit: i64,
         tenant_id: i32,
     ) -> Result<Vec<Transaction>, Error>;
     async fn get_transactions_filtered(
         &self,
-        bank_account_id: String,
+        bank_account_id: Option<String>,
         offset: i64,
         limit: i64,
         start_date: Option<NaiveDate>,
@@ -95,7 +95,7 @@ pub trait DatabaseClient {
     ) -> Result<Vec<Transaction>, Error>;
     async fn count_transactions_filtered(
         &self,
-        bank_account_id: String,
+        bank_account_id: Option<String>,
         start_date: Option<NaiveDate>,
         end_date: Option<NaiveDate>,
         transaction_type: Option<String>,
@@ -281,7 +281,7 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
 
     pub async fn get_transactions(
         &self,
-        bank_account_id: String,
+        bank_account_id: Option<String>,
         offset: i64,
         limit: i64,
         tenant_id: i32,
@@ -293,7 +293,7 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
 
     pub async fn get_transactions_filtered(
         &self,
-        bank_account_id: String,
+        bank_account_id: Option<String>,
         offset: i64,
         limit: i64,
         start_date: Option<NaiveDate>,
@@ -318,7 +318,7 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
 
     pub async fn count_transactions_filtered(
         &self,
-        bank_account_id: String,
+        bank_account_id: Option<String>,
         start_date: Option<NaiveDate>,
         end_date: Option<NaiveDate>,
         transaction_type: Option<String>,
