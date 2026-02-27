@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Plus, Eye, EyeOff } from "lucide-react";
 import { api } from "../api/client.ts";
 import { handleApiError } from "../hooks/useAuth.ts";
 import type {
@@ -241,6 +241,7 @@ function KeyRow({
   onRotate: () => void;
   onRevoke: () => void;
 }) {
+  const [showPrefix, setShowPrefix] = useState(false);
   const isRevoked = apiKey.status !== "active";
   const textColor = isRevoked ? "text-slate-400" : "text-slate-900";
   const mutedColor = isRevoked ? "text-slate-300" : "text-slate-500";
@@ -256,7 +257,25 @@ function KeyRow({
           {apiKey.name}
         </td>
         <td className={`px-6 py-3 text-sm font-mono text-xs ${mutedColor}`}>
-          {apiKey.key_prefix}...
+          <span className="inline-flex items-center gap-1.5">
+            <span>
+              {showPrefix ? `${apiKey.key_prefix}...` : "••••••••••••••••"}
+            </span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowPrefix(!showPrefix);
+              }}
+              className="p-0.5 text-slate-400 hover:text-cyan-500 transition-colors"
+              aria-label={showPrefix ? "Hide key prefix" : "Reveal key prefix"}
+            >
+              {showPrefix ? (
+                <EyeOff className="w-3.5 h-3.5" />
+              ) : (
+                <Eye className="w-3.5 h-3.5" />
+              )}
+            </button>
+          </span>
         </td>
         <td className="px-6 py-3">
           <StatusBadge status={apiKey.status} />
