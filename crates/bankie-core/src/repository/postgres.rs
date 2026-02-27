@@ -514,15 +514,15 @@ impl DatabaseClient for PgPool {
 
     async fn get_transactions(
         &self,
-        bank_account_id: String,
+        bank_account_id: Option<String>,
         offset: i64,
         limit: i64,
         tenant_id: i32,
     ) -> Result<Vec<Transaction>, Error> {
-        let account_id =
-            Uuid::parse_str(&bank_account_id).map_err(|e| Error::Protocol(e.to_string()))?;
-        let transactions = sqlx::query_as!(
-            Transaction,
+        let account_id = bank_account_id
+            .map(|id| Uuid::parse_str(&id).map_err(|e| Error::Protocol(e.to_string())))
+            .transpose()?;
+        let transactions = sqlx::query_as::<_, Transaction>(
             r#"
             SELECT
                 id,
@@ -537,16 +537,16 @@ impl DatabaseClient for PgPool {
                 journal_entry_id,
                 tenant_id
             FROM transactions
-            WHERE bank_account_id = $1
+            WHERE ($1::uuid IS NULL OR bank_account_id = $1)
             AND tenant_id = $2
             ORDER BY created_at DESC
             OFFSET $3 LIMIT $4
             "#,
-            account_id,
-            tenant_id,
-            offset,
-            limit,
         )
+        .bind(account_id)
+        .bind(tenant_id)
+        .bind(offset)
+        .bind(limit)
         .fetch_all(self)
         .await?;
 
@@ -555,7 +555,7 @@ impl DatabaseClient for PgPool {
 
     async fn get_transactions_filtered(
         &self,
-        bank_account_id: String,
+        bank_account_id: Option<String>,
         offset: i64,
         limit: i64,
         start_date: Option<NaiveDate>,
@@ -564,8 +564,9 @@ impl DatabaseClient for PgPool {
         status: Option<String>,
         tenant_id: i32,
     ) -> Result<Vec<Transaction>, Error> {
-        let account_id =
-            Uuid::parse_str(&bank_account_id).map_err(|e| Error::Protocol(e.to_string()))?;
+        let account_id = bank_account_id
+            .map(|id| Uuid::parse_str(&id).map_err(|e| Error::Protocol(e.to_string())))
+            .transpose()?;
 
         let ref_prefix = transaction_type.as_deref().map(|t| match t {
             "deposit" => TRANS_DEPOSIT,
@@ -580,7 +581,7 @@ impl DatabaseClient for PgPool {
                 id, bank_account_id, transaction_reference, transaction_date,
                 amount, currency, description, metadata, status, journal_entry_id, tenant_id
             FROM transactions
-            WHERE bank_account_id = $1
+            WHERE ($1::uuid IS NULL OR bank_account_id = $1)
               AND tenant_id = $8
               AND ($4::date IS NULL OR transaction_date >= $4::date::timestamptz)
               AND ($5::date IS NULL OR transaction_date < ($5::date + 1)::timestamptz)
@@ -606,15 +607,16 @@ impl DatabaseClient for PgPool {
 
     async fn count_transactions_filtered(
         &self,
-        bank_account_id: String,
+        bank_account_id: Option<String>,
         start_date: Option<NaiveDate>,
         end_date: Option<NaiveDate>,
         transaction_type: Option<String>,
         status: Option<String>,
         tenant_id: i32,
     ) -> Result<i64, Error> {
-        let account_id =
-            Uuid::parse_str(&bank_account_id).map_err(|e| Error::Protocol(e.to_string()))?;
+        let account_id = bank_account_id
+            .map(|id| Uuid::parse_str(&id).map_err(|e| Error::Protocol(e.to_string())))
+            .transpose()?;
 
         let ref_prefix = transaction_type.as_deref().map(|t| match t {
             "deposit" => TRANS_DEPOSIT,
@@ -626,7 +628,7 @@ impl DatabaseClient for PgPool {
         let count = sqlx::query_scalar::<_, i64>(
             r#"
             SELECT COUNT(1) FROM transactions
-            WHERE bank_account_id = $1
+            WHERE ($1::uuid IS NULL OR bank_account_id = $1)
               AND tenant_id = $6
               AND ($2::date IS NULL OR transaction_date >= $2::date::timestamptz)
               AND ($3::date IS NULL OR transaction_date < ($3::date + 1)::timestamptz)

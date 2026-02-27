@@ -82,9 +82,13 @@ function downloadReport(params: {
   );
 }
 
+function todayStr(): string {
+  return new Date().toISOString().split("T")[0];
+}
+
 export function Transactions() {
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  const [startDate, setStartDate] = useState(todayStr);
+  const [endDate, setEndDate] = useState(todayStr);
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
