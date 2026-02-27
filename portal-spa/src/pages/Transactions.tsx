@@ -102,15 +102,16 @@ export function Transactions() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  // Fetch first account for balance summary cards (inline balances from accounts endpoint)
+  // Fetch accounts and pick the first active (Approved) one for balance summary
   const { data: firstAccount } = useQuery({
     queryKey: ["accounts-for-balance"],
     queryFn: async () => {
       try {
         const resp = await api.get<{ entries: BankAccountView[] }>(
-          "/data/accounts?offset=0&limit=1"
+          "/data/accounts?offset=0&limit=100"
         );
-        return resp.entries.length > 0 ? resp.entries[0] : null;
+        const active = resp.entries.find((a) => a.status === "Approved");
+        return active ?? (resp.entries.length > 0 ? resp.entries[0] : null);
       } catch (err) {
         handleApiError(err);
         return null;
@@ -153,9 +154,11 @@ export function Transactions() {
     });
   }
 
-  function formatBalance(value: number | undefined): string {
+  function formatBalance(value: string | undefined): string {
     if (value == null) return "--";
-    return value.toLocaleString("en-US", { minimumFractionDigits: 2 });
+    const num = parseFloat(value);
+    if (isNaN(num)) return "--";
+    return num.toLocaleString("en-US", { minimumFractionDigits: 2 });
   }
 
   return (

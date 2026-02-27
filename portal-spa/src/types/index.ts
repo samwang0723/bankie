@@ -107,9 +107,9 @@ export interface BankAccountView {
   external_reference_id: string | null;
   parent_id: string | null;
   ledger_id?: string;
-  available?: number;
-  pending?: number;
-  book_balance?: number;
+  available?: string;
+  pending?: string;
+  book_balance?: string;
   created_at?: string;
   updated_at?: string;
 }
