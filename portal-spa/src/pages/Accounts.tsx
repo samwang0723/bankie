@@ -207,13 +207,11 @@ export function Accounts() {
             <tbody className="divide-y divide-slate-200">
               {filtered.map((account) => (
                 <AccountRow
-                  key={account.view_id}
+                  key={account.id}
                   account={account}
-                  isExpanded={expandedId === account.view_id}
+                  isExpanded={expandedId === account.id}
                   onToggleExpand={() =>
-                    setExpandedId(
-                      expandedId === account.view_id ? null : account.view_id
-                    )
+                    setExpandedId(expandedId === account.id ? null : account.id)
                   }
                 />
               ))}
@@ -283,7 +281,7 @@ function AccountRow({
               <div>
                 <p className="text-slate-500">Account ID</p>
                 <p className="font-mono text-slate-900 mt-1 text-xs break-all">
-                  {account.view_id}
+                  {account.id}
                 </p>
               </div>
               <div>
