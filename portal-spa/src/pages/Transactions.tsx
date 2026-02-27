@@ -1,11 +1,9 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeftRight,
   Download,
-  DollarSign,
-  Clock,
-  TrendingUp
+  Calendar
 } from "lucide-react";
 import { api } from "../api/client.ts";
 import { handleApiError } from "../hooks/useAuth.ts";
@@ -27,13 +25,13 @@ const STATUS_LABELS: Record<string, string> = {
 function TypeBadge({ txType }: { txType: string }) {
   const label = TYPE_LABELS[txType] ?? txType;
   const styles: Record<string, string> = {
-    Deposit: "bg-green-50 text-green-700",
-    Withdrawal: "bg-red-50 text-red-700",
-    Transfer: "bg-cyan-50 text-cyan-700"
+    Deposit: "bg-[#DCFCE7] text-[#16A34A]",
+    Withdrawal: "bg-[#FEE2E2] text-[#DC2626]",
+    Transfer: "bg-[#E0E7FF] text-[#4F46E5]"
   };
   return (
     <span
-      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+      className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold ${
         styles[label] ?? "bg-slate-100 text-slate-600"
       }`}
     >
@@ -42,16 +40,16 @@ function TypeBadge({ txType }: { txType: string }) {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function TxStatusBadge({ status }: { status: string }) {
   const label = STATUS_LABELS[status] ?? status;
   const styles: Record<string, string> = {
-    Completed: "bg-green-50 text-green-700",
-    Pending: "bg-amber-50 text-amber-700",
-    Failed: "bg-red-50 text-red-700"
+    Completed: "bg-[#DCFCE7] text-[#16A34A]",
+    Pending: "bg-[#FEF3C7] text-[#D97706]",
+    Failed: "bg-[#FEE2E2] text-[#DC2626]"
   };
   return (
     <span
-      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
         styles[label] ?? "bg-slate-100 text-slate-600"
       }`}
     >
@@ -61,19 +59,33 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function formatDateTime(dateStr: string): string {
-  return new Date(dateStr).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit"
-  });
+  const d = new Date(dateStr);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const h = String(d.getHours()).padStart(2, "0");
+  const min = String(d.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${day} ${h}:${min}`;
 }
 
-function formatAmount(amount: string, txType: string): string {
+function formatAmount(
+  amount: string,
+  txType: string,
+  currency: string
+): string {
   const num = parseFloat(amount);
-  const prefix = txType === "withdrawal" ? "-" : "+";
-  return `${prefix}${Math.abs(num).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 })}`;
+  const prefix = txType === "withdrawal" ? "- " : "+ ";
+  const isFiat = currency === "USD" || currency === "TWD";
+  if (isFiat) {
+    return `${prefix}$${Math.abs(num).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    })}`;
+  }
+  return `${prefix}${Math.abs(num).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 8
+  })}`;
 }
 
 function downloadReport(params: {
@@ -97,6 +109,20 @@ function todayStr(): string {
   return new Date().toISOString().split("T")[0];
 }
 
+function formatBalance(value: string | undefined, currency: string): string {
+  if (value == null) return "--";
+  const num = parseFloat(value);
+  if (isNaN(num)) return "--";
+  const isFiat = currency === "USD" || currency === "TWD";
+  if (isFiat) {
+    return `$${num.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+  }
+  return num.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 8
+  });
+}
+
 const PAGE_SIZE = 10;
 
 export function Transactions() {
@@ -106,22 +132,36 @@ export function Transactions() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [offset, setOffset] = useState(0);
 
-  // Fetch accounts and pick the first active (Approved) one for balance summary
-  const { data: firstAccount } = useQuery({
-    queryKey: ["accounts-for-balance"],
+  // Fetch all accounts for balance summary + account number lookup
+  const { data: accountsData } = useQuery({
+    queryKey: ["accounts-for-tx"],
     queryFn: async () => {
       try {
         const resp = await api.get<{ entries: BankAccountView[] }>(
           "/data/accounts?offset=0&limit=100"
         );
-        const active = resp.entries.find((a) => a.status === "Approved");
-        return active ?? (resp.entries.length > 0 ? resp.entries[0] : null);
+        return resp.entries;
       } catch (err) {
         handleApiError(err);
-        return null;
+        return [];
       }
     }
   });
+
+  const allAccounts = accountsData ?? [];
+  const firstAccount = useMemo(() => {
+    const active = allAccounts.find((a) => a.status === "Approved");
+    return active ?? (allAccounts.length > 0 ? allAccounts[0] : null);
+  }, [allAccounts]);
+
+  // Build account ID → account_number lookup map
+  const accountNumberMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const a of allAccounts) {
+      map.set(a.id, a.account_number);
+    }
+    return map;
+  }, [allAccounts]);
 
   // Build query params for transactions
   const queryParams = new URLSearchParams();
@@ -176,153 +216,117 @@ export function Transactions() {
     });
   }
 
-  function formatBalance(value: string | undefined): string {
-    if (value == null) return "--";
-    const num = parseFloat(value);
-    if (isNaN(num)) return "--";
-    return num.toLocaleString("en-US", { minimumFractionDigits: 2 });
-  }
-
   return (
     <div>
       {/* Page header */}
-      <div className="flex items-start justify-between mb-8">
-        <div>
-          <div className="flex items-center gap-3 mb-1">
+      <div className="flex items-center justify-between mb-8">
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-3">
             <ArrowLeftRight className="w-6 h-6 text-cyan-400" />
             <h1 className="text-2xl font-bold text-slate-900">Transactions</h1>
           </div>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="text-sm text-slate-500">
             View transaction history and ledger balances.
           </p>
         </div>
         <button
           onClick={handleExportCsv}
-          className="flex items-center gap-2 h-10 px-5 bg-cyan-400 text-[#0A0F1C] text-sm font-semibold rounded-lg
-            hover:bg-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2"
+          className="flex items-center gap-2 h-10 px-4 bg-white border border-slate-200 rounded-lg
+            text-[13px] font-medium text-slate-900 hover:bg-slate-50 transition-colors"
         >
-          <Download className="w-4 h-4" />
+          <Download className="w-4 h-4 text-slate-500" />
           Export CSV
         </button>
       </div>
 
       {/* Filter row */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 mb-6">
-        <div className="flex flex-wrap items-end gap-4">
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">
-              Start Date
-            </label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => {
-                setStartDate(e.target.value);
-                setOffset(0);
-              }}
-              className="h-9 px-3 bg-white border border-slate-200 rounded-lg text-sm text-slate-900
-                focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">
-              End Date
-            </label>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => {
-                setEndDate(e.target.value);
-                setOffset(0);
-              }}
-              className="h-9 px-3 bg-white border border-slate-200 rounded-lg text-sm text-slate-900
-                focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">
-              Type
-            </label>
-            <select
-              value={typeFilter}
-              onChange={(e) => {
-                setTypeFilter(e.target.value);
-                setOffset(0);
-              }}
-              className="h-9 px-3 bg-white border border-slate-200 rounded-lg text-sm text-slate-900
-                focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent"
-            >
-              <option value="all">All</option>
-              <option value="deposit">Deposit</option>
-              <option value="withdrawal">Withdrawal</option>
-              <option value="transfer">Transfer</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">
-              Status
-            </label>
-            <select
-              value={statusFilter}
-              onChange={(e) => {
-                setStatusFilter(e.target.value);
-                setOffset(0);
-              }}
-              className="h-9 px-3 bg-white border border-slate-200 rounded-lg text-sm text-slate-900
-                focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent"
-            >
-              <option value="all">All</option>
-              <option value="posted">Completed</option>
-              <option value="pending">Pending</option>
-              <option value="failed">Failed</option>
-            </select>
-          </div>
+      <div className="flex flex-wrap items-center gap-3 mb-6">
+        <div className="flex items-center gap-2 h-9 px-3.5 bg-white border border-slate-200 rounded-lg">
+          <Calendar className="w-3.5 h-3.5 text-slate-500" />
+          <input
+            type="date"
+            value={startDate}
+            onChange={(e) => {
+              setStartDate(e.target.value);
+              setOffset(0);
+            }}
+            className="text-xs font-medium text-slate-900 bg-transparent border-none outline-none"
+          />
+          <span className="text-slate-400">-</span>
+          <input
+            type="date"
+            value={endDate}
+            onChange={(e) => {
+              setEndDate(e.target.value);
+              setOffset(0);
+            }}
+            className="text-xs font-medium text-slate-900 bg-transparent border-none outline-none"
+          />
         </div>
+        <select
+          value={typeFilter}
+          onChange={(e) => {
+            setTypeFilter(e.target.value);
+            setOffset(0);
+          }}
+          className="h-9 px-3.5 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-500
+            focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent"
+        >
+          <option value="all">All Types</option>
+          <option value="deposit">Deposit</option>
+          <option value="withdrawal">Withdrawal</option>
+          <option value="transfer">Transfer</option>
+        </select>
+        <select
+          value={statusFilter}
+          onChange={(e) => {
+            setStatusFilter(e.target.value);
+            setOffset(0);
+          }}
+          className="h-9 px-3.5 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-500
+            focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent"
+        >
+          <option value="all">All Statuses</option>
+          <option value="posted">Completed</option>
+          <option value="pending">Pending</option>
+          <option value="failed">Failed</option>
+        </select>
       </div>
 
-      {/* Balance cards — uses inline balances from accounts endpoint */}
+      {/* Ledger balance cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-xl border border-slate-200 p-5">
-          <div className="flex items-center gap-2 mb-2">
-            <DollarSign className="w-4 h-4 text-green-500" />
-            <p className="text-sm font-medium text-slate-500">Available</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-medium text-slate-500">Available</p>
+            <span className="font-mono text-[11px] font-semibold text-[#94A3B8]">
+              {firstAccount?.currency ?? ""}
+            </span>
           </div>
-          <p className="text-2xl font-semibold text-slate-900">
-            {formatBalance(firstAccount?.available)}
+          <p className="text-2xl font-bold font-mono text-slate-900">
+            {formatBalance(firstAccount?.available, firstAccount?.currency ?? "USD")}
           </p>
-          {firstAccount && (
-            <p className="text-xs text-slate-400 mt-1">
-              {firstAccount.currency}
-            </p>
-          )}
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-5">
-          <div className="flex items-center gap-2 mb-2">
-            <Clock className="w-4 h-4 text-amber-500" />
-            <p className="text-sm font-medium text-slate-500">Pending</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-medium text-slate-500">Pending</p>
+            <span className="font-mono text-[11px] font-semibold text-[#94A3B8]">
+              {firstAccount?.currency ?? ""}
+            </span>
           </div>
-          <p className="text-2xl font-semibold text-amber-600">
-            {formatBalance(firstAccount?.pending)}
+          <p className="text-2xl font-bold font-mono text-[#F59E0B]">
+            {formatBalance(firstAccount?.pending, firstAccount?.currency ?? "USD")}
           </p>
-          {firstAccount && (
-            <p className="text-xs text-slate-400 mt-1">
-              {firstAccount.currency}
-            </p>
-          )}
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-5">
-          <div className="flex items-center gap-2 mb-2">
-            <TrendingUp className="w-4 h-4 text-cyan-500" />
-            <p className="text-sm font-medium text-slate-500">Balance</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-medium text-slate-500">Current</p>
+            <span className="font-mono text-[11px] font-semibold text-[#94A3B8]">
+              {firstAccount?.currency ?? ""}
+            </span>
           </div>
-          <p className="text-2xl font-semibold text-slate-900">
-            {formatBalance(firstAccount?.book_balance)}
+          <p className="text-2xl font-bold font-mono text-slate-900">
+            {formatBalance(firstAccount?.book_balance, firstAccount?.currency ?? "USD")}
           </p>
-          {firstAccount && (
-            <p className="text-xs text-slate-400 mt-1">
-              {firstAccount.currency}
-            </p>
-          )}
         </div>
       </div>
 
@@ -357,52 +361,53 @@ export function Transactions() {
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <table className="w-full" aria-label="Transactions">
             <thead>
-              <tr className="border-b border-slate-200 bg-[#F8FAFC]">
-                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
+              <tr className="bg-[#F8FAFC] h-11">
+                <th className="text-left px-6 text-xs font-semibold text-slate-500 w-[160px]">
                   Date
                 </th>
-                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono min-w-[220px]">
+                <th className="text-left px-6 text-xs font-semibold text-slate-500">
                   Account
                 </th>
-                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
+                <th className="text-left px-6 text-xs font-semibold text-slate-500 w-[100px]">
                   Type
                 </th>
-                <th className="text-right px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
+                <th className="text-right px-6 text-xs font-semibold text-slate-500 w-[140px]">
                   Amount
                 </th>
-                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
+                <th className="text-left px-6 text-xs font-semibold text-slate-500 w-[100px]">
                   Status
                 </th>
-                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
+                <th className="text-left px-6 text-xs font-semibold text-slate-500">
                   Reference
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {transactions.map((tx) => (
-                <tr key={tx.id} className="hover:bg-slate-50 h-14">
-                  <td className="px-6 py-3 text-sm text-slate-600">
+                <tr key={tx.id} className="hover:bg-slate-50 h-[52px]">
+                  <td className="px-6 font-mono text-xs font-medium text-slate-900 w-[160px]">
                     {formatDateTime(tx.transaction_date)}
                   </td>
-                  <td className="px-6 py-3 font-mono text-slate-900 text-xs">
-                    {tx.bank_account_id.substring(0, 20)}...
+                  <td className="px-6 font-mono text-xs font-medium text-slate-900">
+                    {accountNumberMap.get(tx.bank_account_id) ??
+                      tx.bank_account_id.substring(0, 14) + "..."}
                   </td>
-                  <td className="px-6 py-3">
+                  <td className="px-6 w-[100px]">
                     <TypeBadge txType={tx.transaction_type} />
                   </td>
                   <td
-                    className={`px-6 py-3 text-sm font-mono text-right font-medium ${
+                    className={`px-6 font-mono text-[13px] text-right font-semibold w-[140px] ${
                       tx.transaction_type === "withdrawal"
-                        ? "text-red-600"
-                        : "text-green-600"
+                        ? "text-[#DC2626]"
+                        : "text-[#16A34A]"
                     }`}
                   >
-                    {formatAmount(tx.amount, tx.transaction_type)} {tx.currency}
+                    {formatAmount(tx.amount, tx.transaction_type, tx.currency)}
                   </td>
-                  <td className="px-6 py-3">
-                    <StatusBadge status={tx.status} />
+                  <td className="px-6 w-[100px]">
+                    <TxStatusBadge status={tx.status} />
                   </td>
-                  <td className="px-6 py-3 text-sm font-mono text-slate-500 text-xs">
+                  <td className="px-6 font-mono text-[11px] font-medium text-[#94A3B8]">
                     {tx.transaction_reference
                       ? `${tx.transaction_reference.substring(0, 12)}...`
                       : "--"}

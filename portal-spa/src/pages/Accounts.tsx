@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Wallet, Search, Eye, ChevronDown, ChevronRight } from "lucide-react";
+import { Wallet, Search, Eye } from "lucide-react";
 import { api } from "../api/client.ts";
 import { handleApiError } from "../hooks/useAuth.ts";
 import { Pagination } from "../components/Pagination.tsx";
@@ -8,14 +8,14 @@ import type { BankAccountView } from "../types/index.ts";
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
-    Approved: "bg-green-50 text-green-700",
-    Pending: "bg-amber-50 text-amber-700",
+    Approved: "bg-[#DCFCE7] text-[#16A34A]",
+    Pending: "bg-[#FEF3C7] text-[#D97706]",
     Freeze: "bg-red-50 text-red-700",
     CustomerClosed: "bg-slate-100 text-slate-600"
   };
   return (
     <span
-      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
         styles[status] ?? "bg-slate-100 text-slate-600"
       }`}
     >
@@ -24,28 +24,20 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function KindBadge({ kind }: { kind: string }) {
-  const styles: Record<string, string> = {
-    Checking: "bg-cyan-50 text-cyan-700",
-    Interest: "bg-purple-50 text-purple-700",
-    Yield: "bg-indigo-50 text-indigo-700"
-  };
-  return (
-    <span
-      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-        styles[kind] ?? "bg-slate-100 text-slate-600"
-      }`}
-    >
-      {kind}
-    </span>
-  );
-}
-
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric"
+function formatBalance(
+  value: string | undefined,
+  currency: string
+): string {
+  if (value == null) return "--";
+  const num = parseFloat(value);
+  if (isNaN(num)) return "--";
+  const isFiat = currency === "USD" || currency === "TWD";
+  if (isFiat) {
+    return `$${num.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+  }
+  return num.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 8
   });
 }
 
@@ -53,7 +45,6 @@ const ACCOUNTS_PAGE_SIZE = 10;
 
 export function Accounts() {
   const [search, setSearch] = useState("");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
 
   const { data: accountData, isLoading } = useQuery({
@@ -101,25 +92,25 @@ export function Accounts() {
   return (
     <div>
       {/* Page header */}
-      <div className="flex items-start justify-between mb-8">
-        <div>
-          <div className="flex items-center gap-3 mb-1">
+      <div className="flex items-center justify-between mb-8">
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-3">
             <Wallet className="w-6 h-6 text-cyan-400" />
             <h1 className="text-2xl font-bold text-slate-900">Accounts</h1>
           </div>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="text-sm text-slate-500">
             View and manage bank accounts for your organization.
           </p>
         </div>
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
           <input
             type="text"
             placeholder="Search accounts..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 pr-4 h-10 bg-white border border-slate-200 rounded-lg text-sm text-slate-900
-              placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent w-64"
+            className="pl-10 pr-4 h-10 bg-white border border-slate-200 rounded-lg text-[13px] text-slate-900
+              placeholder:text-[#94A3B8] focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent w-60"
           />
         </div>
       </div>
@@ -140,26 +131,28 @@ export function Accounts() {
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <div className="bg-white rounded-xl border border-slate-200 p-5">
-            <p className="text-sm font-medium text-slate-500">Total Accounts</p>
-            <p className="mt-2 text-3xl font-semibold text-slate-900">
+            <p className="text-xs font-medium text-slate-500">
+              Total Accounts
+            </p>
+            <p className="mt-1 text-[28px] font-bold font-mono text-slate-900">
               {totalCount}
             </p>
           </div>
           <div className="bg-white rounded-xl border border-slate-200 p-5">
-            <p className="text-sm font-medium text-slate-500">Active</p>
-            <p className="mt-2 text-3xl font-semibold text-green-600">
+            <p className="text-xs font-medium text-slate-500">Active</p>
+            <p className="mt-1 text-[28px] font-bold font-mono text-[#16A34A]">
               {activeCount}
             </p>
           </div>
           <div className="bg-white rounded-xl border border-slate-200 p-5">
-            <p className="text-sm font-medium text-slate-500">Pending</p>
-            <p className="mt-2 text-3xl font-semibold text-amber-600">
+            <p className="text-xs font-medium text-slate-500">Pending</p>
+            <p className="mt-1 text-[28px] font-bold font-mono text-[#F59E0B]">
               {pendingCount}
             </p>
           </div>
           <div className="bg-white rounded-xl border border-slate-200 p-5">
-            <p className="text-sm font-medium text-slate-500">Frozen</p>
-            <p className="mt-2 text-3xl font-semibold text-red-600">
+            <p className="text-xs font-medium text-slate-500">Frozen</p>
+            <p className="mt-1 text-[28px] font-bold font-mono text-[#DC2626]">
               {frozenCount}
             </p>
           </div>
@@ -199,35 +192,54 @@ export function Accounts() {
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <table className="w-full" aria-label="Bank accounts">
             <thead>
-              <tr className="border-b border-slate-200 bg-[#F8FAFC]">
-                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono w-10" />
-                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
+              <tr className="bg-[#F8FAFC] h-12">
+                <th className="text-left px-6 text-xs font-semibold text-slate-500">
                   Account Number
                 </th>
-                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
+                <th className="text-left px-6 text-xs font-semibold text-slate-500 w-[100px]">
                   Type
                 </th>
-                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
+                <th className="text-left px-6 text-xs font-semibold text-slate-500 w-[80px]">
                   Currency
                 </th>
-                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
+                <th className="text-left px-6 text-xs font-semibold text-slate-500 w-[100px]">
                   Status
                 </th>
-                <th className="text-right px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono w-[80px]">
+                <th className="text-left px-6 text-xs font-semibold text-slate-500">
+                  Balance
+                </th>
+                <th className="text-right px-6 text-xs font-semibold text-slate-500 w-[80px]">
                   Actions
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {filtered.map((account) => (
-                <AccountRow
-                  key={account.id}
-                  account={account}
-                  isExpanded={expandedId === account.id}
-                  onToggleExpand={() =>
-                    setExpandedId(expandedId === account.id ? null : account.id)
-                  }
-                />
+                <tr key={account.id} className="hover:bg-slate-50 h-14">
+                  <td className="px-6 text-[13px] font-mono font-medium text-slate-900">
+                    {account.account_number}
+                  </td>
+                  <td className="px-6 text-[13px] text-slate-900 w-[100px]">
+                    {account.kind}
+                  </td>
+                  <td className="px-6 font-mono text-xs font-semibold text-slate-500 w-[80px]">
+                    {account.currency}
+                  </td>
+                  <td className="px-6 w-[100px]">
+                    <StatusBadge status={account.status} />
+                  </td>
+                  <td className="px-6 font-mono text-[13px] font-semibold text-slate-900">
+                    {formatBalance(account.available, account.currency)}
+                  </td>
+                  <td className="px-6 text-right w-[80px]">
+                    <button
+                      className="p-1.5 text-[#94A3B8] hover:text-cyan-500 transition-colors"
+                      aria-label={`View details for ${account.account_number}`}
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
               ))}
             </tbody>
           </table>
@@ -240,92 +252,5 @@ export function Accounts() {
         </div>
       )}
     </div>
-  );
-}
-
-function AccountRow({
-  account,
-  isExpanded,
-  onToggleExpand
-}: {
-  account: BankAccountView;
-  isExpanded: boolean;
-  onToggleExpand: () => void;
-}) {
-  return (
-    <>
-      <tr
-        className="hover:bg-slate-50 cursor-pointer h-14"
-        onClick={onToggleExpand}
-        aria-expanded={isExpanded}
-      >
-        <td className="px-6 py-3 text-slate-400">
-          {isExpanded ? (
-            <ChevronDown className="w-4 h-4" />
-          ) : (
-            <ChevronRight className="w-4 h-4" />
-          )}
-        </td>
-        <td className="px-6 py-3 text-sm font-mono font-medium text-slate-900">
-          {account.account_number}
-        </td>
-        <td className="px-6 py-3">
-          <KindBadge kind={account.kind} />
-        </td>
-        <td className="px-6 py-3 text-sm font-medium text-slate-900">
-          {account.currency}
-        </td>
-        <td className="px-6 py-3">
-          <StatusBadge status={account.status} />
-        </td>
-        <td className="px-6 py-3 text-right">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleExpand();
-            }}
-            className="p-1.5 text-slate-400 hover:text-cyan-500 transition-colors"
-            aria-label={`View details for ${account.account_number}`}
-          >
-            <Eye className="w-4 h-4" />
-          </button>
-        </td>
-      </tr>
-      {isExpanded && (
-        <tr>
-          <td
-            colSpan={6}
-            className="px-6 py-4 bg-slate-50 border-t border-slate-100"
-          >
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-              <div>
-                <p className="text-slate-500">Account ID</p>
-                <p className="font-mono text-slate-900 mt-1 text-xs break-all">
-                  {account.id}
-                </p>
-              </div>
-              <div>
-                <p className="text-slate-500">External Reference</p>
-                <p className="font-mono text-slate-900 mt-1 text-xs break-all">
-                  {account.external_reference_id || "--"}
-                </p>
-              </div>
-              <div>
-                <p className="text-slate-500">Parent Account</p>
-                <p className="font-mono text-slate-900 mt-1 text-xs break-all">
-                  {account.parent_id || "None (master)"}
-                </p>
-              </div>
-              <div>
-                <p className="text-slate-500">Created</p>
-                <p className="font-medium text-slate-900 mt-1">
-                  {account.created_at ? formatDate(account.created_at) : "--"}
-                </p>
-              </div>
-            </div>
-          </td>
-        </tr>
-      )}
-    </>
   );
 }
