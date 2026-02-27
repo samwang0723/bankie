@@ -39,7 +39,23 @@ impl Settings {
     }
 
     fn load_from_file(env: &str) -> Self {
-        let file = format!("config.{}.yaml", env);
+        let filename = format!("config.{}.yaml", env);
+        // Try current directory first, then workspace root (for running from crate subdirs)
+        let file = if std::path::Path::new(&filename).exists() {
+            filename.clone()
+        } else {
+            // Walk up to find the config file (supports workspace layout)
+            let mut dir = std::env::current_dir().unwrap_or_default();
+            loop {
+                let candidate = dir.join(&filename);
+                if candidate.exists() {
+                    break candidate.to_string_lossy().to_string();
+                }
+                if !dir.pop() {
+                    break filename.clone();
+                }
+            }
+        };
         info!("Loading configuration from: {}", file);
         let settings = Config::builder()
             .add_source(config::File::with_name(&file))

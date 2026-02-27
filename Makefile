@@ -1,5 +1,5 @@
 .PHONY: help test lint changelog-gen changelog-commit docker-build \
-       local-setup local-infra local-init-db local-migrate local-build local-start local-stop local-jwt local-demo local-e2e local-interactive \
+       local-setup local-infra local-init-db local-migrate local-build local-start local-gateway local-portal local-stop local-jwt local-demo local-e2e local-interactive \
        docker-up docker-down docker-logs docker-clean docker-jwt docker-e2e docker-interactive
 
 help: ## show this help
@@ -113,9 +113,26 @@ local-start: ## start the bankie server (background)
 	done
 	@echo "[local] Server ready at http://localhost:3030"
 
-local-stop: ## stop server + tear down infra
-	@echo "[local] Stopping bankie server..."
+local-gateway: ## start the gateway server (background, requires bankie running)
+	@echo "[local] Starting gateway..."
+	@DB_PASSWD=$(DB_PASSWD) JWT_SECRET=$(JWT_SECRET) ENV=local RUST_LOG=info \
+		cargo run --bin bankie-gateway &
+	@echo "[local] Waiting for gateway to be ready..."
+	@for i in $$(seq 1 30); do \
+		curl -sf http://localhost:4040/health > /dev/null 2>&1 && break; \
+		sleep 1; \
+	done
+	@echo "[local] Gateway ready at http://localhost:4040"
+
+local-portal: ## serve portal SPA locally (requires npm)
+	@echo "[local] Starting portal SPA dev server..."
+	@cd portal-spa && npm run dev &
+	@echo "[local] Portal SPA at http://localhost:5173"
+
+local-stop: ## stop server + gateway + tear down infra
+	@echo "[local] Stopping bankie server and gateway..."
 	@-pkill -f "bankie.*--mode server" 2>/dev/null || true
+	@-pkill -f "bankie-gateway" 2>/dev/null || true
 	@echo "[local] Stopping Docker containers..."
 	@docker compose -f docker-compose.local.yml down
 	@echo "[local] Stopped."
@@ -141,18 +158,24 @@ local-interactive: ## interactive console for manual API testing
 # docker full stack  #
 ######################
 
-docker-up: ## start full stack (postgres + redis + migrations + bankie) via docker compose
+docker-up: ## start full stack (postgres + redis + migrations + bankie + gateway + portal)
 	@echo "[docker] Building and starting full stack..."
 	@docker compose up -d --build
 	@echo ""
-	@echo "[docker] Waiting for bankie to be ready..."
+	@echo "[docker] Waiting for services to be ready..."
 	@for i in $$(seq 1 60); do \
 		curl -sf http://localhost:$${APP_PORT:-3030}/health > /dev/null 2>&1 && break; \
 		sleep 2; \
 	done
+	@for i in $$(seq 1 30); do \
+		curl -sf http://localhost:$${GATEWAY_PORT:-4040}/health > /dev/null 2>&1 && break; \
+		sleep 2; \
+	done
 	@echo ""
 	@echo "=========================================="
-	@echo "  Bankie is running on http://localhost:$${APP_PORT:-3030}"
+	@echo "  Bankie Core:    http://localhost:$${APP_PORT:-3030}"
+	@echo "  Gateway API:    http://localhost:$${GATEWAY_PORT:-4040}"
+	@echo "  Portal SPA:     http://localhost:$${PORTAL_PORT:-8080}"
 	@echo "=========================================="
 	@echo ""
 	@echo "View logs:  make docker-logs"
@@ -246,10 +269,10 @@ db-pg-migrate:
 	-e "s/DB_PORT/$$DB_PORT/g" \
 	-e "s/DB_PASSWORD/$$DB_PASSWORD/g" \
 	-e "s/APP_NAME_UND/$(APP_NAME_UND)/g" \
-	./src/repository/migrate.rs && \
+	./crates/bankie-core/src/repository/migrate.rs && \
 	cargo run --bin migrations && \
 	git stash push -m "Stash changes made by db-pg-migrate" && \
-	mv ./src/repository/migrate.rs.bak ./src/repository/migrate.rs \
+	mv ./crates/bankie-core/src/repository/migrate.rs.bak ./crates/bankie-core/src/repository/migrate.rs \
 	)
 
 #########

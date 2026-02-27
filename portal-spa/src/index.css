@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --color-primary: #22D3EE;
+  --color-primary-dark: #06B6D4;
+  --color-navy: #0A0F1C;
+  --color-navy-light: #1E293B;
+}
