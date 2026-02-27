@@ -19,8 +19,8 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  posted: "Completed",
-  pending: "Pending",
+  completed: "Completed",
+  processing: "Pending",
   failed: "Failed"
 };
 
@@ -305,8 +305,8 @@ export function Transactions() {
             focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent"
         >
           <option value="all">All Statuses</option>
-          <option value="posted">Completed</option>
-          <option value="pending">Pending</option>
+          <option value="completed">Completed</option>
+          <option value="processing">Pending</option>
           <option value="failed">Failed</option>
         </select>
       </div>
