@@ -1,14 +1,16 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  ArrowLeftRight,
-  Download,
-  Calendar
-} from "lucide-react";
+import { ArrowLeftRight, Download, Calendar } from "lucide-react";
 import { api } from "../api/client.ts";
 import { handleApiError } from "../hooks/useAuth.ts";
 import { Pagination } from "../components/Pagination.tsx";
 import type { Transaction, BankAccountView } from "../types/index.ts";
+
+function formatAccountNumber(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length !== 12) return raw;
+  return `${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(8, 12)}`;
+}
 
 const TYPE_LABELS: Record<string, string> = {
   deposit: "Deposit",
@@ -303,7 +305,10 @@ export function Transactions() {
             </span>
           </div>
           <p className="text-2xl font-bold font-mono text-slate-900">
-            {formatBalance(firstAccount?.available, firstAccount?.currency ?? "USD")}
+            {formatBalance(
+              firstAccount?.available,
+              firstAccount?.currency ?? "USD"
+            )}
           </p>
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-5">
@@ -314,7 +319,10 @@ export function Transactions() {
             </span>
           </div>
           <p className="text-2xl font-bold font-mono text-[#F59E0B]">
-            {formatBalance(firstAccount?.pending, firstAccount?.currency ?? "USD")}
+            {formatBalance(
+              firstAccount?.pending,
+              firstAccount?.currency ?? "USD"
+            )}
           </p>
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-5">
@@ -325,7 +333,10 @@ export function Transactions() {
             </span>
           </div>
           <p className="text-2xl font-bold font-mono text-slate-900">
-            {formatBalance(firstAccount?.book_balance, firstAccount?.currency ?? "USD")}
+            {formatBalance(
+              firstAccount?.book_balance,
+              firstAccount?.currency ?? "USD"
+            )}
           </p>
         </div>
       </div>
@@ -389,8 +400,10 @@ export function Transactions() {
                     {formatDateTime(tx.transaction_date)}
                   </td>
                   <td className="px-6 font-mono text-xs font-medium text-slate-900">
-                    {accountNumberMap.get(tx.bank_account_id) ??
-                      tx.bank_account_id.substring(0, 14) + "..."}
+                    {formatAccountNumber(
+                      accountNumberMap.get(tx.bank_account_id) ??
+                        tx.bank_account_id.substring(0, 14)
+                    )}
                   </td>
                   <td className="px-6 w-[100px]">
                     <TypeBadge txType={tx.transaction_type} />

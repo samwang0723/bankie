@@ -6,6 +6,12 @@ import { handleApiError } from "../hooks/useAuth.ts";
 import { Pagination } from "../components/Pagination.tsx";
 import type { BankAccountView } from "../types/index.ts";
 
+function formatAccountNumber(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length !== 12) return raw;
+  return `${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(8, 12)}`;
+}
+
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
     Approved: "bg-[#DCFCE7] text-[#16A34A]",
@@ -24,10 +30,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function formatBalance(
-  value: string | undefined,
-  currency: string
-): string {
+function formatBalance(value: string | undefined, currency: string): string {
   if (value == null) return "--";
   const num = parseFloat(value);
   if (isNaN(num)) return "--";
@@ -131,9 +134,7 @@ export function Accounts() {
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <div className="bg-white rounded-xl border border-slate-200 p-5">
-            <p className="text-xs font-medium text-slate-500">
-              Total Accounts
-            </p>
+            <p className="text-xs font-medium text-slate-500">Total Accounts</p>
             <p className="mt-1 text-[28px] font-bold font-mono text-slate-900">
               {totalCount}
             </p>
@@ -217,7 +218,7 @@ export function Accounts() {
               {filtered.map((account) => (
                 <tr key={account.id} className="hover:bg-slate-50 h-14">
                   <td className="px-6 text-[13px] font-mono font-medium text-slate-900">
-                    {account.account_number}
+                    {formatAccountNumber(account.account_number)}
                   </td>
                   <td className="px-6 text-[13px] text-slate-900 w-[100px]">
                     {account.kind}
