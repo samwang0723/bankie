@@ -111,6 +111,12 @@ function todayStr(): string {
   return new Date().toISOString().split("T")[0];
 }
 
+function daysAgoStr(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().split("T")[0];
+}
+
 function formatBalance(value: string | undefined, currency: string): string {
   if (value == null) return "--";
   const num = parseFloat(value);
@@ -128,7 +134,7 @@ function formatBalance(value: string | undefined, currency: string): string {
 const PAGE_SIZE = 10;
 
 export function Transactions() {
-  const [startDate, setStartDate] = useState(todayStr);
+  const [startDate, setStartDate] = useState(() => daysAgoStr(5));
   const [endDate, setEndDate] = useState(todayStr);
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -398,6 +404,9 @@ export function Transactions() {
                 <th className="text-left px-6 text-xs font-semibold text-slate-500 w-[100px]">
                   Type
                 </th>
+                <th className="text-left px-6 text-xs font-semibold text-slate-500 w-[80px]">
+                  Currency
+                </th>
                 <th className="text-right px-6 text-xs font-semibold text-slate-500 w-[140px]">
                   Amount
                 </th>
@@ -423,6 +432,9 @@ export function Transactions() {
                   </td>
                   <td className="px-6 w-[100px]">
                     <TypeBadge txType={tx.transaction_type} />
+                  </td>
+                  <td className="px-6 font-mono text-xs font-semibold text-slate-500 w-[80px]">
+                    {tx.currency}
                   </td>
                   <td
                     className={`px-6 font-mono text-[13px] text-right font-semibold w-[140px] ${
