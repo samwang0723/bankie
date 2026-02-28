@@ -4791,6 +4791,24 @@
                     },
                     {
                       "type": "frame",
+                      "id": "tthc3b",
+                      "name": "tthc3b",
+                      "width": 80,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "tthc3bt",
+                          "name": "tthc3bt",
+                          "fill": "#64748B",
+                          "content": "Currency",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
                       "id": "xPOiE",
                       "name": "tthc4",
                       "width": 140,
@@ -4929,6 +4947,24 @@
                               "fontWeight": "600"
                             }
                           ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "tr1c3b",
+                      "name": "tr1c3b",
+                      "width": 80,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "tr1c3bt",
+                          "name": "tr1c3bt",
+                          "fill": "#64748B",
+                          "content": "USD",
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 12,
+                          "fontWeight": "600"
                         }
                       ]
                     },
@@ -5090,6 +5126,24 @@
                     },
                     {
                       "type": "frame",
+                      "id": "tr2c3b",
+                      "name": "tr2c3b",
+                      "width": 80,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "tr2c3bt",
+                          "name": "tr2c3bt",
+                          "fill": "#64748B",
+                          "content": "USD",
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
                       "id": "bVV5g",
                       "name": "tr2c4",
                       "width": 140,
@@ -5241,6 +5295,24 @@
                               "fontWeight": "600"
                             }
                           ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "tr3c3b",
+                      "name": "tr3c3b",
+                      "width": 80,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "tr3c3bt",
+                          "name": "tr3c3bt",
+                          "fill": "#64748B",
+                          "content": "BTC",
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 12,
+                          "fontWeight": "600"
                         }
                       ]
                     },
