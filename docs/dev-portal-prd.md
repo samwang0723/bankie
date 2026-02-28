@@ -6,8 +6,8 @@
 | **Feature Label** | Developer Portal |
 | **Authors** | PM Agent (bankie team) |
 | **Audiences** | Engineering, Product, Security, Compliance |
-| **Status** | Implemented (Phase 1 Complete) |
-| **Version** | 1.1 |
+| **Status** | Implemented (Phase 1 Complete, Phase 1.1 In Progress) |
+| **Version** | 1.2 |
 | **Reviewers** | sam.wang (SVP Eng), chad.liu, sims.xu, ivan.kp.lau |
 | **Domain Owners** | Fiat Tech: sims.xu, donald.ding, auli.chan · Onboarding Tech: chad.liu, ivan.kp.lau |
 | **PRD Date** | 2026-02-26 |
@@ -23,7 +23,9 @@ Bankie is a production-grade banking/ledger system with CQRS/Event Sourcing, mul
 
 **Phase 1 outcomes (delivered)**: Self-service org signup, API key lifecycle (create/rotate/revoke), scope-enforced API access, data proxy to Core (accounts, transactions, ledger, reports), session-based portal auth with CSRF protection, and full Docker Compose deployment.
 
-**Remaining for future phases**: Webhook delivery, rate limiting on proxy path, sandbox environment, audit logging, team member invite flow.
+**Phase 1.1 (in progress)**: Dashboard scopes-granted metric, API request logging to `portal.api_logs`, audit logging for key operations + recent activity feed.
+
+**Remaining for future phases**: Webhook delivery, rate limiting on proxy path, sandbox environment, team member invite flow.
 
 ---
 
@@ -36,7 +38,7 @@ Bankie is a production-grade banking/ledger system with CQRS/Event Sourcing, mul
 | P1 | Tenant onboarding requires CLI `cargo run --bin bankie -- --mode jwt` per tenant | Manual, error-prone, doesn't scale beyond 10 tenants | **Critical** | **Resolved** |
 | P2 | No API key rotation — compromised JWT requires full reissuance + downtime | Security risk; no grace period for migration | **Critical** | **Resolved** |
 | P3 | No webhook system — tenants must poll for state changes | Inefficient integration, missed events, delayed reconciliation | **High** | Open (tables created, dispatcher not built) |
-| P4 | No API usage visibility — no request logs, no rate limiting metrics | Cannot diagnose issues, no abuse protection | **High** | Partially addressed (rate limiter middleware exists, not wired to proxy path) |
+| P4 | No API usage visibility — no request logs, no rate limiting metrics | Cannot diagnose issues, no abuse protection | **High** | 🔜 Phase 1.1: API request logging + dashboard metrics. Phase 2: rate limiter wiring. |
 | P5 | No team management — single JWT per tenant, no role separation | Shared credentials, no audit trail of who did what | **Medium** | Partially addressed (owner/admin/member roles, no invite flow yet) |
 | P6 | No sandbox environment — tenants test against production data | Risk of data corruption, compliance concern | **Medium** | Open |
 
@@ -45,7 +47,7 @@ Bankie is a production-grade banking/ledger system with CQRS/Event Sourcing, mul
 1. **Self-service tenant onboarding** — org signup → API key generation in < 5 minutes ✅
 2. **Secure key lifecycle** — create, rotate (with 24h grace period), revoke, scope permissions ✅
 3. **Webhook-driven architecture** — push events to tenant endpoints with reliability guarantees ❌ (Future)
-4. **API observability** — searchable request logs, rate limiting with standard headers ⚠️ (Middleware built, not integrated)
+4. **API observability** — searchable request logs, rate limiting with standard headers 🔜 (Phase 1.1: request logging + dashboard metrics; Phase 2: rate limiting)
 5. **Team collaboration** — RBAC with Owner/Admin/Member roles ⚠️ (Auth done, invite flow pending)
 6. **Environment isolation** — sandbox vs production ❌ (Future)
 
@@ -216,7 +218,7 @@ bankie/
 | M5 | **Rate Limiting** | ⚠️ Partial | Token bucket middleware built (100 burst, 1000/min). Headers: `X-RateLimit-Limit/Remaining/Reset`. **Not yet wired to proxy path.** |
 | M6 | **Organization Management** | ✅ Done | Create org, auto-assign tenant_id via DB sequence, slug uniqueness, DB trigger syncs to tenants table |
 | M7 | **Team RBAC** | ⚠️ Partial | 3 roles: Owner/Admin/Member. Session-based auth. **No invite flow yet** — members created only via signup. |
-| M8 | **Dashboard — Home/Overview** | ✅ Done | Org name, environment, total/active key counts, request count placeholder |
+| M8 | **Dashboard — Home/Overview** | ⚠️ Phase 1.1 | Org name, environment, total/active key counts delivered. **Scopes granted was incorrectly showing total_api_keys count** (needs unique scope computation). **API request count was hardcoded to 0** (needs api_logs integration). **Recent activity was static placeholder** (needs audit_logs integration). |
 | M9 | **Dashboard — API Keys page** | ✅ Done | List, create, rotate, revoke. Eye-toggle to reveal key prefix. Copy-to-clipboard for new keys. |
 | M10 | **Sandbox Environment** | ❌ Not Started | `Environment` enum exists (`Live`/`Test`); no routing logic yet |
 
@@ -227,7 +229,7 @@ bankie/
 | S1 | **Webhook Management** | ❌ Tables Only | `webhook_endpoints` + `webhook_deliveries` tables created. No API routes or dispatcher. |
 | S2 | **Webhook Retry with Backoff** | ❌ Not Started | — |
 | S3 | **Webhook Delivery Logs** | ❌ Not Started | — |
-| S4 | **API Request Logging** | ❌ Tables Only | `api_logs` partitioned table created (Feb-Apr 2026). No write logic. |
+| S4 | **API Request Logging** | 🔜 Phase 1.1 | `api_logs` partitioned table created (Feb-Apr 2026). **Phase 1.1**: Gateway middleware to log all API proxy requests (method, path, status, latency) to partitioned table. Dashboard 24h call count reads from this table. |
 | S5 | **Dashboard — Webhook page** | ❌ Not Started | — |
 | S6 | **Dashboard — Logs page** | ❌ Not Started | — |
 | S7 | **Dashboard — Accounts page** | ✅ Done | Proxies Core `/v1/accounts` + `/v1/bank_account/:id` via data proxy |
@@ -239,7 +241,7 @@ bankie/
 
 | ID | Requirement | Status |
 |----|------------|--------|
-| C1 | **Audit Log** | Tables created, no write logic |
+| C1 | **Audit Log** | 🔜 Phase 1.1 — write logic for key ops (create/rotate/revoke), org updates, login events; dashboard recent activity feed |
 | C2 | **Dashboard — Settings page** | Not started |
 | C3 | **IP Allowlisting** | Not started |
 | C4 | **Usage Analytics** | Not started |
@@ -539,7 +541,22 @@ Client → Authorization: Bearer bk_live_xxx
 **Test Coverage**:
 - Gateway: Auth routes (signup/login/logout validation), Org routes (CRUD + access control), API key routes (create/list/rotate/revoke + validation + org isolation), Scope enforcer (route mapping + scope validation), Data proxy (query building + JWT minting), Models (serialization, key generation, hashing, scope validation)
 
-### Phase 2: Rate Limiting + Team Invite (Next Priority)
+### Phase 1.1: Dashboard Polish + Logging 🔜 IN PROGRESS
+
+**Goal**: Replace dashboard stub data with real metrics; enable API request + audit logging.
+
+| ID | Task | Effort | Details |
+|----|------|--------|---------|
+| 1.1a | **Dashboard Scopes Granted** | 1h | Compute unique scope count across all active API keys for the org. Currently incorrectly displays `total_api_keys` count as scopes granted. Fix: query distinct scopes from `portal.api_keys WHERE org_id = $1 AND status = 'active'`, flatten JSONB arrays, count unique. |
+| 1.1b | **API Request Logging Middleware** | 3h | New gateway middleware on the API proxy path that logs every request to `portal.api_logs` (partitioned table). Captures: method, path, status_code, latency_ms, client_ip, api_key_id, tenant_id. Async write (spawn task) to avoid blocking the request. Snowflake ID generation for log rows. |
+| 1.1c | **Dashboard Real API Call Count** | 1h | Replace hardcoded `total_requests_today: 0` with `SELECT COUNT(*) FROM portal.api_logs WHERE tenant_id = $1 AND created_at >= now() - interval '24 hours'`. Update `DashboardStats` struct + SPA display. |
+| 1.1d | **Audit Logging** | 3h | Write audit records to `portal.audit_logs` for: API key create/rotate/revoke, org name/status update, login events. Each record includes: org_id, actor_id (member), action (e.g. `key.created`, `key.rotated`, `key.revoked`, `org.updated`, `auth.login`), resource_type, resource_id, changes (before/after JSON diff where applicable), client_ip. Snowflake ID generation. |
+| 1.1e | **Dashboard Recent Activity Feed** | 2h | Replace static placeholder with `SELECT * FROM portal.audit_logs WHERE org_id = $1 ORDER BY created_at DESC LIMIT 10`. New API endpoint: `GET /portal/v1/dashboard/activity`. SPA renders activity list with action type, actor email, timestamp, resource description. |
+| | **Total** | **~10h** | |
+
+**Exit criteria**: Dashboard shows real scopes-granted count, real 24h API call volume, and real recent activity feed. All API proxy requests are logged. Key lifecycle operations are audit-logged.
+
+### Phase 2: Rate Limiting + Team Invite
 
 | Task | Effort | Details |
 |------|--------|---------|
@@ -568,19 +585,21 @@ Client → Authorization: Bearer bk_live_xxx
 | Task | Effort | Details |
 |------|--------|---------|
 | Sandbox environment routing | 4h | `bk_test_` keys → sandbox tenant, simulated processing |
-| Audit log writes | 3h | Record key/org/member actions to `audit_logs` table |
 | Security review | 3h | OWASP scan, STRIDE validation |
 | Load testing (k6) | 3h | Gateway throughput, key resolution latency targets |
-| **Total** | **~13h** | |
+| **Total** | **~10h** | |
+
+> Note: Audit log writes moved to Phase 1.1 (dashboard polish).
 
 ### Summary
 
 | Phase | Scope | Effort | Status |
 |-------|-------|--------|--------|
 | 1. Foundation | Org/auth, API keys, proxy, SPA | ~48h | ✅ Done |
-| 2. Rate Limit + Team | Wire rate limiter, member invite, grace expiry | ~14h | 🔜 Next |
+| 1.1 Dashboard Polish | Scopes granted, API request logging, audit logging, activity feed | ~10h | 🔜 In Progress |
+| 2. Rate Limit + Team | Wire rate limiter, member invite, grace expiry | ~14h | Next |
 | 3. Webhooks | Dispatcher, signing, retry, logs | ~28h | Planned |
-| 4. Hardening | Sandbox, audit, security, load test | ~13h | Planned |
+| 4. Hardening | Sandbox, security, load test | ~10h | Planned |
 
 ---
 
@@ -592,7 +611,7 @@ Client → Authorization: Bearer bk_live_xxx
 | Manual JWT provisioning | 100% manual | 0% (all via API keys) | ✅ Auto-provisioned via DB trigger |
 | Mean time to first API call | ~2 hours | < 15 min | ✅ Signup → key → API call path works |
 | Webhook delivery success rate | N/A | > 99.5% within 24h | ❌ Not yet built |
-| API request log coverage | 0% | 100% of proxied calls | ❌ Tables only |
+| API request log coverage | 0% | 100% of proxied calls | 🔜 Phase 1.1 (middleware + dashboard) |
 | Rate limit violations caught | 0 | Track and alert | ⚠️ Middleware built, not wired |
 | Sandbox adoption | N/A | > 80% of orgs use sandbox | ❌ Not yet built |
 
