@@ -66,21 +66,29 @@ pub async fn accounts_query_handler(
     let client = Arc::clone(&state.database);
     let accounts = client.get_accounts(params.offset, limit, tenant_id).await;
     let total = client.count_accounts(tenant_id).await;
+    let by_status = client.count_accounts_by_status(tenant_id).await;
 
-    match (accounts, total) {
-        (Ok(entries), Ok(count)) => (
-            StatusCode::OK,
-            Json(json!({
-                "entries": entries,
-                "pagination": {
-                    "total": count,
-                    "offset": params.offset,
-                    "limit": limit
-                }
-            })),
-        )
-            .into_response(),
-        (Err(err), _) | (_, Err(err)) => {
+    match (accounts, total, by_status) {
+        (Ok(entries), Ok(count), Ok(status_rows)) => {
+            let mut status_counts = serde_json::Map::new();
+            for (status, cnt) in status_rows {
+                status_counts.insert(status, serde_json::Value::Number(cnt.into()));
+            }
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "entries": entries,
+                    "pagination": {
+                        "total": count,
+                        "offset": params.offset,
+                        "limit": limit
+                    },
+                    "status_counts": status_counts
+                })),
+            )
+                .into_response()
+        }
+        (Err(err), _, _) | (_, Err(err), _) | (_, _, Err(err)) => {
             AppError::InternalServerError(err.to_string()).into_response()
         }
     }

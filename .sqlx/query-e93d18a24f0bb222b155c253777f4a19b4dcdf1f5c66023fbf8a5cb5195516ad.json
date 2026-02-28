@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            DELETE FROM outbox\n            WHERE transaction_id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e93d18a24f0bb222b155c253777f4a19b4dcdf1f5c66023fbf8a5cb5195516ad"
+}

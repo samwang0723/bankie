@@ -1,10 +1,33 @@
 import { useQuery } from '@tanstack/react-query';
-import { Key, BarChart3, Shield } from 'lucide-react';
+import { Key, BarChart3, Shield, Clock } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth.ts';
 import { api } from '../api/client.ts';
 import { handleApiError } from '../hooks/useAuth.ts';
-import type { DashboardStats } from '../types/index.ts';
+import type { DashboardStats, ActivityEntry } from '../types/index.ts';
 import type { LucideIcon } from 'lucide-react';
+
+const ACTION_LABELS: Record<string, string> = {
+  'api_key.created': 'API key created',
+  'api_key.rotated': 'API key rotated',
+  'api_key.revoked': 'API key revoked',
+};
+
+function formatAction(action: string): string {
+  return ACTION_LABELS[action] ?? action;
+}
+
+function formatTimeAgo(dateStr: string): string {
+  const now = new Date();
+  const date = new Date(dateStr);
+  const diffMs = now.getTime() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return 'just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  return `${diffDay}d ago`;
+}
 
 function StatCard({
   label,
@@ -34,6 +57,18 @@ export function Dashboard() {
         return await api.get<DashboardStats>('/dashboard/stats');
       } catch (err) {
         handleApiError(err);
+      }
+    },
+  });
+
+  const { data: activity } = useQuery({
+    queryKey: ['dashboard-activity'],
+    queryFn: async () => {
+      try {
+        return await api.get<ActivityEntry[]>('/dashboard/activity');
+      } catch (err) {
+        handleApiError(err);
+        return [];
       }
     },
   });
@@ -83,7 +118,7 @@ export function Dashboard() {
           />
           <StatCard
             label="Scopes Granted"
-            value={stats?.total_api_keys ?? 0}
+            value={stats?.scopes_granted ?? 0}
             icon={Shield}
           />
         </div>
@@ -113,10 +148,29 @@ export function Dashboard() {
         {/* Recent Activity */}
         <div className="bg-white rounded-xl border border-slate-200 p-6">
           <h2 className="text-base font-semibold text-slate-900 mb-4">Recent Activity</h2>
-          <div className="space-y-4">
-            <p className="text-sm text-slate-500 text-center py-4">
-              No recent activity to display
-            </p>
+          <div className="space-y-3">
+            {(!activity || activity.length === 0) ? (
+              <p className="text-sm text-slate-500 text-center py-4">
+                No recent activity to display
+              </p>
+            ) : (
+              activity.map((entry) => (
+                <div key={entry.id} className="flex items-start gap-3 py-2 border-b border-slate-100 last:border-0">
+                  <Clock className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-slate-900">{formatAction(entry.action)}</p>
+                    {entry.resource_id && (
+                      <p className="text-xs text-slate-500 font-mono truncate mt-0.5">
+                        {entry.resource_type}: {entry.resource_id}
+                      </p>
+                    )}
+                  </div>
+                  <span className="text-xs text-slate-400 shrink-0">
+                    {formatTimeAgo(entry.created_at)}
+                  </span>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>

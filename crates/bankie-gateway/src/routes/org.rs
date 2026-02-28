@@ -140,6 +140,7 @@ mod tests {
     use crate::models::auth::SessionClaims;
     use crate::models::org::OrgStatus;
     use crate::repo::api_key::MockApiKeyRepository;
+    use crate::repo::dashboard::MockDashboardRepository;
     use crate::repo::member::MockMemberRepository;
     use crate::repo::org::MockOrgRepository;
 
@@ -148,6 +149,7 @@ mod tests {
             org_repo: Arc::new(org_repo),
             member_repo: Arc::new(MockMemberRepository::new()),
             api_key_repo: Arc::new(MockApiKeyRepository::new()),
+            dashboard_repo: Arc::new(MockDashboardRepository::new()),
             jwt_secret: "test-secret-key-at-least-32-chars-long!!".to_string(),
         })
     }

@@ -66,13 +66,15 @@ export function Accounts() {
         const resp = await api.get<{
           entries: BankAccountView[];
           pagination: { total: number; offset: number; limit: number };
+          status_counts: Record<string, number>;
         }>(`/data/accounts?offset=${offset}&limit=${ACCOUNTS_PAGE_SIZE}`);
         return resp;
       } catch (err) {
         handleApiError(err);
         return {
           entries: [],
-          pagination: { total: 0, offset: 0, limit: ACCOUNTS_PAGE_SIZE }
+          pagination: { total: 0, offset: 0, limit: ACCOUNTS_PAGE_SIZE },
+          status_counts: {}
         };
       }
     }
@@ -84,6 +86,7 @@ export function Accounts() {
     offset: 0,
     limit: ACCOUNTS_PAGE_SIZE
   };
+  const statusCounts = accountData?.status_counts ?? {};
 
   const filtered = accounts.filter((a) => {
     if (!search) return true;
@@ -97,9 +100,9 @@ export function Accounts() {
   });
 
   const totalCount = pagination.total;
-  const activeCount = accounts.filter((a) => a.status === "Approved").length;
-  const pendingCount = accounts.filter((a) => a.status === "Pending").length;
-  const frozenCount = accounts.filter((a) => a.status === "Freeze").length;
+  const activeCount = statusCounts["Approved"] ?? 0;
+  const pendingCount = statusCounts["Pending"] ?? 0;
+  const frozenCount = statusCounts["Freeze"] ?? 0;
 
   return (
     <div>

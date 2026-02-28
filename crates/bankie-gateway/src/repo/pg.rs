@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use super::RepoError;
 use crate::models::api_key::{ApiKey, KeyStatus};
+use crate::models::dashboard::{AuditLogEntry, NewAuditLog};
 use crate::models::member::{MemberRole, MemberStatus, OrgMember};
 use crate::models::org::{OrgStatus, Organization};
 
@@ -429,5 +430,114 @@ impl super::api_key::ApiKeyRepository for PgApiKeyRepository {
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
         Ok(row.map(ApiKey::from))
+    }
+}
+
+// ─── PgDashboardRepository ───
+
+#[derive(sqlx::FromRow)]
+struct AuditLogRow {
+    id: i64,
+    org_id: Option<Uuid>,
+    actor_id: Option<Uuid>,
+    action: String,
+    resource_type: String,
+    resource_id: Option<String>,
+    changes: Option<serde_json::Value>,
+    created_at: DateTime<Utc>,
+}
+
+impl From<AuditLogRow> for AuditLogEntry {
+    fn from(row: AuditLogRow) -> Self {
+        AuditLogEntry {
+            id: row.id,
+            org_id: row.org_id.unwrap_or_default(),
+            actor_id: row.actor_id.unwrap_or_default(),
+            action: row.action,
+            resource_type: row.resource_type,
+            resource_id: row.resource_id,
+            changes: row.changes,
+            created_at: row.created_at,
+        }
+    }
+}
+
+pub struct PgDashboardRepository {
+    pool: PgPool,
+}
+
+impl PgDashboardRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl super::dashboard::DashboardRepository for PgDashboardRepository {
+    async fn count_api_calls_since(
+        &self,
+        org_id: Uuid,
+        since: DateTime<Utc>,
+    ) -> Result<i64, RepoError> {
+        // Count API logs for keys belonging to this org since the given timestamp.
+        let row: (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*) as count
+            FROM portal.api_logs al
+            JOIN portal.api_keys ak ON ak.id = al.api_key_id
+            WHERE ak.org_id = $1 AND al.created_at >= $2
+            "#,
+        )
+        .bind(org_id)
+        .bind(since)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(row.0)
+    }
+
+    async fn list_recent_activity(
+        &self,
+        org_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<AuditLogEntry>, RepoError> {
+        let rows: Vec<AuditLogRow> = sqlx::query_as(
+            r#"
+            SELECT id, org_id, actor_id, action, resource_type, resource_id, changes, created_at
+            FROM portal.audit_logs
+            WHERE org_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(org_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(rows.into_iter().map(AuditLogEntry::from).collect())
+    }
+
+    async fn insert_audit_log(&self, entry: NewAuditLog) -> Result<(), RepoError> {
+        sqlx::query(
+            r#"
+            INSERT INTO portal.audit_logs (org_id, actor_id, action, resource_type, resource_id, changes, client_ip)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "#,
+        )
+        .bind(entry.org_id)
+        .bind(entry.actor_id)
+        .bind(&entry.action)
+        .bind(&entry.resource_type)
+        .bind(entry.resource_id.as_deref())
+        .bind(&entry.changes)
+        .bind(entry.client_ip.as_deref())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(())
     }
 }

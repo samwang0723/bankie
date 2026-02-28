@@ -1117,4 +1117,20 @@ impl DatabaseClient for PgPool {
 
         Ok(count)
     }
+
+    async fn count_accounts_by_status(&self, tenant_id: i32) -> Result<Vec<(String, i64)>, Error> {
+        let rows = sqlx::query_as::<_, (String, i64)>(
+            r#"
+                SELECT payload->>'status' AS status, count(*) AS cnt
+                FROM bank_account_views
+                WHERE tenant_id = $1
+                GROUP BY status
+            "#,
+        )
+        .bind(tenant_id)
+        .fetch_all(self)
+        .await?;
+
+        Ok(rows)
+    }
 }

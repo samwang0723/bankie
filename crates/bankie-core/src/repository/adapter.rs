@@ -155,6 +155,7 @@ pub trait DatabaseClient {
         tenant_id: i32,
     ) -> Result<Vec<BankAccountWithLedger>, Error>;
     async fn count_accounts(&self, tenant_id: i32) -> Result<i64, Error>;
+    async fn count_accounts_by_status(&self, tenant_id: i32) -> Result<Vec<(String, i64)>, Error>;
 }
 
 pub struct Adapter<C: DatabaseClient + Send + Sync> {
@@ -449,5 +450,12 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
 
     pub async fn count_accounts(&self, tenant_id: i32) -> Result<i64, Error> {
         self.client.count_accounts(tenant_id).await
+    }
+
+    pub async fn count_accounts_by_status(
+        &self,
+        tenant_id: i32,
+    ) -> Result<Vec<(String, i64)>, Error> {
+        self.client.count_accounts_by_status(tenant_id).await
     }
 }
