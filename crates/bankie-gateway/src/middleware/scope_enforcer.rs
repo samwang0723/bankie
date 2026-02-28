@@ -110,6 +110,7 @@ mod tests {
 
     use crate::models::api_key::{ApiKey, KeyStatus};
     use crate::repo::api_key::MockApiKeyRepository;
+    use crate::repo::dashboard::MockDashboardRepository;
     use crate::repo::member::MockMemberRepository;
     use crate::repo::org::MockOrgRepository;
 
@@ -118,6 +119,7 @@ mod tests {
             org_repo: Arc::new(MockOrgRepository::new()),
             member_repo: Arc::new(MockMemberRepository::new()),
             api_key_repo: Arc::new(mock_repo),
+            dashboard_repo: Arc::new(MockDashboardRepository::new()),
             jwt_secret: "test-secret".to_string(),
         })
     }

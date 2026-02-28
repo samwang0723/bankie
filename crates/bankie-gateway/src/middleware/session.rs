@@ -91,6 +91,7 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::repo::api_key::MockApiKeyRepository;
+    use crate::repo::dashboard::MockDashboardRepository;
     use crate::repo::member::MockMemberRepository;
     use crate::repo::org::MockOrgRepository;
 
@@ -99,6 +100,7 @@ mod tests {
             org_repo: Arc::new(MockOrgRepository::new()),
             member_repo: Arc::new(MockMemberRepository::new()),
             api_key_repo: Arc::new(MockApiKeyRepository::new()),
+            dashboard_repo: Arc::new(MockDashboardRepository::new()),
             jwt_secret: "test-secret-key-at-least-32-chars-long!!".to_string(),
         })
     }

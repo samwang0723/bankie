@@ -14,6 +14,8 @@ use crate::models::api_key::{
     KeyListItem, KeyStatus, RotateKeyResponse,
 };
 use crate::models::auth::SessionClaims;
+use crate::models::dashboard::NewAuditLog;
+use crate::repo::dashboard::DashboardRepository;
 use crate::state::PortalState;
 
 /// Default grace period for key rotation (24 hours).
@@ -79,6 +81,18 @@ async fn create_key(
         )
         .await
         .map_err(AppError::internal)?;
+
+    // Best-effort audit log
+    audit_log(
+        &state.dashboard_repo,
+        org_id,
+        &claims.sub,
+        "api_key.created",
+        "api_key",
+        Some(key.id.to_string()),
+        Some(serde_json::json!({"name": key.name, "scopes": key.scopes})),
+    )
+    .await;
 
     Ok(Json(CreateKeyResponse {
         id: key.id,
@@ -149,6 +163,18 @@ async fn revoke_key(
         .await
         .map_err(AppError::internal)?;
 
+    // Best-effort audit log
+    audit_log(
+        &state.dashboard_repo,
+        org_id,
+        &claims.sub,
+        "api_key.revoked",
+        "api_key",
+        Some(key_id.to_string()),
+        Some(serde_json::json!({"name": key.name})),
+    )
+    .await;
+
     Ok(Json(serde_json::json!({"message": "Key revoked"})))
 }
 
@@ -204,6 +230,22 @@ async fn rotate_key(
         )
         .await
         .map_err(AppError::internal)?;
+
+    // Best-effort audit log
+    audit_log(
+        &state.dashboard_repo,
+        org_id,
+        &claims.sub,
+        "api_key.rotated",
+        "api_key",
+        Some(old_key.id.to_string()),
+        Some(serde_json::json!({
+            "old_key_name": old_key.name,
+            "new_key_id": new_key.id.to_string(),
+            "grace_expires_at": grace_expires_at.to_rfc3339()
+        })),
+    )
+    .await;
 
     Ok(Json(RotateKeyResponse {
         new_key: CreateKeyResponse {
@@ -267,6 +309,33 @@ async fn rotate_key_flat(
     rotate_key(state, claims, Path((org_id, key_id))).await
 }
 
+/// Best-effort audit log insertion. Failures are logged but not propagated.
+async fn audit_log(
+    dashboard_repo: &Arc<dyn DashboardRepository>,
+    org_id: uuid::Uuid,
+    actor_id: &str,
+    action: &str,
+    resource_type: &str,
+    resource_id: Option<String>,
+    changes: Option<serde_json::Value>,
+) {
+    let actor_uuid = actor_id.parse().unwrap_or_default();
+    if let Err(e) = dashboard_repo
+        .insert_audit_log(NewAuditLog {
+            org_id,
+            actor_id: actor_uuid,
+            action: action.to_string(),
+            resource_type: resource_type.to_string(),
+            resource_id,
+            changes,
+            client_ip: None,
+        })
+        .await
+    {
+        tracing::warn!("Failed to insert audit log: {}", e);
+    }
+}
+
 /// Verify that the caller's session belongs to the given org.
 fn verify_org_access(claims: &SessionClaims, org_id: &uuid::Uuid) -> Result<(), AppError> {
     if claims.org_id != org_id.to_string() {
@@ -292,14 +361,20 @@ mod tests {
     use crate::models::api_key::ApiKey;
     use crate::models::auth::SessionClaims;
     use crate::repo::api_key::MockApiKeyRepository;
+    use crate::repo::dashboard::MockDashboardRepository;
     use crate::repo::member::MockMemberRepository;
     use crate::repo::org::MockOrgRepository;
 
     fn make_state(api_key_repo: MockApiKeyRepository) -> Arc<PortalState> {
+        let mut mock_dashboard = MockDashboardRepository::new();
+        mock_dashboard
+            .expect_insert_audit_log()
+            .returning(|_| Ok(()));
         Arc::new(PortalState {
             org_repo: Arc::new(MockOrgRepository::new()),
             member_repo: Arc::new(MockMemberRepository::new()),
             api_key_repo: Arc::new(api_key_repo),
+            dashboard_repo: Arc::new(mock_dashboard),
             jwt_secret: "test-secret-key-at-least-32-chars-long!!".to_string(),
         })
     }

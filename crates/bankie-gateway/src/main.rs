@@ -12,7 +12,9 @@ use tracing::info;
 use bankie_gateway::config::SETTINGS;
 use bankie_gateway::middleware;
 use bankie_gateway::proxy;
-use bankie_gateway::repo::pg::{PgApiKeyRepository, PgMemberRepository, PgOrgRepository};
+use bankie_gateway::repo::pg::{
+    PgApiKeyRepository, PgDashboardRepository, PgMemberRepository, PgOrgRepository,
+};
 use bankie_gateway::routes::portal_router;
 use bankie_gateway::state::PortalState;
 
@@ -48,14 +50,16 @@ async fn main() {
         org_repo: Arc::new(PgOrgRepository::new(pool.clone())),
         member_repo: Arc::new(PgMemberRepository::new(pool.clone())),
         api_key_repo: Arc::new(PgApiKeyRepository::new(pool.clone())),
+        dashboard_repo: Arc::new(PgDashboardRepository::new(pool.clone())),
         jwt_secret: settings.jwt_secret.clone(),
     });
     let portal_routes = portal_router(portal_state);
 
     // Build the proxied API routes with full middleware stack:
-    //   api_key_resolver → rate_limiter → jwt_minter → proxy_handler
+    //   api_key_resolver → rate_limiter → jwt_minter → api_logger → proxy_handler
     let api_routes = Router::new()
         .fallback(any(proxy::proxy_handler))
+        .layer(axum_middleware::from_fn(middleware::api_logger::api_logger))
         .layer(axum_middleware::from_fn(middleware::jwt_minter::jwt_minter))
         .layer(axum_middleware::from_fn(
             middleware::rate_limiter::rate_limiter,

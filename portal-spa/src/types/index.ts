@@ -91,9 +91,22 @@ export interface RotateApiKeyResponse {
 export interface DashboardStats {
   total_api_keys: number;
   active_api_keys: number;
+  scopes_granted: number;
   total_requests_today: number;
   org_name: string;
   environment: Environment;
+}
+
+// Activity
+export interface ActivityEntry {
+  id: number;
+  org_id: string;
+  actor_id: string;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  changes: Record<string, unknown> | null;
+  created_at: string;
 }
 
 // Bank Accounts (matches BankAccountWithLedger from Core /v1/accounts)

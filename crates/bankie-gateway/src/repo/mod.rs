@@ -1,4 +1,5 @@
 pub mod api_key;
+pub mod dashboard;
 pub mod member;
 pub mod org;
 pub mod pg;
