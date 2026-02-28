@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE outbox\n            SET processed = true, processed_at = NOW()\n            WHERE transaction_id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "aa326348fe5189333b9e3ceef42cdb36ed79b60d66137f37e9fd74bf595c2411"
+}
