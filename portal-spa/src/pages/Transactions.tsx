@@ -407,7 +407,7 @@ export function Transactions() {
                 <th className="text-left px-6 text-xs font-semibold text-slate-500 w-[80px]">
                   Currency
                 </th>
-                <th className="text-right px-6 text-xs font-semibold text-slate-500 w-[140px]">
+                <th className="text-right px-6 text-xs font-semibold text-slate-500 w-[170px]">
                   Amount
                 </th>
                 <th className="text-left px-6 text-xs font-semibold text-slate-500 w-[100px]">
@@ -437,7 +437,7 @@ export function Transactions() {
                     {tx.currency}
                   </td>
                   <td
-                    className={`px-6 font-mono text-[13px] text-right font-semibold w-[140px] ${
+                    className={`px-6 font-mono text-[13px] text-right font-semibold w-[170px] whitespace-nowrap ${
                       tx.transaction_type === "withdrawal"
                         ? "text-[#DC2626]"
                         : "text-[#16A34A]"
