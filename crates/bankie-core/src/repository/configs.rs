@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tracing::error;
 
 use crate::{
+    common::fx_rate::FxRateService,
     domain::models::*,
     event_sourcing::query::{AccountLogging, AccountQuery, LedgerLogging, LedgerQuery},
     service::{BankAccountLogic, BankAccountServices, MockLedgerServices},
@@ -16,6 +17,7 @@ use super::adapter::Adapter;
 pub fn configure_bank_account(
     pool: PgPool,
     ledger_loader_saver: LedgerLoaderSaver,
+    fx_rate_service: Option<Arc<FxRateService>>,
 ) -> (
     Arc<PostgresCqrs<BankAccount>>,
     Arc<PostgresViewRepository<BankAccountView, BankAccount>>,
@@ -38,13 +40,16 @@ pub fn configure_bank_account(
     // Create and return an event-sourced `CqrsFramework`.
     let queries: Vec<Box<dyn Query<BankAccount>>> =
         vec![Box::new(logging_query), Box::new(account_query)];
-    let services = BankAccountServices::new(Box::new(BankAccountLogic {
+    let mut services = BankAccountServices::new(Box::new(BankAccountLogic {
         bank_account: BankAccountLoader {
             query: Arc::clone(&account_view_repo),
         },
         ledger: ledger_loader_saver,
         database: Arc::new(Adapter::new(pool.clone())),
     }));
+    if let Some(fx_service) = fx_rate_service {
+        services = services.with_fx_rate_service(fx_service);
+    }
 
     let repo = PostgresEventRepository::new(pool)
         .with_tables("bank_account_events", "bank_account_snapshots");

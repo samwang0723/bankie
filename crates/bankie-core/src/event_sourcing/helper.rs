@@ -82,6 +82,16 @@ pub async fn create_transaction_with_journal(
         LedgerAction::Withdraw => TRANS_WITHDRAWAL,
         LedgerAction::Transfer => TRANS_TRANSFER,
     };
+
+    // FX rate conversion: graceful degradation — never blocks the transaction
+    let fx_conversion = if let Some(fx_service) = &services.fx_rate_service {
+        fx_service
+            .convert_to_usd(amount.amount, &amount.currency.to_string())
+            .await
+    } else {
+        None
+    };
+
     let transaction = Transaction {
         id: Uuid::new_v4(),
         bank_account_id: Uuid::parse_str(&bank_account.id)
@@ -95,6 +105,9 @@ pub async fn create_transaction_with_journal(
         journal_entry_id: None,
         status: "processing".to_string(),
         tenant_id,
+        fx_rate_to_usd: fx_conversion.as_ref().map(|c| c.fx_rate_to_usd),
+        amount_usd: fx_conversion.as_ref().map(|c| c.amount_usd),
+        fx_rate_source: fx_conversion.map(|c| c.source.to_string()),
     };
 
     let journal_entry = JournalEntry {

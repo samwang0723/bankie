@@ -8,6 +8,7 @@ use tracing::error;
 use uuid::Uuid;
 
 use crate::{
+    common::fx_rate::FxRateService,
     common::money::{Currency, Money},
     domain::{
         finance::{JournalEntry, JournalLine, Transaction},
@@ -22,11 +23,20 @@ pub struct MockLedgerServices;
 
 pub struct BankAccountServices {
     pub services: Box<dyn BankAccountApi>,
+    pub fx_rate_service: Option<Arc<FxRateService>>,
 }
 
 impl BankAccountServices {
     pub fn new(services: Box<dyn BankAccountApi>) -> Self {
-        Self { services }
+        Self {
+            services,
+            fx_rate_service: None,
+        }
+    }
+
+    pub fn with_fx_rate_service(mut self, service: Arc<FxRateService>) -> Self {
+        self.fx_rate_service = Some(service);
+        self
     }
 }
 

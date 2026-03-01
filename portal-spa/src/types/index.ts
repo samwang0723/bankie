@@ -138,6 +138,8 @@ export interface Transaction {
   description: string | null;
   metadata: Record<string, unknown>;
   status: string;
+  amount_usd: string | null;
+  fx_rate_to_usd: string | null;
 }
 
 // Ledger
