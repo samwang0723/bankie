@@ -227,8 +227,14 @@ async fn check_login_rate_limit(state: &PortalState, email: &str) -> Result<(), 
             Ok(Some(count_str)) => {
                 if let Ok(count) = count_str.parse::<i64>() {
                     if count >= MAX_LOGIN_ATTEMPTS {
-                        return Err(AppError::BadRequest(
+                        // Get remaining lockout seconds from Redis TTL
+                        let retry_after = match crate::redis_ops::get_ttl(client, &key).await {
+                            Ok(ttl) if ttl > 0 => ttl as u64,
+                            _ => LOGIN_LOCKOUT_SECS as u64,
+                        };
+                        return Err(AppError::TooManyRequests(
                             "Too many login attempts. Please try again later.".to_string(),
+                            retry_after,
                         ));
                     }
                 }

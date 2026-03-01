@@ -24,6 +24,14 @@ pub async fn set_ex(
     Ok(())
 }
 
+/// Get the remaining TTL of a key in seconds.
+/// Returns -2 if the key does not exist, -1 if no expiry is set.
+pub async fn get_ttl(client: &redis::Client, key: &str) -> Result<i64, redis::RedisError> {
+    let mut con = client.get_multiplexed_async_connection().await?;
+    let ttl: i64 = redis::cmd("TTL").arg(key).query_async(&mut con).await?;
+    Ok(ttl)
+}
+
 /// Delete a key from Redis. Returns the number of keys removed.
 pub async fn del_key(client: &redis::Client, key: &str) -> Result<i64, redis::RedisError> {
     let mut con = client.get_multiplexed_async_connection().await?;
