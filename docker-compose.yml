@@ -108,6 +108,9 @@ services:
         condition: service_healthy
       migrations:
         condition: service_completed_successfully
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     restart: unless-stopped
     networks:
       - bankie-net

@@ -47,6 +47,7 @@ pub struct TransactionWithMoney {
     pub status: String,
     pub amount_usd: Option<String>,
     pub fx_rate_to_usd: Option<String>,
+    pub fx_rate_source: Option<String>,
 }
 
 impl Transaction {
@@ -81,6 +82,7 @@ impl Transaction {
             status: self.status,
             amount_usd,
             fx_rate_to_usd,
+            fx_rate_source: self.fx_rate_source,
         }
     }
 }
@@ -220,6 +222,7 @@ mod tests {
         assert_eq!(with_money.status, "posted");
         assert_eq!(with_money.amount_usd, Some("100.00".to_string()));
         assert_eq!(with_money.fx_rate_to_usd, Some("1".to_string()));
+        assert_eq!(with_money.fx_rate_source, Some("static".to_string()));
     }
 }
 

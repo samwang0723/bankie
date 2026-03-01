@@ -140,6 +140,7 @@ export interface Transaction {
   status: string;
   amount_usd: string | null;
   fx_rate_to_usd: string | null;
+  fx_rate_source: string | null;
 }
 
 // Ledger
