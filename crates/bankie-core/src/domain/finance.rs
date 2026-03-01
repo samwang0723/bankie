@@ -239,6 +239,9 @@ pub struct SettlementReportRow {
     pub debit_amount: Decimal,
     pub credit_amount: Decimal,
     pub account_number: Option<String>,
+    pub amount_usd: Option<Decimal>,
+    pub fx_rate_to_usd: Option<Decimal>,
+    pub fx_rate_source: Option<String>,
 }
 
 #[derive(FromRow, Debug, Serialize)]

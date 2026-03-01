@@ -5,7 +5,12 @@ import { api } from "../api/client.ts";
 import { handleApiError } from "../hooks/useAuth.ts";
 import { Pagination } from "../components/Pagination.tsx";
 import type { Transaction, BankAccountView } from "../types/index.ts";
-import { formatBalance, formatAmount } from "../utils/currency.ts";
+import {
+  formatBalance,
+  formatAmount,
+  formatUsdValue,
+  formatFxRate
+} from "../utils/currency.ts";
 
 function formatAccountNumber(raw: string): string {
   const digits = raw.replace(/\D/g, "");
@@ -141,8 +146,15 @@ export function Transactions() {
       if (!isNaN(pn)) totalPending += pn;
       if (!isNaN(bb)) totalBookBalance += bb;
     }
-    const currency = currencies.size === 1 ? [...currencies][0] : "USD";
-    return { totalAvailable, totalPending, totalBookBalance, currency };
+    const isMixed = currencies.size > 1;
+    const currency = isMixed ? "USD" : [...currencies][0];
+    return {
+      totalAvailable,
+      totalPending,
+      totalBookBalance,
+      currency,
+      isMixed
+    };
   }, [allAccounts]);
 
   // Build account ID → account_number lookup map
@@ -288,7 +300,9 @@ export function Transactions() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-xl border border-slate-200 p-5">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-medium text-slate-500">Available</p>
+            <p className="text-xs font-medium text-slate-500">
+              Available{balanceSummary?.isMixed ? " (USD Equivalent)" : ""}
+            </p>
             <span className="font-mono text-[11px] font-semibold text-[#94A3B8]">
               {balanceSummary?.currency ?? ""}
             </span>
@@ -302,7 +316,9 @@ export function Transactions() {
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-5">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-medium text-slate-500">Pending</p>
+            <p className="text-xs font-medium text-slate-500">
+              Pending{balanceSummary?.isMixed ? " (USD Equivalent)" : ""}
+            </p>
             <span className="font-mono text-[11px] font-semibold text-[#94A3B8]">
               {balanceSummary?.currency ?? ""}
             </span>
@@ -316,7 +332,9 @@ export function Transactions() {
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-5">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-medium text-slate-500">Current</p>
+            <p className="text-xs font-medium text-slate-500">
+              Current{balanceSummary?.isMixed ? " (USD Equivalent)" : ""}
+            </p>
             <span className="font-mono text-[11px] font-semibold text-[#94A3B8]">
               {balanceSummary?.currency ?? ""}
             </span>
@@ -342,6 +360,7 @@ export function Transactions() {
                 <div className="h-4 bg-slate-200 rounded w-28" />
                 <div className="h-4 bg-slate-200 rounded w-24" />
                 <div className="h-4 bg-slate-200 rounded w-16" />
+                <div className="h-4 bg-slate-200 rounded w-20" />
                 <div className="h-4 bg-slate-200 rounded w-20" />
                 <div className="h-4 bg-slate-200 rounded w-16" />
               </div>
@@ -377,6 +396,9 @@ export function Transactions() {
                 <th className="text-right px-6 text-xs font-semibold text-slate-500 w-[170px]">
                   Amount
                 </th>
+                <th className="text-right px-6 text-xs font-semibold text-slate-500 w-[150px]">
+                  USD Value
+                </th>
                 <th className="text-left px-6 text-xs font-semibold text-slate-500 w-[100px]">
                   Status
                 </th>
@@ -411,6 +433,28 @@ export function Transactions() {
                     }`}
                   >
                     {formatAmount(tx.amount, tx.transaction_type, tx.currency)}
+                  </td>
+                  <td className="px-6 text-right w-[150px] whitespace-nowrap">
+                    {(() => {
+                      const usd = formatUsdValue(tx.amount_usd);
+                      const rate = formatFxRate(tx.fx_rate_to_usd);
+                      if (!usd)
+                        return (
+                          <span className="text-xs text-slate-400">-</span>
+                        );
+                      return (
+                        <div>
+                          <span className="font-mono text-[13px] font-semibold text-slate-700">
+                            {usd}
+                          </span>
+                          {rate && (
+                            <span className="block font-mono text-[10px] text-slate-400">
+                              {rate}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="px-6 w-[100px]">
                     <TxStatusBadge status={tx.status} />

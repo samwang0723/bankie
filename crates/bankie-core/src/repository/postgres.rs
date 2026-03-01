@@ -1019,7 +1019,10 @@ impl DatabaseClient for PgPool {
                 t.journal_entry_id,
                 COALESCE(jl.debit_amount, 0) as debit_amount,
                 COALESCE(jl.credit_amount, 0) as credit_amount,
-                b.payload->>'account_number' as account_number
+                b.payload->>'account_number' as account_number,
+                t.amount_usd,
+                t.fx_rate_to_usd,
+                t.fx_rate_source
             FROM transactions t
             LEFT JOIN journal_entries je ON t.journal_entry_id = je.id
             LEFT JOIN journal_lines jl ON je.id = jl.journal_entry_id

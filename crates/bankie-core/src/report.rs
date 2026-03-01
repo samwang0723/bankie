@@ -157,7 +157,7 @@ pub fn generate_settlement_csv(
     ));
 
     // Column headers
-    csv.push_str("transaction_date,value_date,transaction_reference,transaction_type,debit_amount,credit_amount,currency,description,status,running_balance,account_number,journal_entry_id\n");
+    csv.push_str("transaction_date,value_date,transaction_reference,transaction_type,debit_amount,credit_amount,currency,amount_usd,fx_rate_to_usd,fx_rate_source,description,status,running_balance,account_number,journal_entry_id\n");
 
     // Compute running balances
     let running_balances = compute_running_balances(rows, opening_balance);
@@ -187,8 +187,18 @@ pub fn generate_settlement_csv(
             .unwrap_or_default();
         let acct_num = row.account_number.as_deref().unwrap_or("");
 
+        let amount_usd = row
+            .amount_usd
+            .map(|v| format!("{:.2}", v))
+            .unwrap_or_default();
+        let fx_rate = row
+            .fx_rate_to_usd
+            .map(|v| format!("{}", v))
+            .unwrap_or_default();
+        let fx_source = row.fx_rate_source.as_deref().unwrap_or("");
+
         let line = format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
             row.transaction_date.format("%Y-%m-%d"),
             row.transaction_date.format("%Y-%m-%d"), // value_date = transaction_date for now
             format_csv_field(&row.transaction_reference),
@@ -196,6 +206,9 @@ pub fn generate_settlement_csv(
             format_amount(row.debit_amount, currency),
             format_amount(row.credit_amount, currency),
             currency,
+            amount_usd,
+            fx_rate,
+            fx_source,
             format_csv_field(description),
             row.status,
             format_amount_always(running_balances[i], currency),
@@ -245,7 +258,16 @@ mod tests {
             debit_amount: debit,
             credit_amount: credit,
             account_number: Some("8001234567".to_string()),
+            amount_usd: None,
+            fx_rate_to_usd: None,
+            fx_rate_source: None,
         }
+    }
+
+    fn make_row_with_fx(row: &mut SettlementReportRow, usd: Decimal, rate: Decimal, source: &str) {
+        row.amount_usd = Some(usd);
+        row.fx_rate_to_usd = Some(rate);
+        row.fx_rate_source = Some(source.to_string());
     }
 
     #[test]
@@ -395,7 +417,7 @@ mod tests {
         assert!(csv.contains("# Opening Balance: 0.00\n"));
 
         // Check column headers
-        assert!(csv.contains("transaction_date,value_date,transaction_reference,transaction_type,debit_amount,credit_amount,currency,description,status,running_balance,account_number,journal_entry_id\n"));
+        assert!(csv.contains("transaction_date,value_date,transaction_reference,transaction_type,debit_amount,credit_amount,currency,amount_usd,fx_rate_to_usd,fx_rate_source,description,status,running_balance,account_number,journal_entry_id\n"));
 
         // Check data rows contain expected content
         assert!(csv.contains("DE-001"));
@@ -506,5 +528,43 @@ mod tests {
 
         // Description with commas and quotes should be properly escaped
         assert!(csv.contains("\"Payment for \"\"services, Inc.\"\"\""));
+    }
+
+    #[test]
+    fn test_generate_settlement_csv_with_fx_columns() {
+        let mut r1 = make_row("DE-001", dec!(0), dec!(0.5), "BTC", Some("BTC deposit"));
+        make_row_with_fx(&mut r1, dec!(33243.00), dec!(66486.00), "coingecko");
+        let mut r2 = make_row("DE-002", dec!(0), dec!(50000), "TWD", Some("TWD deposit"));
+        make_row_with_fx(&mut r2, dec!(1562.50), dec!(0.03125), "exchangerate-api");
+        let mut r3 = make_row("DE-003", dec!(0), dec!(100.00), "USD", Some("USD deposit"));
+        make_row_with_fx(&mut r3, dec!(100.00), dec!(1), "static");
+        let r4 = make_row("DE-004", dec!(0), dec!(200.00), "USD", Some("No FX data"));
+        let rows = vec![r1, r2, r3, r4];
+        let generated = Utc.with_ymd_and_hms(2026, 3, 1, 12, 0, 0).unwrap();
+        let csv = generate_settlement_csv(
+            &rows,
+            dec!(0),
+            "8001234567",
+            NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 3, 31).unwrap(),
+            "BTC",
+            generated,
+        );
+
+        // Column header should include FX columns
+        assert!(csv.contains("amount_usd,fx_rate_to_usd,fx_rate_source"));
+
+        // BTC row should have FX data
+        assert!(csv.contains("33243.00"));
+        assert!(csv.contains("66486.00"));
+        assert!(csv.contains("coingecko"));
+
+        // TWD row should have FX data
+        assert!(csv.contains("1562.50"));
+        assert!(csv.contains("0.03125"));
+        assert!(csv.contains("exchangerate-api"));
+
+        // Row without FX data should have empty FX columns
+        assert!(csv.contains("No FX data"));
     }
 }
