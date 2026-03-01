@@ -5,6 +5,7 @@ import { api } from "../api/client.ts";
 import { handleApiError } from "../hooks/useAuth.ts";
 import { Pagination } from "../components/Pagination.tsx";
 import type { Transaction, BankAccountView } from "../types/index.ts";
+import { formatBalance, formatAmount } from "../utils/currency.ts";
 
 function formatAccountNumber(raw: string): string {
   const digits = raw.replace(/\D/g, "");
@@ -70,26 +71,6 @@ function formatDateTime(dateStr: string): string {
   return `${y}-${m}-${day} ${h}:${min}`;
 }
 
-function formatAmount(
-  amount: string,
-  txType: string,
-  currency: string
-): string {
-  const num = parseFloat(amount);
-  const prefix = txType === "withdrawal" ? "- " : "+ ";
-  const isFiat = currency === "USD" || currency === "TWD";
-  if (isFiat) {
-    return `${prefix}$${Math.abs(num).toLocaleString("en-US", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    })}`;
-  }
-  return `${prefix}${Math.abs(num).toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 8
-  })}`;
-}
-
 function downloadReport(params: {
   start_date: string;
   end_date: string;
@@ -115,20 +96,6 @@ function daysAgoStr(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() - days);
   return d.toISOString().split("T")[0];
-}
-
-function formatBalance(value: string | undefined, currency: string): string {
-  if (value == null) return "--";
-  const num = parseFloat(value);
-  if (isNaN(num)) return "--";
-  const isFiat = currency === "USD" || currency === "TWD";
-  if (isFiat) {
-    return `$${num.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
-  }
-  return num.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 8
-  });
 }
 
 const PAGE_SIZE = 10;
@@ -407,7 +374,7 @@ export function Transactions() {
                 <th className="text-left px-6 text-xs font-semibold text-slate-500 w-[80px]">
                   Currency
                 </th>
-                <th className="text-right px-6 text-xs font-semibold text-slate-500 w-[140px]">
+                <th className="text-right px-6 text-xs font-semibold text-slate-500 w-[170px]">
                   Amount
                 </th>
                 <th className="text-left px-6 text-xs font-semibold text-slate-500 w-[100px]">
@@ -437,7 +404,7 @@ export function Transactions() {
                     {tx.currency}
                   </td>
                   <td
-                    className={`px-6 font-mono text-[13px] text-right font-semibold w-[140px] ${
+                    className={`px-6 font-mono text-[13px] text-right font-semibold w-[170px] whitespace-nowrap ${
                       tx.transaction_type === "withdrawal"
                         ? "text-[#DC2626]"
                         : "text-[#16A34A]"

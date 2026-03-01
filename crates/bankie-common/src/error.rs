@@ -1,5 +1,5 @@
 use axum::{
-    http::StatusCode,
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -14,6 +14,7 @@ pub enum AppError {
     Forbidden(String),
     NotFound(String),
     Conflict(String),
+    TooManyRequests(String, u64),
     UnprocessableEntity(String),
     InternalServerError(String),
 }
@@ -26,6 +27,7 @@ impl AppError {
             AppError::Forbidden(_) => 403,
             AppError::NotFound(_) => 404,
             AppError::Conflict(_) => 409,
+            AppError::TooManyRequests(_, _) => 429,
             AppError::UnprocessableEntity(_) => 422,
             AppError::InternalServerError(_) => 500,
         }
@@ -38,6 +40,7 @@ impl AppError {
             AppError::Forbidden(msg) => msg,
             AppError::NotFound(msg) => msg,
             AppError::Conflict(msg) => msg,
+            AppError::TooManyRequests(msg, _) => msg,
             AppError::UnprocessableEntity(msg) => msg,
             AppError::InternalServerError(msg) => msg,
         }
@@ -64,11 +67,33 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status_code =
             StatusCode::from_u16(self.code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        let body = Json(serde_json::json!({
-            "code": self.code(),
-            "message": self.message(),
-        }));
-        (status_code, body).into_response()
+
+        let retry_after = if let AppError::TooManyRequests(_, secs) = &self {
+            Some(*secs)
+        } else {
+            None
+        };
+
+        let body = if let Some(secs) = retry_after {
+            Json(serde_json::json!({
+                "code": self.code(),
+                "message": self.message(),
+                "retry_after": secs,
+            }))
+        } else {
+            Json(serde_json::json!({
+                "code": self.code(),
+                "message": self.message(),
+            }))
+        };
+
+        let mut response = (status_code, body).into_response();
+        if let Some(secs) = retry_after {
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, secs.to_string().parse().unwrap());
+        }
+        response
     }
 }
 
@@ -170,6 +195,29 @@ mod tests {
         assert_eq!(
             body_json,
             json!({"code": 500, "message": "Internal server error"})
+        );
+    }
+
+    #[tokio::test]
+    async fn test_too_many_requests_error() {
+        let error = AppError::TooManyRequests("Rate limit exceeded".into(), 120);
+        assert_eq!(error.code(), 429);
+        assert_eq!(error.message(), "Rate limit exceeded");
+
+        let response = error.into_response();
+        let status = response.status();
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+
+        // Verify Retry-After header
+        let retry_after = response.headers().get("retry-after").unwrap();
+        assert_eq!(retry_after.to_str().unwrap(), "120");
+
+        // Verify body includes retry_after
+        let body_bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(
+            body_json,
+            json!({"code": 429, "message": "Rate limit exceeded", "retry_after": 120})
         );
     }
 

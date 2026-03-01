@@ -163,6 +163,9 @@ async fn revoke_key(
         .await
         .map_err(AppError::internal)?;
 
+    // Invalidate API key cache in Redis (best-effort)
+    invalidate_api_key_cache(&state, &key.key_hash).await;
+
     // Best-effort audit log
     audit_log(
         &state.dashboard_repo,
@@ -210,6 +213,9 @@ async fn rotate_key(
         .update_status(old_key_id, KeyStatus::Rotated, Some(grace_expires_at))
         .await
         .map_err(AppError::internal)?;
+
+    // Invalidate old key's cache so the rotated status is fetched fresh
+    invalidate_api_key_cache(&state, &old_key.key_hash).await;
 
     // Create new key with same scopes
     let raw_key = generate_raw_key();
@@ -309,6 +315,17 @@ async fn rotate_key_flat(
     rotate_key(state, claims, Path((org_id, key_id))).await
 }
 
+/// Invalidate the API key cache entry in Redis (best-effort).
+/// The cache key format matches `api_key_resolver` middleware: `gw:api_key:{hash}`.
+async fn invalidate_api_key_cache(state: &PortalState, key_hash: &str) {
+    if let Some(ref client) = state.redis_client {
+        let cache_key = format!("gw:api_key:{}", key_hash);
+        if let Err(e) = crate::redis_ops::del_key(client, &cache_key).await {
+            tracing::warn!("Failed to invalidate API key cache: {}", e);
+        }
+    }
+}
+
 /// Best-effort audit log insertion. Failures are logged but not propagated.
 async fn audit_log(
     dashboard_repo: &Arc<dyn DashboardRepository>,
@@ -376,6 +393,7 @@ mod tests {
             api_key_repo: Arc::new(api_key_repo),
             dashboard_repo: Arc::new(mock_dashboard),
             jwt_secret: "test-secret-key-at-least-32-chars-long!!".to_string(),
+            redis_client: None,
         })
     }
 

@@ -80,25 +80,48 @@ async fn signup(
     build_session_response(&state, &member, &org)
 }
 
+/// Maximum failed login attempts per email before lockout.
+const MAX_LOGIN_ATTEMPTS: i64 = 5;
+/// Login lockout window in seconds (15 minutes).
+const LOGIN_LOCKOUT_SECS: i64 = 900;
+
 /// POST /portal/v1/auth/login
 ///
 /// Verifies email/password, issues session JWT cookie and CSRF token.
+/// Rate-limited: 5 failed attempts per email per 15-minute window.
 async fn login(
     State(state): State<Arc<PortalState>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Response, AppError> {
+    // Check login rate limit (per email)
+    check_login_rate_limit(&state, &req.email).await?;
+
     let member = state
         .member_repo
         .find_by_email(req.email.clone())
         .await
-        .map_err(AppError::internal)?
-        .ok_or_else(|| AppError::Unauthorized("Invalid email or password".to_string()))?;
+        .map_err(AppError::internal)?;
+
+    let member = match member {
+        Some(m) => m,
+        None => {
+            record_failed_login(&state, &req.email).await;
+            return Err(AppError::Unauthorized(
+                "Invalid email or password".to_string(),
+            ));
+        }
+    };
 
     if member.status != MemberStatus::Active {
         return Err(AppError::Forbidden("Account is suspended".to_string()));
     }
 
-    verify_password(&req.password, &member.password_hash)?;
+    if verify_password(&req.password, &member.password_hash).is_err() {
+        record_failed_login(&state, &req.email).await;
+        return Err(AppError::Unauthorized(
+            "Invalid email or password".to_string(),
+        ));
+    }
 
     // Resolve tenant_id from the organization
     let org = state
@@ -115,11 +138,10 @@ async fn login(
 ///
 /// Clears session and CSRF cookies.
 async fn logout() -> Response {
-    let clear_session = format!(
-        "{}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
-        "portal_session"
-    );
-    let clear_csrf = "csrf_token=; Path=/; SameSite=Lax; Max-Age=0".to_string();
+    let secure_flag = if is_secure_env() { "; Secure" } else { "" };
+    let clear_session =
+        format!("portal_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure_flag}");
+    let clear_csrf = format!("csrf_token=; Path=/; SameSite=Lax; Max-Age=0{secure_flag}");
 
     let mut response =
         axum::response::Json(serde_json::json!({"message": "Logged out"})).into_response();
@@ -167,7 +189,6 @@ fn build_session_response(
     .map_err(AppError::internal)?;
 
     let auth_resp = AuthResponse {
-        token: jwt.clone(),
         user: AuthUser {
             id: member.id,
             email: member.email.clone(),
@@ -183,9 +204,11 @@ fn build_session_response(
         },
     };
 
+    let secure_flag = if is_secure_env() { "; Secure" } else { "" };
     let session_cookie =
-        format!("portal_session={jwt}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400");
-    let csrf_cookie = format!("csrf_token={csrf_token}; Path=/; SameSite=Lax; Max-Age=86400");
+        format!("portal_session={jwt}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400{secure_flag}");
+    let csrf_cookie =
+        format!("csrf_token={csrf_token}; Path=/; SameSite=Lax; Max-Age=86400{secure_flag}");
 
     let mut response = axum::response::Json(auth_resp).into_response();
     let headers = response.headers_mut();
@@ -193,6 +216,52 @@ fn build_session_response(
     headers.append(header::SET_COOKIE, csrf_cookie.parse().unwrap());
 
     Ok(response)
+}
+
+/// Check whether the email has exceeded the login attempt limit.
+/// If Redis is unavailable, the check is skipped (fail-open for availability).
+async fn check_login_rate_limit(state: &PortalState, email: &str) -> Result<(), AppError> {
+    if let Some(ref client) = state.redis_client {
+        let key = format!("login_attempts:{}", email);
+        match crate::redis_ops::get_value(client, &key).await {
+            Ok(Some(count_str)) => {
+                if let Ok(count) = count_str.parse::<i64>() {
+                    if count >= MAX_LOGIN_ATTEMPTS {
+                        // Get remaining lockout seconds from Redis TTL
+                        let retry_after = match crate::redis_ops::get_ttl(client, &key).await {
+                            Ok(ttl) if ttl > 0 => ttl as u64,
+                            _ => LOGIN_LOCKOUT_SECS as u64,
+                        };
+                        return Err(AppError::TooManyRequests(
+                            "Too many login attempts. Please try again later.".to_string(),
+                            retry_after,
+                        ));
+                    }
+                }
+            }
+            Ok(None) => {} // No attempts recorded
+            Err(e) => {
+                tracing::warn!("Redis error checking login rate limit: {}", e);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Record a failed login attempt for the given email.
+async fn record_failed_login(state: &PortalState, email: &str) {
+    if let Some(ref client) = state.redis_client {
+        let key = format!("login_attempts:{}", email);
+        if let Err(e) = crate::redis_ops::incr_with_expiry(client, &key, LOGIN_LOCKOUT_SECS).await {
+            tracing::warn!("Redis error recording failed login: {}", e);
+        }
+    }
+}
+
+/// Returns true when the deployment environment should use HTTPS (i.e. not local dev).
+fn is_secure_env() -> bool {
+    let env = std::env::var("ENV").unwrap_or_else(|_| "local".to_string());
+    env != "local"
 }
 
 fn hash_password(password: &str) -> Result<String, AppError> {
@@ -244,6 +313,7 @@ mod tests {
             api_key_repo: Arc::new(MockApiKeyRepository::new()),
             dashboard_repo: Arc::new(MockDashboardRepository::new()),
             jwt_secret: "test-secret-key-at-least-32-chars-long!!".to_string(),
+            redis_client: None,
         })
     }
 

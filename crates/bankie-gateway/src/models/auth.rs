@@ -28,10 +28,11 @@ pub struct SessionClaims {
 }
 
 /// Auth response matching SPA's expected format:
-/// `{ token, user: { id, email, role, created_at }, organization: { id, name, slug, environment, created_at } }`
+/// `{ user: { id, email, role, created_at }, organization: { id, name, slug, environment, created_at } }`
+///
+/// Note: JWT is delivered ONLY via HttpOnly cookie, never in the response body.
 #[derive(Debug, Serialize)]
 pub struct AuthResponse {
-    pub token: String,
     pub user: AuthUser,
     pub organization: AuthOrganization,
 }

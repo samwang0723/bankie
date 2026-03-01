@@ -5,6 +5,7 @@ import { api } from "../api/client.ts";
 import { handleApiError } from "../hooks/useAuth.ts";
 import { Pagination } from "../components/Pagination.tsx";
 import type { BankAccountView } from "../types/index.ts";
+import { formatBalance } from "../utils/currency.ts";
 
 function formatAccountNumber(raw: string): string {
   const digits = raw.replace(/\D/g, "");
@@ -28,20 +29,6 @@ function StatusBadge({ status }: { status: string }) {
       {status}
     </span>
   );
-}
-
-function formatBalance(value: string | undefined, currency: string): string {
-  if (value == null) return "--";
-  const num = parseFloat(value);
-  if (isNaN(num)) return "--";
-  const isFiat = currency === "USD" || currency === "TWD";
-  if (isFiat) {
-    return `$${num.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
-  }
-  return num.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 8
-  });
 }
 
 const ACCOUNTS_PAGE_SIZE = 10;
