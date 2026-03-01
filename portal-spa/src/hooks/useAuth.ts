@@ -20,7 +20,6 @@ import type {
 interface AuthState {
   user: PortalUser | null;
   organization: Organization | null;
-  token: string | null;
   isAuthenticated: boolean;
 }
 
@@ -33,37 +32,32 @@ interface AuthContextValue extends AuthState {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 function loadPersistedAuth(): AuthState {
-  const token = localStorage.getItem('auth_token');
   const userJson = localStorage.getItem('auth_user');
   const orgJson = localStorage.getItem('auth_org');
 
-  if (token && userJson && orgJson) {
+  if (userJson && orgJson) {
     try {
       return {
-        token,
         user: JSON.parse(userJson),
         organization: JSON.parse(orgJson),
         isAuthenticated: true,
       };
     } catch {
       // Corrupt data, clear it
-      localStorage.removeItem('auth_token');
       localStorage.removeItem('auth_user');
       localStorage.removeItem('auth_org');
     }
   }
 
-  return { user: null, organization: null, token: null, isAuthenticated: false };
+  return { user: null, organization: null, isAuthenticated: false };
 }
 
 function persistAuth(response: AuthResponse): void {
-  localStorage.setItem('auth_token', response.token);
   localStorage.setItem('auth_user', JSON.stringify(response.user));
   localStorage.setItem('auth_org', JSON.stringify(response.organization));
 }
 
 function clearPersistedAuth(): void {
-  localStorage.removeItem('auth_token');
   localStorage.removeItem('auth_user');
   localStorage.removeItem('auth_org');
 }
@@ -78,7 +72,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setState({
       user: response.user,
       organization: response.organization,
-      token: response.token,
       isAuthenticated: true,
     });
   }, []);
@@ -89,14 +82,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setState({
       user: response.user,
       organization: response.organization,
-      token: response.token,
       isAuthenticated: true,
     });
   }, []);
 
   const logout = useCallback(() => {
     clearPersistedAuth();
-    setState({ user: null, organization: null, token: null, isAuthenticated: false });
+    setState({ user: null, organization: null, isAuthenticated: false });
     navigate('/login');
   }, [navigate]);
 

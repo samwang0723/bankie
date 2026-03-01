@@ -24,6 +24,28 @@ pub async fn set_ex(
     Ok(())
 }
 
+/// Delete a key from Redis. Returns the number of keys removed.
+pub async fn del_key(client: &redis::Client, key: &str) -> Result<i64, redis::RedisError> {
+    let mut con = client.get_multiplexed_async_connection().await?;
+    let removed: i64 = con.del(key).await?;
+    Ok(removed)
+}
+
+/// Increment a key and set expiry if it's the first increment. Returns the new count.
+pub async fn incr_with_expiry(
+    client: &redis::Client,
+    key: &str,
+    ttl_seconds: i64,
+) -> Result<i64, redis::RedisError> {
+    let mut con = client.get_multiplexed_async_connection().await?;
+    let count: i64 = con.incr(key, 1i64).await?;
+    if count == 1 {
+        // First increment — set expiry
+        let _: () = con.expire(key, ttl_seconds).await?;
+    }
+    Ok(count)
+}
+
 /// Execute a Lua script atomically for token bucket rate limiting.
 /// Returns (allowed: bool, remaining: i64, reset_at: i64).
 pub async fn rate_limit_check(

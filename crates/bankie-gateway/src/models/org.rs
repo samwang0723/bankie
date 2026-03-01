@@ -24,7 +24,6 @@ pub struct Organization {
 #[derive(Debug, Deserialize)]
 pub struct CreateOrgRequest {
     pub name: String,
-    pub tenant_id: i32,
 }
 
 #[derive(Debug, Deserialize)]

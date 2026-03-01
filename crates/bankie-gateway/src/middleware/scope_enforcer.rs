@@ -121,6 +121,7 @@ mod tests {
             api_key_repo: Arc::new(mock_repo),
             dashboard_repo: Arc::new(MockDashboardRepository::new()),
             jwt_secret: "test-secret".to_string(),
+            redis_client: None,
         })
     }
 

@@ -47,7 +47,7 @@ async fn create_org(
     let id = uuid::Uuid::new_v4();
     let org = state
         .org_repo
-        .create(id, req.tenant_id, req.name, slug)
+        .create(id, 0, req.name, slug)
         .await
         .map_err(AppError::internal)?;
 
@@ -151,6 +151,7 @@ mod tests {
             api_key_repo: Arc::new(MockApiKeyRepository::new()),
             dashboard_repo: Arc::new(MockDashboardRepository::new()),
             jwt_secret: "test-secret-key-at-least-32-chars-long!!".to_string(),
+            redis_client: None,
         })
     }
 
@@ -241,7 +242,7 @@ mod tests {
         let jwt = make_jwt(&state.jwt_secret, &claims);
         let app = org_app(state);
 
-        let body = serde_json::json!({"name": "New Org", "tenant_id": 1});
+        let body = serde_json::json!({"name": "New Org"});
         let headers = auth_headers(&jwt, csrf);
 
         let mut builder = HttpRequest::builder().method("POST").uri("/orgs");
@@ -264,7 +265,7 @@ mod tests {
         let jwt = make_jwt(&state.jwt_secret, &claims);
         let app = org_app(state);
 
-        let body = serde_json::json!({"name": "", "tenant_id": 1});
+        let body = serde_json::json!({"name": ""});
         let response = app
             .oneshot(
                 HttpRequest::builder()
@@ -296,7 +297,7 @@ mod tests {
         let jwt = make_jwt(&state.jwt_secret, &claims);
         let app = org_app(state);
 
-        let body = serde_json::json!({"name": "Test Org", "tenant_id": 1});
+        let body = serde_json::json!({"name": "Test Org"});
         let response = app
             .oneshot(
                 HttpRequest::builder()

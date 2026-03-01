@@ -11,4 +11,5 @@ pub struct PortalState {
     pub api_key_repo: Arc<dyn ApiKeyRepository>,
     pub dashboard_repo: Arc<dyn DashboardRepository>,
     pub jwt_secret: String,
+    pub redis_client: Option<redis::Client>,
 }

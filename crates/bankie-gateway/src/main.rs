@@ -52,6 +52,7 @@ async fn main() {
         api_key_repo: Arc::new(PgApiKeyRepository::new(pool.clone())),
         dashboard_repo: Arc::new(PgDashboardRepository::new(pool.clone())),
         jwt_secret: settings.jwt_secret.clone(),
+        redis_client: Some(redis_client.clone()),
     });
     let portal_routes = portal_router(portal_state);
 

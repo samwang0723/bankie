@@ -102,6 +102,7 @@ mod tests {
             api_key_repo: Arc::new(MockApiKeyRepository::new()),
             dashboard_repo: Arc::new(MockDashboardRepository::new()),
             jwt_secret: "test-secret-key-at-least-32-chars-long!!".to_string(),
+            redis_client: None,
         })
     }
 
