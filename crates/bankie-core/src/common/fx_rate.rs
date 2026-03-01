@@ -180,7 +180,8 @@ pub struct CoinGeckoProvider {
 impl CoinGeckoProvider {
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(3))
+            .timeout(std::time::Duration::from_secs(10))
+            .user_agent("bankie/1.0")
             .build()
             .unwrap_or_default();
         Self { client }
@@ -206,12 +207,29 @@ impl FxRateProvider for CoinGeckoProvider {
             "https://api.coingecko.com/api/v3/simple/price?ids={}&vs_currencies=usd",
             coin_id
         );
-        let resp: serde_json::Value = self.client.get(&url).send().await?.json().await?;
+        let response = self.client.get(&url).send().await?;
+        let status = response.status();
+        let body = response.text().await?;
+        tracing::debug!(
+            coin_id,
+            %status,
+            %body,
+            "CoinGecko raw response"
+        );
+        if !status.is_success() {
+            return Err(anyhow::anyhow!(
+                "CoinGecko returned HTTP {}: {}",
+                status,
+                body
+            ));
+        }
+        let resp: serde_json::Value = serde_json::from_str(&body)
+            .map_err(|e| anyhow::anyhow!("CoinGecko JSON parse error: {} body={}", e, body))?;
         let rate = resp
             .get(coin_id)
             .and_then(|v| v.get("usd"))
             .and_then(|v| v.as_f64())
-            .ok_or_else(|| anyhow::anyhow!("Missing rate for {}", coin_id))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing rate for {} in response: {}", coin_id, body))?;
 
         let rate_decimal =
             Decimal::try_from(rate).map_err(|e| anyhow::anyhow!("Invalid rate value: {}", e))?;
