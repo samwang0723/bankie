@@ -24,7 +24,7 @@ SQLX_OFFLINE=true cargo build
 cargo build --release --bin bankie
 cargo build --release --bin bankie-gateway
 
-# Run tests (251 unit tests: 128 core + 114 gateway + 9 common, no DB needed)
+# Run tests (303 unit tests: 131 core + 163 gateway + 9 common, no DB needed)
 SQLX_OFFLINE=true cargo test -- --nocapture
 cargo test -p bankie-core test_name -- --nocapture    # Single test in specific crate
 cargo test -p bankie-gateway test_name -- --nocapture
@@ -110,7 +110,7 @@ Core (:3030) — CQRS/Event Sourcing banking engine
 **External API consumers** (API key-based):
 - `Authorization: Bearer bk_live_...` → SHA-256 hash lookup → `ResolvedApiKey` (org_id, tenant_id, scopes)
 - Gateway mints short-lived internal JWT (60s, `iss: "bankie-gateway"`) matching Core's Claims format
-- Rate limiting: Redis token bucket (burst 100, sustained 1000/min) per API key
+- Rate limiting: Redis token bucket (burst 100, sustained 1000/min) per API key, throttle count tracked in `gw:throttled:{api_key_id}` (24h window) for dashboard metrics
 
 ### CQRS/Event Sourcing Core
 
@@ -156,14 +156,16 @@ Key design decisions:
 
 ### Portal Schema (in `portal` PostgreSQL schema)
 
-7 tables: `organizations`, `org_members`, `api_keys`, `webhook_endpoints`, `webhook_deliveries`, `api_logs` (range-partitioned by month), `audit_logs`. Migration at `db/migrations/20260226000001_portal_schema.sql`. Tenant sync trigger at `20260226000002_portal_tenant_sync.sql`.
+7 tables: `organizations`, `org_members` (with `name`, `invite_token_hash`, `invite_expires_at`), `api_keys`, `webhook_endpoints`, `webhook_deliveries`, `api_logs` (range-partitioned by month), `audit_logs`. Migrations at `db/migrations/20260226*.sql` (base schema + tenant sync) and `20260302*.sql` (invite tokens + member name).
 
 ### Gateway Middleware Stack
 
 **Portal routes** (`/portal/v1/*`):
 ```
 Public: auth_routes (login/signup/logout) — no middleware
-Protected: session_auth (cookie JWT + CSRF validation) → org/api-key/dashboard/data-proxy handlers
+Protected: session_auth (cookie JWT + CSRF validation)
+  → rbac middleware (role-based: Owner/Admin/Member)
+  → org/api-key/member/dashboard/data-proxy handlers
 ```
 
 **API proxy routes** (`/*` fallback):
@@ -239,6 +241,30 @@ Multiple account types (Checking, Interest, Yield) linked via `parent_id`. Maste
 | Ledger job | Every 10s | Polls outbox → executes `LedgerCommand::Credit` or `DebitRelease`. Redis-locked. |
 | Balance snapshot | Daily midnight UTC | Snapshots all active account balances. Redis-locked. |
 | API logging | Per request | Async write to `portal.api_logs` (partitioned by month) via `api_logger` middleware. |
+| Grace expiry | Every 60s | Revokes rotated API keys past grace period. Redis-locked (`gw:lock:grace_expiry`). Gateway-side (`crates/bankie-gateway/src/job.rs`). |
+
+### RBAC (Role-Based Access Control)
+
+Three roles in `MemberRole` enum (`crates/bankie-gateway/src/middleware/rbac.rs`):
+- **Owner** — full permissions, cannot be removed or demoted
+- **Admin** — manage members (except Owner/other Admins), manage API keys and org settings
+- **Member** — read-only access
+
+RBAC middleware functions: `require_member_management()`, `require_api_key_management()`, `require_org_management()` — each checks `SessionClaims.role` and returns 403 if insufficient.
+
+### Member Management & Invite Flow
+
+Members (`portal.org_members`) have statuses: `Active`, `Pending`, `Suspended`.
+
+**Invite flow** (`crates/bankie-gateway/src/routes/member.rs`):
+```
+POST /members/invite → generate 32-byte token → store SHA-256 hash + 7-day expiry
+  → return invite_link with raw token (shown once)
+  → GET /auth/invite?token=... → validate hash + expiry → show accept form
+  → POST /auth/invite/accept → set password (argon2id) + activate → session cookies
+```
+
+Role assignment rules: Owner can assign Admin/Member; Admin can only assign Member. Cannot change Owner's role. Admin cannot remove other Admins.
 
 ### Security Hardening
 
@@ -289,6 +315,13 @@ Multiple account types (Checking, Interest, Yield) linked via `parent_id`. Maste
 | POST | `/portal/v1/api-keys` | Session | Create key (returns raw key once) |
 | POST | `/portal/v1/api-keys/:id/rotate` | Session | Rotate key (grace period) |
 | DELETE | `/portal/v1/api-keys/:id` | Session | Revoke key |
+| GET | `/portal/v1/members` | Session | List org members |
+| POST | `/portal/v1/members/invite` | Session+RBAC | Invite member (Owner/Admin) |
+| POST | `/portal/v1/members/:id/role` | Session+RBAC | Change member role |
+| DELETE | `/portal/v1/members/:id` | Session+RBAC | Remove member |
+| POST | `/portal/v1/members/:id/resend-invite` | Session+RBAC | Resend invite to pending member |
+| GET | `/portal/v1/auth/invite` | None | Validate invite token |
+| POST | `/portal/v1/auth/invite/accept` | None | Accept invite + set password |
 | GET | `/portal/v1/data/*` | Session | Data proxy → Core (accounts, transactions, reports) |
 
 ### Gateway (:4040) — External API Proxy
@@ -303,7 +336,7 @@ React 19 + Vite + TailwindCSS 4 + TanStack Query. Source at `portal-spa/src/`.
 
 - **API client** (`api/client.ts`): base URL `/api/portal/v1`, CSRF token from cookie, credentials `same-origin`
 - **Auth** (`hooks/useAuth.ts`): context provider, login/signup/logout, 401 redirect
-- **Pages**: Login, Signup, Dashboard, ApiKeys, Organization, Accounts, Transactions (with USD Value column + FX rates), Reports, ApiDocs
+- **Pages**: Login, Signup, Dashboard, ApiKeys, Organization, Members, AcceptInvite, Accounts, Transactions (with USD Value column + FX rates), Reports, ApiDocs
 - **Utilities** (`utils/currency.ts`): shared currency formatting with per-currency precision, USD value + FX rate formatters
 - **Types** (`types/index.ts`): TypeScript interfaces matching gateway response shapes
 - **Vite proxy**: `/api` → `http://localhost:4040` (dev only; production uses nginx)
@@ -311,7 +344,7 @@ React 19 + Vite + TailwindCSS 4 + TanStack Query. Source at `portal-spa/src/`.
 
 ## Testing Patterns
 
-- **251 unit tests** (128 core + 114 gateway + 9 common) + **59 e2e tests**, unit tests need no DB (`SQLX_OFFLINE=true`)
+- **303 unit tests** (131 core + 163 gateway + 9 common) + **59 e2e tests**, unit tests need no DB (`SQLX_OFFLINE=true`)
 - Core aggregate tests use `cqrs_es::test::TestFramework` with given/when/then pattern and `test_case!`/`test_error_case!` macros
 - `MockBankAccountServices` (manual mock) with `Mutex<Option<Result<...>>>` fields for negative-path testing
 - Core DB layer uses `mockall::automock` on `DatabaseClient` trait
