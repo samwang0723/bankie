@@ -12,6 +12,7 @@ export interface LoginRequest {
 
 export interface SignupRequest {
   org_name: string;
+  name: string;
   email: string;
   password: string;
 }
@@ -23,6 +24,7 @@ export interface AuthResponse {
 
 export interface PortalUser {
   id: string;
+  name: string;
   email: string;
   role: OrgRole;
   created_at: string;
@@ -45,6 +47,7 @@ export type OrgRole = "owner" | "admin" | "member";
 export interface OrgMember {
   id: string;
   org_id: string;
+  name: string;
   email: string;
   role: OrgRole;
   status: MemberStatus;
@@ -57,6 +60,7 @@ export type MemberStatus = "active" | "pending" | "suspended";
 export interface InviteMemberRequest {
   email: string;
   role: string;
+  name?: string;
 }
 
 export interface InviteMemberResponse {
@@ -67,6 +71,7 @@ export interface InviteMemberResponse {
 export interface AcceptInviteRequest {
   token: string;
   password: string;
+  name?: string;
 }
 
 export interface InviteInfo {
