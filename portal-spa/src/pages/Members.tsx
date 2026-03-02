@@ -195,7 +195,7 @@ export function Members() {
           <p className="text-slate-500">No team members found.</p>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <div className="bg-white rounded-xl border border-slate-200">
           <table className="w-full" aria-label="Team members">
             <thead>
               <tr className="border-b border-slate-200 bg-[#F8FAFC]">
