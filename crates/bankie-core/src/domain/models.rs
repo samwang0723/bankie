@@ -69,6 +69,8 @@ pub struct BankAccount {
     #[serde(default, alias = "user_id")]
     pub external_reference_id: Option<String>,
     pub account_number: String,
+    #[serde(default)]
+    pub name: Option<String>,
     pub timestamp: String,
 }
 
@@ -101,6 +103,8 @@ pub struct BankAccountView {
     pub account_type: BankAccountType,
     pub kind: BankAccountKind,
     pub currency: Currency,
+    #[serde(default)]
+    pub name: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     #[serde(default)]

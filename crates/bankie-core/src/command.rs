@@ -663,6 +663,82 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // C7: OpenAccount with name field should be deserialized
+    #[tokio::test]
+    async fn test_open_account_extractor_with_name() {
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"
+                {
+                    "OpenAccount": {
+                        "account_type": "Retail",
+                        "kind": "Checking",
+                        "currency": "USD",
+                        "external_reference_id": "user-1",
+                        "name": "My Savings"
+                    }
+                }
+                "#,
+            ))
+            .unwrap();
+
+        let state = ();
+        let result = CommandExtractor::from_request(request, &state).await;
+
+        match result {
+            Ok(CommandExtractor(_, command)) => {
+                if let BankAccountCommand::OpenAccount {
+                    name,
+                    external_reference_id,
+                    ..
+                } = command
+                {
+                    assert_eq!(name, Some("My Savings".to_string()));
+                    assert_eq!(external_reference_id, Some("user-1".to_string()));
+                } else {
+                    panic!("Invalid command");
+                }
+            }
+            Err(_) => panic!("Extraction failed"),
+        }
+    }
+
+    // C8: OpenAccount without name field should default to None
+    #[tokio::test]
+    async fn test_open_account_extractor_without_name() {
+        let request = Request::builder()
+            .uri("/test-uri")
+            .header(USER_AGENT, "test-agent")
+            .body(Body::from(
+                r#"
+                {
+                    "OpenAccount": {
+                        "account_type": "Retail",
+                        "kind": "Checking",
+                        "currency": "USD"
+                    }
+                }
+                "#,
+            ))
+            .unwrap();
+
+        let state = ();
+        let result = CommandExtractor::from_request(request, &state).await;
+
+        match result {
+            Ok(CommandExtractor(_, command)) => {
+                if let BankAccountCommand::OpenAccount { name, .. } = command {
+                    assert!(name.is_none());
+                } else {
+                    panic!("Invalid command");
+                }
+            }
+            Err(_) => panic!("Extraction failed"),
+        }
+    }
+
     // C3: Transfer with zero amount should be rejected
     #[tokio::test]
     async fn test_transfer_zero_amount_rejected() {

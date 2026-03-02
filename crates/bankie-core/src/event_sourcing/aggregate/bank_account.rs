@@ -34,6 +34,7 @@ impl Aggregate for models::BankAccount {
                 kind,
                 external_reference_id,
                 currency,
+                name,
                 tenant_id,
             } => {
                 helper::validate_account_creation(
@@ -69,6 +70,7 @@ impl Aggregate for models::BankAccount {
                     kind,
                     external_reference_id,
                     account_number,
+                    name,
                     currency,
                 }])
             }
@@ -242,6 +244,7 @@ impl Aggregate for models::BankAccount {
                 kind,
                 external_reference_id,
                 account_number,
+                name,
                 currency,
             } => {
                 self.id = base_event.get_aggregate_id();
@@ -252,6 +255,7 @@ impl Aggregate for models::BankAccount {
                 self.currency = currency;
                 self.external_reference_id = external_reference_id;
                 self.account_number = account_number;
+                self.name = name;
             }
             events::BankAccountEvent::AccountKycApproved {
                 ledger_id,
@@ -334,6 +338,7 @@ mod aggregate_tests {
                 kind: BankAccountKind::Checking,
                 external_reference_id: Some("user".to_string()),
                 account_number: "123456789012".to_string(),
+                name: None,
                 currency: Currency::USD,
             },
             BankAccountEvent::AccountKycApproved {
@@ -388,6 +393,7 @@ mod aggregate_tests {
             kind: BankAccountKind::Checking,
             external_reference_id: Some("user".to_string()),
             currency: Currency::USD,
+            name: Some("My Savings".to_string()),
             tenant_id: 0
         },
         vec![BankAccountEvent::AccountOpened {
@@ -396,6 +402,7 @@ mod aggregate_tests {
             kind: BankAccountKind::Checking,
             external_reference_id: Some("user".to_string()),
             account_number: "123456789012".to_string(),
+            name: Some("My Savings".to_string()),
             currency: Currency::USD
         }]
     );
@@ -411,6 +418,7 @@ mod aggregate_tests {
             kind: BankAccountKind::Checking,
             external_reference_id: None,
             currency: Currency::USD,
+            name: None,
             tenant_id: 0
         },
         vec![BankAccountEvent::AccountOpened {
@@ -419,6 +427,7 @@ mod aggregate_tests {
             kind: BankAccountKind::Checking,
             external_reference_id: None,
             account_number: "123456789012".to_string(),
+            name: None,
             currency: Currency::USD
         }]
     );
@@ -431,6 +440,7 @@ mod aggregate_tests {
             kind: BankAccountKind::Checking,
             external_reference_id: Some("user".to_string()),
             account_number: "123456789012".to_string(),
+            name: None,
             currency: Currency::USD
         }],
         BankAccountCommand::ApproveAccount {
@@ -482,6 +492,7 @@ mod aggregate_tests {
             kind: BankAccountKind::Checking,
             external_reference_id: Some("user".to_string()),
             account_number: "123456789012".to_string(),
+            name: None,
             currency: Currency::USD
         }],
         BankAccountCommand::FreezeAccount {
@@ -521,6 +532,7 @@ mod aggregate_tests {
             kind: BankAccountKind::Checking,
             external_reference_id: Some("user".to_string()),
             account_number: "123456789012".to_string(),
+            name: None,
             currency: Currency::USD
         }],
         BankAccountCommand::CloseAccount {

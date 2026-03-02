@@ -18,6 +18,8 @@ pub enum BankAccountEvent {
         external_reference_id: Option<String>,
         #[serde(default)]
         account_number: String,
+        #[serde(default)]
+        name: Option<String>,
         base_event: BaseEvent,
     },
     AccountKycApproved {
