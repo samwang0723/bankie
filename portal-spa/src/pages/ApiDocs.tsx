@@ -7,7 +7,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
-  Check,
+  Check
 } from "lucide-react";
 
 type EndpointCategory =
@@ -24,8 +24,18 @@ interface Endpoint {
   scope: string;
   description: string;
   category: Exclude<EndpointCategory, "all">;
-  queryParams?: { name: string; type: string; required: boolean; description: string }[];
-  bodyParams?: { name: string; type: string; required: boolean; description: string }[];
+  queryParams?: {
+    name: string;
+    type: string;
+    required: boolean;
+    description: string;
+  }[];
+  bodyParams?: {
+    name: string;
+    type: string;
+    required: boolean;
+    description: string;
+  }[];
   curlExample: string;
 }
 
@@ -37,36 +47,132 @@ const ENDPOINTS: Endpoint[] = [
     description: "List all bank accounts (paginated)",
     category: "accounts",
     queryParams: [
-      { name: "offset", type: "integer", required: false, description: "Pagination offset (default: 0)" },
-      { name: "limit", type: "integer", required: false, description: "Page size, max 100 (default: 20)" },
+      {
+        name: "offset",
+        type: "integer",
+        required: false,
+        description: "Pagination offset (default: 0)"
+      },
+      {
+        name: "limit",
+        type: "integer",
+        required: false,
+        description: "Page size, max 100 (default: 20)"
+      }
     ],
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/accounts?offset=0&limit=20"`,
+  "https://api.bankie.io/v1/accounts?offset=0&limit=20"`
   },
   {
     method: "POST",
     path: "/v1/bank_account",
     scope: "accounts:write",
-    description: "Execute a bank account command (open, approve, deposit, withdraw, transfer, etc.)",
+    description:
+      "Execute a bank account command (open, approve, deposit, withdraw, transfer, etc.)",
     category: "accounts",
     bodyParams: [
-      { name: "OpenAccount", type: "object", required: false, description: "Open a new account" },
-      { name: "  account_type", type: "string", required: true, description: '"Retail" | "Institution" | "Tax"' },
-      { name: "  kind", type: "string", required: true, description: '"Checking" | "Interest" | "Yield"' },
-      { name: "  currency", type: "string", required: true, description: '"USD" | "TWD" | "BTC" | "ETH" | "USDT"' },
-      { name: "  external_reference_id", type: "string", required: false, description: "External user/reference ID" },
-      { name: "ApproveAccount", type: "object", required: false, description: "Approve a pending account" },
-      { name: "  id", type: "uuid", required: true, description: "Bank account ID" },
-      { name: "Deposit", type: "object", required: false, description: "Deposit funds" },
-      { name: "  id", type: "uuid", required: true, description: "Bank account ID" },
-      { name: "  amount", type: "Money", required: true, description: '{"amount": "100.00", "currency": "USD"}' },
-      { name: "Withdrawal", type: "object", required: false, description: "Withdraw funds (debit-hold pattern)" },
-      { name: "  id", type: "uuid", required: true, description: "Bank account ID" },
-      { name: "  amount", type: "Money", required: true, description: '{"amount": "50.00", "currency": "USD"}' },
-      { name: "Transfer", type: "object", required: false, description: "Transfer between accounts" },
-      { name: "  id", type: "uuid", required: true, description: "Source account ID" },
-      { name: "  to_account_id", type: "uuid", required: true, description: "Destination account ID" },
-      { name: "  amount", type: "Money", required: true, description: '{"amount": "25.00", "currency": "USD"}' },
+      {
+        name: "OpenAccount",
+        type: "object",
+        required: false,
+        description: "Open a new account"
+      },
+      {
+        name: "  account_type",
+        type: "string",
+        required: true,
+        description: '"Retail" | "Institution" | "Tax"'
+      },
+      {
+        name: "  kind",
+        type: "string",
+        required: true,
+        description: '"Checking" | "Interest" | "Yield"'
+      },
+      {
+        name: "  currency",
+        type: "string",
+        required: true,
+        description: '"USD" | "TWD" | "BTC" | "ETH" | "USDT"'
+      },
+      {
+        name: "  external_reference_id",
+        type: "string",
+        required: false,
+        description: "External user/reference ID"
+      },
+      {
+        name: "ApproveAccount",
+        type: "object",
+        required: false,
+        description: "Approve a pending account"
+      },
+      {
+        name: "  id",
+        type: "uuid",
+        required: true,
+        description: "Bank account ID"
+      },
+      {
+        name: "Deposit",
+        type: "object",
+        required: false,
+        description: "Deposit funds"
+      },
+      {
+        name: "  id",
+        type: "uuid",
+        required: true,
+        description: "Bank account ID"
+      },
+      {
+        name: "  amount",
+        type: "Money",
+        required: true,
+        description: '{"amount": "100.00", "currency": "USD"}'
+      },
+      {
+        name: "Withdrawal",
+        type: "object",
+        required: false,
+        description: "Withdraw funds (debit-hold pattern)"
+      },
+      {
+        name: "  id",
+        type: "uuid",
+        required: true,
+        description: "Bank account ID"
+      },
+      {
+        name: "  amount",
+        type: "Money",
+        required: true,
+        description: '{"amount": "50.00", "currency": "USD"}'
+      },
+      {
+        name: "Transfer",
+        type: "object",
+        required: false,
+        description: "Transfer between accounts"
+      },
+      {
+        name: "  id",
+        type: "uuid",
+        required: true,
+        description: "Source account ID"
+      },
+      {
+        name: "  to_account_id",
+        type: "uuid",
+        required: true,
+        description: "Destination account ID"
+      },
+      {
+        name: "  amount",
+        type: "Money",
+        required: true,
+        description: '{"amount": "25.00", "currency": "USD"}'
+      }
     ],
     curlExample: `curl -X POST -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -79,7 +185,7 @@ const ENDPOINTS: Endpoint[] = [
       "external_reference_id": "user-001"
     }
   }' \\
-  "https://api.bankie.io/v1/bank_account"`,
+  "https://api.bankie.io/v1/bank_account"`
   },
   {
     method: "GET",
@@ -88,7 +194,7 @@ const ENDPOINTS: Endpoint[] = [
     description: "Get account details by ID",
     category: "accounts",
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/bank_account/ACCOUNT_ID"`,
+  "https://api.bankie.io/v1/bank_account/ACCOUNT_ID"`
   },
   {
     method: "GET",
@@ -97,7 +203,7 @@ const ENDPOINTS: Endpoint[] = [
     description: "List sub-accounts for a master account",
     category: "accounts",
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/bank_account/ACCOUNT_ID/sub-accounts"`,
+  "https://api.bankie.io/v1/bank_account/ACCOUNT_ID/sub-accounts"`
   },
   {
     method: "GET",
@@ -106,7 +212,7 @@ const ENDPOINTS: Endpoint[] = [
     description: "Lookup account by account number",
     category: "accounts",
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/bank_account/by-number/1234567890"`,
+  "https://api.bankie.io/v1/bank_account/by-number/1234567890"`
   },
   {
     method: "GET",
@@ -115,7 +221,7 @@ const ENDPOINTS: Endpoint[] = [
     description: "Query ledger balances (available, pending, current)",
     category: "ledgers",
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/ledger/LEDGER_ID"`,
+  "https://api.bankie.io/v1/ledger/LEDGER_ID"`
   },
   {
     method: "GET",
@@ -124,16 +230,51 @@ const ENDPOINTS: Endpoint[] = [
     description: "List transactions with optional filters",
     category: "transactions",
     queryParams: [
-      { name: "bank_account_id", type: "uuid", required: false, description: "Filter by account ID" },
-      { name: "offset", type: "integer", required: false, description: "Pagination offset (default: 0)" },
-      { name: "limit", type: "integer", required: false, description: "Page size, max 100 (default: 20)" },
-      { name: "start_date", type: "date", required: false, description: "Filter from date (YYYY-MM-DD)" },
-      { name: "end_date", type: "date", required: false, description: "Filter to date (YYYY-MM-DD)" },
-      { name: "transaction_type", type: "string", required: false, description: "Filter by type (deposit, withdrawal, transfer)" },
-      { name: "status", type: "string", required: false, description: "Filter by status" },
+      {
+        name: "bank_account_id",
+        type: "uuid",
+        required: false,
+        description: "Filter by account ID"
+      },
+      {
+        name: "offset",
+        type: "integer",
+        required: false,
+        description: "Pagination offset (default: 0)"
+      },
+      {
+        name: "limit",
+        type: "integer",
+        required: false,
+        description: "Page size, max 100 (default: 20)"
+      },
+      {
+        name: "start_date",
+        type: "date",
+        required: false,
+        description: "Filter from date (YYYY-MM-DD)"
+      },
+      {
+        name: "end_date",
+        type: "date",
+        required: false,
+        description: "Filter to date (YYYY-MM-DD)"
+      },
+      {
+        name: "transaction_type",
+        type: "string",
+        required: false,
+        description: "Filter by type (deposit, withdrawal, transfer)"
+      },
+      {
+        name: "status",
+        type: "string",
+        required: false,
+        description: "Filter by status"
+      }
     ],
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/transaction?bank_account_id=ACCOUNT_ID&limit=50"`,
+  "https://api.bankie.io/v1/transaction?bank_account_id=ACCOUNT_ID&limit=50"`
   },
   {
     method: "GET",
@@ -142,14 +283,34 @@ const ENDPOINTS: Endpoint[] = [
     description: "Settlement report (CSV download, max 90-day range)",
     category: "reports",
     queryParams: [
-      { name: "start_date", type: "date", required: true, description: "Report start date (YYYY-MM-DD)" },
-      { name: "end_date", type: "date", required: true, description: "Report end date (YYYY-MM-DD)" },
-      { name: "bank_account_id", type: "uuid", required: false, description: "Specific account (default: all)" },
-      { name: "currency", type: "string", required: false, description: "Currency filter" },
+      {
+        name: "start_date",
+        type: "date",
+        required: true,
+        description: "Report start date (YYYY-MM-DD)"
+      },
+      {
+        name: "end_date",
+        type: "date",
+        required: true,
+        description: "Report end date (YYYY-MM-DD)"
+      },
+      {
+        name: "bank_account_id",
+        type: "uuid",
+        required: false,
+        description: "Specific account (default: all)"
+      },
+      {
+        name: "currency",
+        type: "string",
+        required: false,
+        description: "Currency filter"
+      }
     ],
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
   -o settlement.csv \\
-  "https://api.bankie.io/v1/report/settlement?start_date=2026-01-01&end_date=2026-01-31"`,
+  "https://api.bankie.io/v1/report/settlement?start_date=2026-01-01&end_date=2026-01-31"`
   },
   {
     method: "GET",
@@ -158,10 +319,15 @@ const ENDPOINTS: Endpoint[] = [
     description: "List house accounts",
     category: "house_accounts",
     queryParams: [
-      { name: "currency", type: "string", required: false, description: "Filter by currency (USD, TWD, BTC, etc.)" },
+      {
+        name: "currency",
+        type: "string",
+        required: false,
+        description: "Filter by currency (USD, TWD, BTC, etc.)"
+      }
     ],
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/house_account?currency=USD"`,
+  "https://api.bankie.io/v1/house_account?currency=USD"`
   },
   {
     method: "POST",
@@ -170,10 +336,30 @@ const ENDPOINTS: Endpoint[] = [
     description: "Create a house (settlement) account",
     category: "house_accounts",
     bodyParams: [
-      { name: "account_name", type: "string", required: true, description: "Display name for the house account" },
-      { name: "account_type", type: "string", required: true, description: '"Settlement"' },
-      { name: "currency", type: "string", required: true, description: '"USD" | "TWD" | "BTC" | "ETH" | "USDT"' },
-      { name: "status", type: "string", required: true, description: '"active"' },
+      {
+        name: "account_name",
+        type: "string",
+        required: true,
+        description: "Display name for the house account"
+      },
+      {
+        name: "account_type",
+        type: "string",
+        required: true,
+        description: '"Settlement"'
+      },
+      {
+        name: "currency",
+        type: "string",
+        required: true,
+        description: '"USD" | "TWD" | "BTC" | "ETH" | "USDT"'
+      },
+      {
+        name: "status",
+        type: "string",
+        required: true,
+        description: '"active"'
+      }
     ],
     curlExample: `curl -X POST -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -184,7 +370,7 @@ const ENDPOINTS: Endpoint[] = [
     "currency": "USD",
     "status": "active"
   }' \\
-  "https://api.bankie.io/v1/house_account"`,
+  "https://api.bankie.io/v1/house_account"`
   },
   {
     method: "GET",
@@ -193,11 +379,21 @@ const ENDPOINTS: Endpoint[] = [
     description: "Balance history from daily snapshots",
     category: "accounts",
     queryParams: [
-      { name: "start_date", type: "date", required: true, description: "History start date (YYYY-MM-DD)" },
-      { name: "end_date", type: "date", required: true, description: "History end date (YYYY-MM-DD)" },
+      {
+        name: "start_date",
+        type: "date",
+        required: true,
+        description: "History start date (YYYY-MM-DD)"
+      },
+      {
+        name: "end_date",
+        type: "date",
+        required: true,
+        description: "History end date (YYYY-MM-DD)"
+      }
     ],
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/bank_account/ACCOUNT_ID/balance-history?start_date=2026-01-01&end_date=2026-01-31"`,
+  "https://api.bankie.io/v1/bank_account/ACCOUNT_ID/balance-history?start_date=2026-01-01&end_date=2026-01-31"`
   },
   {
     method: "GET",
@@ -206,8 +402,8 @@ const ENDPOINTS: Endpoint[] = [
     description: "Query user accounts with ledger balances",
     category: "accounts",
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/user/USER_ID"`,
-  },
+  "https://api.bankie.io/v1/user/USER_ID"`
+  }
 ];
 
 const FILTER_PILLS: { label: string; value: EndpointCategory }[] = [
@@ -216,54 +412,52 @@ const FILTER_PILLS: { label: string; value: EndpointCategory }[] = [
   { label: "Ledgers", value: "ledgers" },
   { label: "Transactions", value: "transactions" },
   { label: "House Accounts", value: "house_accounts" },
-  { label: "Reports", value: "reports" },
+  { label: "Reports", value: "reports" }
 ];
 
 const ERROR_CODES = [
   {
     code: "400",
     name: "Bad Request",
-    description: "The request body or parameters are invalid.",
+    description: "The request body or parameters are invalid."
   },
   {
     code: "401",
     name: "Unauthorized",
-    description: "Missing or invalid API key.",
+    description: "Missing or invalid API key."
   },
   {
     code: "403",
     name: "Forbidden",
-    description:
-      "API key lacks the required scope for this endpoint.",
+    description: "API key lacks the required scope for this endpoint."
   },
   {
     code: "404",
     name: "Not Found",
-    description: "The requested resource does not exist.",
+    description: "The requested resource does not exist."
   },
   {
     code: "409",
     name: "Conflict",
-    description: "Duplicate idempotency key or conflicting state.",
+    description: "Duplicate idempotency key or conflicting state."
   },
   {
     code: "422",
     name: "Unprocessable Entity",
-    description: "Request is well-formed but semantically invalid.",
+    description: "Request is well-formed but semantically invalid."
   },
   {
     code: "429",
     name: "Too Many Requests",
-    description:
-      "Rate limit exceeded. Check Retry-After header.",
-  },
+    description: "Rate limit exceeded. Check Retry-After header."
+  }
 ];
 
 function MethodBadge({ method }: { method: string }) {
   const styles: Record<string, string> = {
     GET: "bg-green-50 text-green-700",
     POST: "bg-cyan-50 text-cyan-700",
-    DELETE: "bg-red-50 text-red-700",
+    DELETE: "bg-red-50 text-red-700"
   };
   return (
     <span
@@ -322,13 +516,12 @@ function EndpointRow({ endpoint }: { endpoint: Endpoint }) {
         onClick={() => hasDetails && setExpanded(!expanded)}
       >
         <td className="px-6 py-3 w-[32px]">
-          {hasDetails && (
-            expanded ? (
+          {hasDetails &&
+            (expanded ? (
               <ChevronDown className="w-4 h-4 text-slate-400" />
             ) : (
               <ChevronRight className="w-4 h-4 text-slate-400" />
-            )
-          )}
+            ))}
         </td>
         <td className="px-6 py-3">
           <MethodBadge method={endpoint.method} />
@@ -347,7 +540,7 @@ function EndpointRow({ endpoint }: { endpoint: Endpoint }) {
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={5} className="px-6 pb-4 pt-0 bg-slate-50">
+          <td colSpan={5} className="px-6 py-4 bg-slate-50">
             <div className="ml-8 space-y-4">
               {/* Query Parameters */}
               {endpoint.queryParams && endpoint.queryParams.length > 0 && (
@@ -384,7 +577,9 @@ function EndpointRow({ endpoint }: { endpoint: Endpoint }) {
                             </td>
                             <td className="px-4 py-2 text-xs">
                               {param.required ? (
-                                <span className="text-red-500 font-medium">required</span>
+                                <span className="text-red-500 font-medium">
+                                  required
+                                </span>
                               ) : (
                                 <span className="text-slate-400">optional</span>
                               )}
@@ -426,14 +621,22 @@ function EndpointRow({ endpoint }: { endpoint: Endpoint }) {
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {endpoint.bodyParams.map((param, i) => {
-                          const isHeader = param.name === param.name.trimStart();
+                          const isHeader =
+                            param.name === param.name.trimStart();
                           return (
-                            <tr key={i} className={isHeader ? "bg-slate-50/50" : ""}>
+                            <tr
+                              key={i}
+                              className={isHeader ? "bg-slate-50/50" : ""}
+                            >
                               <td className="px-4 py-2 font-mono text-xs text-slate-800">
                                 {isHeader ? (
-                                  <span className="font-semibold">{param.name}</span>
+                                  <span className="font-semibold">
+                                    {param.name}
+                                  </span>
                                 ) : (
-                                  <span className="pl-2 text-slate-600">{param.name.trim()}</span>
+                                  <span className="pl-2 text-slate-600">
+                                    {param.name.trim()}
+                                  </span>
                                 )}
                               </td>
                               <td className="px-4 py-2 text-xs text-slate-500">
@@ -441,9 +644,13 @@ function EndpointRow({ endpoint }: { endpoint: Endpoint }) {
                               </td>
                               <td className="px-4 py-2 text-xs">
                                 {param.required ? (
-                                  <span className="text-red-500 font-medium">required</span>
+                                  <span className="text-red-500 font-medium">
+                                    required
+                                  </span>
                                 ) : (
-                                  <span className="text-slate-400">optional</span>
+                                  <span className="text-slate-400">
+                                    optional
+                                  </span>
                                 )}
                               </td>
                               <td className="px-4 py-2 text-xs text-slate-600">
