@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   BookOpen,
   Terminal,
@@ -7,8 +8,12 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
-  Check
+  Check,
+  Key
 } from "lucide-react";
+import { api } from "../api/client.ts";
+import { handleApiError } from "../hooks/useAuth.ts";
+import type { ApiKey } from "../types/index.ts";
 
 type EndpointCategory =
   | "all"
@@ -570,8 +575,20 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function EndpointRow({ endpoint }: { endpoint: Endpoint }) {
+const API_KEY_PLACEHOLDER = "bk_live_YOUR_API_KEY";
+
+function EndpointRow({
+  endpoint,
+  keyDisplay
+}: {
+  endpoint: Endpoint;
+  keyDisplay: string;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const curlText = endpoint.curlExample.replaceAll(
+    API_KEY_PLACEHOLDER,
+    keyDisplay
+  );
   const hasDetails =
     (endpoint.queryParams && endpoint.queryParams.length > 0) ||
     (endpoint.bodyParams && endpoint.bodyParams.length > 0) ||
@@ -734,16 +751,16 @@ function EndpointRow({ endpoint }: { endpoint: Endpoint }) {
               )}
 
               {/* curl Example */}
-              {endpoint.curlExample && (
+              {curlText && (
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
                       Example Request
                     </h4>
-                    <CopyButton text={endpoint.curlExample} />
+                    <CopyButton text={curlText} />
                   </div>
                   <div className="bg-[#0A0F1C] rounded-lg p-4 overflow-x-auto">
-                    <HighlightedCurl text={endpoint.curlExample} />
+                    <HighlightedCurl text={curlText} />
                   </div>
                 </div>
               )}
@@ -757,6 +774,16 @@ function EndpointRow({ endpoint }: { endpoint: Endpoint }) {
 
 export function ApiDocs() {
   const [filter, setFilter] = useState<EndpointCategory>("all");
+  const [selectedKeyPrefix, setSelectedKeyPrefix] = useState("");
+
+  const { data: apiKeys = [] } = useQuery<ApiKey[]>({
+    queryKey: ["api-keys"],
+    queryFn: () => api.get<ApiKey[]>("/api-keys").catch(handleApiError)
+  });
+
+  const activeKeys = apiKeys.filter((k) => k.status === "active");
+  const keyDisplay = selectedKeyPrefix || API_KEY_PLACEHOLDER;
+  const quickStartKey = selectedKeyPrefix || "bk_live_your_api_key";
 
   const filteredEndpoints =
     filter === "all"
@@ -778,6 +805,35 @@ export function ApiDocs() {
         </p>
       </div>
 
+      {/* API Key Selector */}
+      {activeKeys.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 p-4 mb-6">
+          <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+              <Key className="w-4 h-4 text-cyan-400" />
+              <span>API Key</span>
+            </div>
+            <select
+              value={selectedKeyPrefix}
+              onChange={(e) => setSelectedKeyPrefix(e.target.value)}
+              className="px-3 py-1.5 bg-[#0F172A] border border-slate-600 rounded-lg text-sm font-mono text-white
+                focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-cyan-400 min-w-[280px]"
+            >
+              <option value="">bk_live_YOUR_API_KEY (placeholder)</option>
+              {activeKeys.map((k) => (
+                <option key={k.id} value={`${k.key_prefix}...`}>
+                  {k.name} ({k.key_prefix}...)
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-slate-400">
+              Full keys are only shown at creation. Use your saved key for real
+              API calls.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Quick Start */}
       <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6">
         <div className="flex items-center gap-2 mb-4">
@@ -795,7 +851,7 @@ export function ApiDocs() {
             <span className="text-cyan-400">curl</span>
             {" -H "}
             <span className="text-green-400">
-              &quot;Authorization: Bearer bk_live_your_api_key&quot;
+              &quot;Authorization: Bearer {quickStartKey}&quot;
             </span>
             {" \\\n  "}
             <span className="text-slate-400">
@@ -854,7 +910,11 @@ export function ApiDocs() {
             </thead>
             <tbody className="divide-y divide-slate-200">
               {filteredEndpoints.map((endpoint, i) => (
-                <EndpointRow key={i} endpoint={endpoint} />
+                <EndpointRow
+                  key={i}
+                  endpoint={endpoint}
+                  keyDisplay={keyDisplay}
+                />
               ))}
             </tbody>
           </table>
