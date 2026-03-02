@@ -64,7 +64,8 @@ function RateLimitCell({ entry }: { entry: RateLimitEntry | undefined }) {
     : isCritical
       ? "bg-red-500"
       : "bg-amber-400";
-  const successPct = total > 0 ? Math.round((requests / total) * 100) : 100;
+  const cap = entry.sustained_per_min > 0 ? entry.sustained_per_min : 1;
+  const usagePct = Math.min(100, Math.round((requests / cap) * 100));
 
   return (
     <div className="w-36">
@@ -78,7 +79,7 @@ function RateLimitCell({ entry }: { entry: RateLimitEntry | undefined }) {
       <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden mt-1">
         <div
           className={`h-full rounded-full transition-all ${barColor}`}
-          style={{ width: `${successPct}%` }}
+          style={{ width: `${usagePct}%` }}
         />
       </div>
     </div>

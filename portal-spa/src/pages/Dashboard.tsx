@@ -83,8 +83,9 @@ function RateLimitBar({ entry }: { entry: RateLimitEntry }) {
     : isCritical
       ? "bg-red-500"
       : "bg-amber-400";
-  // Bar shows success rate (requests out of total)
-  const successPct = total > 0 ? Math.round((requests / total) * 100) : 100;
+  // Bar shows usage relative to sustained rate cap
+  const cap = entry.sustained_per_min > 0 ? entry.sustained_per_min : 1;
+  const usagePct = Math.min(100, Math.round((requests / cap) * 100));
 
   return (
     <div className="py-3 border-b border-slate-100 last:border-0">
@@ -106,7 +107,7 @@ function RateLimitBar({ entry }: { entry: RateLimitEntry }) {
       <div className="w-full h-2.5 bg-slate-200 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${barColor}`}
-          style={{ width: `${successPct}%` }}
+          style={{ width: `${usagePct}%` }}
         />
       </div>
       {throttled > 0 && (
