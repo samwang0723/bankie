@@ -65,8 +65,9 @@ function StatCard({
 }
 
 function RateLimitBar({ entry }: { entry: RateLimitEntry }) {
-  const remainingPct =
-    entry.limit > 0 ? Math.round((entry.remaining / entry.limit) * 100) : 0;
+  const cap =
+    entry.sustained_per_min > 0 ? entry.sustained_per_min : entry.limit;
+  const remainingPct = cap > 0 ? Math.round((entry.remaining / cap) * 100) : 0;
   const barColor =
     remainingPct === 0
       ? "bg-red-500"
@@ -98,8 +99,7 @@ function RateLimitBar({ entry }: { entry: RateLimitEntry }) {
         <span
           className={`text-xs shrink-0 ml-2 ${remainingPct === 0 ? "font-medium text-red-600" : "text-slate-500"}`}
         >
-          {entry.remaining.toLocaleString()} / {entry.limit.toLocaleString()}{" "}
-          remaining{" "}
+          {entry.remaining.toLocaleString()} / {cap.toLocaleString()} req/min{" "}
           <span
             className={`font-semibold ${remainingPct === 0 ? "text-red-700" : "text-slate-700"}`}
           >
