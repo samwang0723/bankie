@@ -61,7 +61,7 @@ const ENDPOINTS: Endpoint[] = [
       }
     ],
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/accounts?offset=0&limit=20"`
+  https://api.bankie.io/v1/accounts?offset=0&limit=20`
   },
   {
     method: "POST",
@@ -185,7 +185,7 @@ const ENDPOINTS: Endpoint[] = [
       "external_reference_id": "user-001"
     }
   }' \\
-  "https://api.bankie.io/v1/bank_account"`
+  https://api.bankie.io/v1/bank_account`
   },
   {
     method: "GET",
@@ -194,7 +194,7 @@ const ENDPOINTS: Endpoint[] = [
     description: "Get account details by ID",
     category: "accounts",
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/bank_account/ACCOUNT_ID"`
+  https://api.bankie.io/v1/bank_account/ACCOUNT_ID`
   },
   {
     method: "GET",
@@ -203,7 +203,7 @@ const ENDPOINTS: Endpoint[] = [
     description: "List sub-accounts for a master account",
     category: "accounts",
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/bank_account/ACCOUNT_ID/sub-accounts"`
+  https://api.bankie.io/v1/bank_account/ACCOUNT_ID/sub-accounts`
   },
   {
     method: "GET",
@@ -212,7 +212,7 @@ const ENDPOINTS: Endpoint[] = [
     description: "Lookup account by account number",
     category: "accounts",
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/bank_account/by-number/1234567890"`
+  https://api.bankie.io/v1/bank_account/by-number/1234567890`
   },
   {
     method: "GET",
@@ -221,7 +221,7 @@ const ENDPOINTS: Endpoint[] = [
     description: "Query ledger balances (available, pending, current)",
     category: "ledgers",
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/ledger/LEDGER_ID"`
+  https://api.bankie.io/v1/ledger/LEDGER_ID`
   },
   {
     method: "GET",
@@ -274,7 +274,7 @@ const ENDPOINTS: Endpoint[] = [
       }
     ],
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/transaction?bank_account_id=ACCOUNT_ID&limit=50"`
+  https://api.bankie.io/v1/transaction?bank_account_id=ACCOUNT_ID&limit=50`
   },
   {
     method: "GET",
@@ -310,7 +310,7 @@ const ENDPOINTS: Endpoint[] = [
     ],
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
   -o settlement.csv \\
-  "https://api.bankie.io/v1/report/settlement?start_date=2026-01-01&end_date=2026-01-31"`
+  https://api.bankie.io/v1/report/settlement?start_date=2026-01-01&end_date=2026-01-31`
   },
   {
     method: "GET",
@@ -327,7 +327,7 @@ const ENDPOINTS: Endpoint[] = [
       }
     ],
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/house_account?currency=USD"`
+  https://api.bankie.io/v1/house_account?currency=USD`
   },
   {
     method: "POST",
@@ -370,7 +370,7 @@ const ENDPOINTS: Endpoint[] = [
     "currency": "USD",
     "status": "active"
   }' \\
-  "https://api.bankie.io/v1/house_account"`
+  https://api.bankie.io/v1/house_account`
   },
   {
     method: "GET",
@@ -393,7 +393,7 @@ const ENDPOINTS: Endpoint[] = [
       }
     ],
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/bank_account/ACCOUNT_ID/balance-history?start_date=2026-01-01&end_date=2026-01-31"`
+  https://api.bankie.io/v1/bank_account/ACCOUNT_ID/balance-history?start_date=2026-01-01&end_date=2026-01-31`
   },
   {
     method: "GET",
@@ -402,7 +402,7 @@ const ENDPOINTS: Endpoint[] = [
     description: "Query user accounts with ledger balances",
     category: "accounts",
     curlExample: `curl -H "Authorization: Bearer bk_live_YOUR_API_KEY" \\
-  "https://api.bankie.io/v1/user/USER_ID"`
+  https://api.bankie.io/v1/user/USER_ID`
   }
 ];
 
