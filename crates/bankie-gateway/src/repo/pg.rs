@@ -44,6 +44,7 @@ impl From<OrgRow> for Organization {
 struct MemberRow {
     id: Uuid,
     org_id: Uuid,
+    name: String,
     email: String,
     password_hash: String,
     role: String,
@@ -59,6 +60,7 @@ impl From<MemberRow> for OrgMember {
         OrgMember {
             id: row.id,
             org_id: row.org_id,
+            name: row.name,
             email: row.email,
             password_hash: row.password_hash,
             role: match row.role.as_str() {
@@ -247,20 +249,22 @@ impl super::member::MemberRepository for PgMemberRepository {
         &self,
         id: Uuid,
         org_id: Uuid,
+        name: String,
         email: String,
         password_hash: String,
         role: String,
     ) -> Result<OrgMember, RepoError> {
         let row: MemberRow = sqlx::query_as(
             r#"
-            INSERT INTO portal.org_members (id, org_id, email, password_hash, role, status)
-            VALUES ($1, $2, $3, $4, $5, 'active')
-            RETURNING id, org_id, email, password_hash, role, status,
+            INSERT INTO portal.org_members (id, org_id, name, email, password_hash, role, status)
+            VALUES ($1, $2, $3, $4, $5, $6, 'active')
+            RETURNING id, org_id, name, email, password_hash, role, status,
                       invite_token_hash, invite_expires_at, created_at, updated_at
             "#,
         )
         .bind(id)
         .bind(org_id)
+        .bind(&name)
         .bind(&email)
         .bind(&password_hash)
         .bind(&role)
@@ -282,7 +286,7 @@ impl super::member::MemberRepository for PgMemberRepository {
     async fn find_by_email(&self, email: String) -> Result<Option<OrgMember>, RepoError> {
         let row: Option<MemberRow> = sqlx::query_as(
             r#"
-            SELECT id, org_id, email, password_hash, role, status,
+            SELECT id, org_id, name, email, password_hash, role, status,
                    invite_token_hash, invite_expires_at, created_at, updated_at
             FROM portal.org_members
             WHERE email = $1
@@ -299,7 +303,7 @@ impl super::member::MemberRepository for PgMemberRepository {
     async fn find_by_id(&self, id: Uuid) -> Result<Option<OrgMember>, RepoError> {
         let row: Option<MemberRow> = sqlx::query_as(
             r#"
-            SELECT id, org_id, email, password_hash, role, status,
+            SELECT id, org_id, name, email, password_hash, role, status,
                    invite_token_hash, invite_expires_at, created_at, updated_at
             FROM portal.org_members
             WHERE id = $1
@@ -316,7 +320,7 @@ impl super::member::MemberRepository for PgMemberRepository {
     async fn list_by_org(&self, org_id: Uuid) -> Result<Vec<OrgMember>, RepoError> {
         let rows: Vec<MemberRow> = sqlx::query_as(
             r#"
-            SELECT id, org_id, email, password_hash, role, status,
+            SELECT id, org_id, name, email, password_hash, role, status,
                    invite_token_hash, invite_expires_at, created_at, updated_at
             FROM portal.org_members
             WHERE org_id = $1
@@ -338,7 +342,7 @@ impl super::member::MemberRepository for PgMemberRepository {
     ) -> Result<Option<OrgMember>, RepoError> {
         let row: Option<MemberRow> = sqlx::query_as(
             r#"
-            SELECT id, org_id, email, password_hash, role, status,
+            SELECT id, org_id, name, email, password_hash, role, status,
                    invite_token_hash, invite_expires_at, created_at, updated_at
             FROM portal.org_members
             WHERE id = $1 AND org_id = $2
@@ -359,7 +363,7 @@ impl super::member::MemberRepository for PgMemberRepository {
             UPDATE portal.org_members
             SET role = $2, updated_at = now()
             WHERE id = $1
-            RETURNING id, org_id, email, password_hash, role, status,
+            RETURNING id, org_id, name, email, password_hash, role, status,
                       invite_token_hash, invite_expires_at, created_at, updated_at
             "#,
         )
@@ -382,7 +386,7 @@ impl super::member::MemberRepository for PgMemberRepository {
             UPDATE portal.org_members
             SET status = $2, updated_at = now()
             WHERE id = $1
-            RETURNING id, org_id, email, password_hash, role, status,
+            RETURNING id, org_id, name, email, password_hash, role, status,
                       invite_token_hash, invite_expires_at, created_at, updated_at
             "#,
         )
@@ -414,6 +418,7 @@ impl super::member::MemberRepository for PgMemberRepository {
         &self,
         id: Uuid,
         org_id: Uuid,
+        name: String,
         email: String,
         password_hash: String,
         role: String,
@@ -423,14 +428,15 @@ impl super::member::MemberRepository for PgMemberRepository {
     ) -> Result<OrgMember, RepoError> {
         let row: MemberRow = sqlx::query_as(
             r#"
-            INSERT INTO portal.org_members (id, org_id, email, password_hash, role, status, invite_token_hash, invite_expires_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            RETURNING id, org_id, email, password_hash, role, status,
+            INSERT INTO portal.org_members (id, org_id, name, email, password_hash, role, status, invite_token_hash, invite_expires_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING id, org_id, name, email, password_hash, role, status,
                       invite_token_hash, invite_expires_at, created_at, updated_at
             "#,
         )
         .bind(id)
         .bind(org_id)
+        .bind(&name)
         .bind(&email)
         .bind(&password_hash)
         .bind(&role)
@@ -458,7 +464,7 @@ impl super::member::MemberRepository for PgMemberRepository {
     ) -> Result<Option<OrgMember>, RepoError> {
         let row: Option<MemberRow> = sqlx::query_as(
             r#"
-            SELECT id, org_id, email, password_hash, role, status,
+            SELECT id, org_id, name, email, password_hash, role, status,
                    invite_token_hash, invite_expires_at, created_at, updated_at
             FROM portal.org_members
             WHERE invite_token_hash = $1
@@ -475,22 +481,25 @@ impl super::member::MemberRepository for PgMemberRepository {
     async fn accept_invite(
         &self,
         id: Uuid,
+        name: String,
         password_hash: String,
     ) -> Result<Option<OrgMember>, RepoError> {
         let row: Option<MemberRow> = sqlx::query_as(
             r#"
             UPDATE portal.org_members
-            SET password_hash = $2,
+            SET name = $2,
+                password_hash = $3,
                 status = 'active',
                 invite_token_hash = NULL,
                 invite_expires_at = NULL,
                 updated_at = now()
             WHERE id = $1
-            RETURNING id, org_id, email, password_hash, role, status,
+            RETURNING id, org_id, name, email, password_hash, role, status,
                       invite_token_hash, invite_expires_at, created_at, updated_at
             "#,
         )
         .bind(id)
+        .bind(&name)
         .bind(&password_hash)
         .fetch_optional(&self.pool)
         .await
@@ -512,7 +521,7 @@ impl super::member::MemberRepository for PgMemberRepository {
                 invite_expires_at = $3,
                 updated_at = now()
             WHERE id = $1
-            RETURNING id, org_id, email, password_hash, role, status,
+            RETURNING id, org_id, name, email, password_hash, role, status,
                       invite_token_hash, invite_expires_at, created_at, updated_at
             "#,
         )

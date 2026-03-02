@@ -100,6 +100,7 @@ async fn invite_member(
         .create_with_status(
             member_id,
             org_id,
+            req.name.clone(),
             req.email.clone(),
             "pending_invite".to_string(),
             role_str,
@@ -431,6 +432,7 @@ mod tests {
     fn test_claims(role: &str, org_id: &str, csrf: &str) -> SessionClaims {
         SessionClaims {
             sub: uuid::Uuid::new_v4().to_string(),
+            name: "Test User".to_string(),
             org_id: org_id.to_string(),
             tenant_id: 1,
             role: role.to_string(),
@@ -442,6 +444,7 @@ mod tests {
     fn test_claims_with_sub(role: &str, org_id: &str, csrf: &str, sub: &str) -> SessionClaims {
         SessionClaims {
             sub: sub.to_string(),
+            name: "Test User".to_string(),
             org_id: org_id.to_string(),
             tenant_id: 1,
             role: role.to_string(),
@@ -454,6 +457,7 @@ mod tests {
         OrgMember {
             id,
             org_id,
+            name: "Test User".to_string(),
             email: "test@example.com".to_string(),
             password_hash: "hash".to_string(),
             role,
@@ -469,6 +473,7 @@ mod tests {
         OrgMember {
             id,
             org_id,
+            name: String::new(),
             email: "pending@example.com".to_string(),
             password_hash: "pending_invite".to_string(),
             role: MemberRole::Member,
@@ -528,10 +533,11 @@ mod tests {
         let mut mock = MockMemberRepository::new();
         mock.expect_find_by_email().returning(|_| Ok(None));
         mock.expect_create_with_status().returning(
-            |id, org_id, email, password_hash, role, _status, _token_hash, _expires_at| {
+            |id, org_id, name, email, password_hash, role, _status, _token_hash, _expires_at| {
                 Ok(OrgMember {
                     id,
                     org_id,
+                    name,
                     email,
                     password_hash,
                     role: parse_role(&role),
