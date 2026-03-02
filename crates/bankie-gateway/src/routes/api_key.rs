@@ -9,6 +9,7 @@ use chrono::{Duration, Utc};
 
 use bankie_common::error::AppError;
 
+use crate::middleware::rbac::require_api_key_management;
 use crate::models::api_key::{
     generate_raw_key, hash_key, key_prefix, validate_scopes, CreateKeyRequest, CreateKeyResponse,
     KeyListItem, KeyStatus, RotateKeyResponse,
@@ -45,6 +46,7 @@ async fn create_key(
     Json(req): Json<CreateKeyRequest>,
 ) -> Result<Json<CreateKeyResponse>, AppError> {
     verify_org_access(&claims, &org_id)?;
+    require_api_key_management(&claims)?;
 
     if req.name.trim().is_empty() {
         return Err(AppError::BadRequest("name is required".to_string()));
@@ -145,6 +147,7 @@ async fn revoke_key(
     Path((org_id, key_id)): Path<(uuid::Uuid, uuid::Uuid)>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     verify_org_access(&claims, &org_id)?;
+    require_api_key_management(&claims)?;
 
     let key = state
         .api_key_repo
@@ -191,6 +194,7 @@ async fn rotate_key(
     Path((org_id, old_key_id)): Path<(uuid::Uuid, uuid::Uuid)>,
 ) -> Result<Json<RotateKeyResponse>, AppError> {
     verify_org_access(&claims, &org_id)?;
+    require_api_key_management(&claims)?;
 
     let old_key = state
         .api_key_repo

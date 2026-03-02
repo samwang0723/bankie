@@ -1,0 +1,476 @@
+import { useState, type FormEvent } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { UserPlus, MoreVertical, Mail, Shield, Trash2 } from "lucide-react";
+import { api } from "../api/client.ts";
+import { handleApiError, useAuth } from "../hooks/useAuth.ts";
+import { ConfirmModal } from "../components/ConfirmModal.tsx";
+import type {
+  OrgMember,
+  OrgRole,
+  MemberStatus,
+  InviteMemberRequest,
+  UpdateRoleRequest
+} from "../types/index.ts";
+
+function RoleBadge({ role }: { role: OrgRole }) {
+  const styles: Record<OrgRole, string> = {
+    owner: "bg-purple-50 text-purple-700",
+    admin: "bg-blue-50 text-blue-700",
+    member: "bg-slate-100 text-slate-600"
+  };
+  return (
+    <span
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${styles[role]}`}
+    >
+      {role}
+    </span>
+  );
+}
+
+function StatusBadge({ status }: { status: MemberStatus }) {
+  const styles: Record<MemberStatus, string> = {
+    active: "bg-green-50 text-green-700",
+    pending: "bg-amber-50 text-amber-700",
+    suspended: "bg-red-50 text-red-700"
+  };
+  return (
+    <span
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${styles[status]}`}
+    >
+      {status}
+    </span>
+  );
+}
+
+function formatDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  });
+}
+
+function avatarInitial(email: string): string {
+  return email.charAt(0).toUpperCase();
+}
+
+export function Members() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const canManage = user?.role === "owner" || user?.role === "admin";
+
+  const [showInviteForm, setShowInviteForm] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("member");
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [changeRoleTarget, setChangeRoleTarget] = useState<OrgMember | null>(null);
+  const [selectedRole, setSelectedRole] = useState<string>("member");
+  const [removeTarget, setRemoveTarget] = useState<OrgMember | null>(null);
+  const [resendTarget, setResendTarget] = useState<OrgMember | null>(null);
+
+  const { data: members = [], isLoading } = useQuery({
+    queryKey: ["members"],
+    queryFn: async () => {
+      try {
+        return await api.get<OrgMember[]>("/members");
+      } catch (err) {
+        handleApiError(err);
+      }
+    }
+  });
+
+  const inviteMutation = useMutation({
+    mutationFn: (data: InviteMemberRequest) =>
+      api.post<OrgMember>("/members/invite", data),
+    onSuccess: () => {
+      setInviteEmail("");
+      setInviteRole("member");
+      setShowInviteForm(false);
+      queryClient.invalidateQueries({ queryKey: ["members"] });
+    }
+  });
+
+  const changeRoleMutation = useMutation({
+    mutationFn: ({ id, role }: { id: string; role: string }) =>
+      api.post<OrgMember>(`/members/${id}/role`, { role } as UpdateRoleRequest),
+    onSuccess: () => {
+      setChangeRoleTarget(null);
+      queryClient.invalidateQueries({ queryKey: ["members"] });
+    }
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (id: string) => api.delete<void>(`/members/${id}`),
+    onSuccess: () => {
+      setRemoveTarget(null);
+      queryClient.invalidateQueries({ queryKey: ["members"] });
+    }
+  });
+
+  const resendMutation = useMutation({
+    mutationFn: (id: string) =>
+      api.post<void>(`/members/${id}/resend-invite`, {}),
+    onSuccess: () => {
+      setResendTarget(null);
+    }
+  });
+
+  function handleInviteSubmit(e: FormEvent) {
+    e.preventDefault();
+    inviteMutation.mutate({ email: inviteEmail, role: inviteRole });
+  }
+
+  function openChangeRole(member: OrgMember) {
+    setSelectedRole(member.role);
+    setChangeRoleTarget(member);
+    setOpenMenu(null);
+  }
+
+  return (
+    <div>
+      {/* Page header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Team Members</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Manage your organization's team members and permissions.
+          </p>
+        </div>
+        {canManage && (
+          <button
+            onClick={() => setShowInviteForm(!showInviteForm)}
+            className="flex items-center gap-2 h-10 px-5 bg-cyan-400 text-[#0A0F1C] text-sm font-semibold rounded-lg
+              hover:bg-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2"
+            aria-label="Invite a new member"
+          >
+            <UserPlus className="w-4 h-4" />
+            Invite Member
+          </button>
+        )}
+      </div>
+
+      {/* Members table */}
+      {isLoading ? (
+        <div className="bg-white rounded-xl border border-slate-200">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="p-4 border-b border-slate-100 animate-pulse">
+              <div className="flex items-center gap-4">
+                <div className="h-9 w-9 bg-slate-200 rounded-full" />
+                <div className="h-4 bg-slate-200 rounded w-32" />
+                <div className="h-4 bg-slate-200 rounded w-24" />
+                <div className="h-4 bg-slate-200 rounded w-16" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : members.length === 0 ? (
+        <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
+          <p className="text-slate-500">No team members found.</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <table className="w-full" aria-label="Team members">
+            <thead>
+              <tr className="border-b border-slate-200 bg-[#F8FAFC]">
+                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
+                  Member
+                </th>
+                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
+                  Role
+                </th>
+                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
+                  Status
+                </th>
+                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
+                  Joined
+                </th>
+                {canManage && (
+                  <th className="text-right px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono w-[80px]">
+                    Actions
+                  </th>
+                )}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {members.map((member) => (
+                <MemberRow
+                  key={member.id}
+                  member={member}
+                  canManage={canManage}
+                  isCurrentUser={member.id === user?.id}
+                  currentUserRole={user?.role ?? "member"}
+                  openMenu={openMenu}
+                  onToggleMenu={(id) => setOpenMenu(openMenu === id ? null : id)}
+                  onChangeRole={() => openChangeRole(member)}
+                  onRemove={() => { setRemoveTarget(member); setOpenMenu(null); }}
+                  onResendInvite={() => { setResendTarget(member); setOpenMenu(null); }}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Invite form card */}
+      {showInviteForm && canManage && (
+        <div className="bg-white rounded-xl border border-slate-200 p-7 mt-6">
+          <h2 className="text-base font-semibold text-slate-900 mb-4">
+            Invite New Member
+          </h2>
+          <form onSubmit={handleInviteSubmit} className="flex items-end gap-4">
+            <div className="flex-1">
+              <label htmlFor="invite-email" className="block text-sm font-medium text-slate-500 mb-1.5">
+                Email Address
+              </label>
+              <input
+                id="invite-email"
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="colleague@company.com"
+                required
+                className="w-full h-11 px-3.5 bg-[#F8FAFC] border border-slate-200 rounded-lg text-sm text-slate-900
+                  focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-cyan-400"
+              />
+            </div>
+            <div className="w-40">
+              <label htmlFor="invite-role" className="block text-sm font-medium text-slate-500 mb-1.5">
+                Role
+              </label>
+              <select
+                id="invite-role"
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value)}
+                className="w-full h-11 px-3.5 bg-[#F8FAFC] border border-slate-200 rounded-lg text-sm text-slate-900
+                  focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-cyan-400"
+              >
+                <option value="member">Member</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <button
+              type="submit"
+              disabled={inviteMutation.isPending || !inviteEmail.trim()}
+              className="h-11 px-5 text-sm font-semibold text-[#0A0F1C] bg-cyan-400 rounded-lg
+                hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+            >
+              {inviteMutation.isPending ? "Sending..." : "Send Invite"}
+            </button>
+          </form>
+          {inviteMutation.error && (
+            <p className="mt-3 text-sm text-red-600">{inviteMutation.error.message}</p>
+          )}
+        </div>
+      )}
+
+      {/* Change Role Modal */}
+      {changeRoleTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="change-role-title"
+        >
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4">
+            <div className="px-6 py-4">
+              <h2 id="change-role-title" className="text-lg font-semibold text-slate-900">
+                Change Role
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Update role for {changeRoleTarget.email}
+              </p>
+
+              <div className="mt-4 space-y-3">
+                <label className="flex items-start gap-3 p-3 rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-50">
+                  <input
+                    type="radio"
+                    name="role"
+                    value="admin"
+                    checked={selectedRole === "admin"}
+                    onChange={() => setSelectedRole("admin")}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-slate-900">Admin</p>
+                    <p className="text-xs text-slate-500">
+                      Can manage API keys, invite members, and update org settings.
+                    </p>
+                  </div>
+                </label>
+                <label className="flex items-start gap-3 p-3 rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-50">
+                  <input
+                    type="radio"
+                    name="role"
+                    value="member"
+                    checked={selectedRole === "member"}
+                    onChange={() => setSelectedRole("member")}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-slate-900">Member</p>
+                    <p className="text-xs text-slate-500">
+                      Read-only access. Cannot manage keys, members, or settings.
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setChangeRoleTarget(null)}
+                disabled={changeRoleMutation.isPending}
+                className="px-4 py-2 text-sm text-slate-700 hover:text-slate-900"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  changeRoleMutation.mutate({
+                    id: changeRoleTarget.id,
+                    role: selectedRole
+                  })
+                }
+                disabled={changeRoleMutation.isPending || selectedRole === changeRoleTarget.role}
+                className="px-4 py-2 text-sm font-semibold rounded-lg bg-cyan-400 text-[#0A0F1C]
+                  hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {changeRoleMutation.isPending ? "Saving..." : "Update Role"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Remove Member Confirmation */}
+      {removeTarget && (
+        <ConfirmModal
+          title="Remove Member"
+          message={`Are you sure you want to remove ${removeTarget.email} from the organization? They will lose all access.`}
+          confirmLabel="Remove"
+          destructive
+          onConfirm={() => removeMutation.mutate(removeTarget.id)}
+          onCancel={() => setRemoveTarget(null)}
+          isLoading={removeMutation.isPending}
+        />
+      )}
+
+      {/* Resend Invite Confirmation */}
+      {resendTarget && (
+        <ConfirmModal
+          title="Resend Invitation"
+          message={`Resend the invitation email to ${resendTarget.email}? The invitation will remain valid for 7 days.`}
+          confirmLabel="Resend"
+          onConfirm={() => resendMutation.mutate(resendTarget.id)}
+          onCancel={() => setResendTarget(null)}
+          isLoading={resendMutation.isPending}
+        />
+      )}
+    </div>
+  );
+}
+
+function MemberRow({
+  member,
+  canManage,
+  isCurrentUser,
+  currentUserRole,
+  openMenu,
+  onToggleMenu,
+  onChangeRole,
+  onRemove,
+  onResendInvite
+}: {
+  member: OrgMember;
+  canManage: boolean;
+  isCurrentUser: boolean;
+  currentUserRole: OrgRole;
+  openMenu: string | null;
+  onToggleMenu: (id: string) => void;
+  onChangeRole: () => void;
+  onRemove: () => void;
+  onResendInvite: () => void;
+}) {
+  const isOwner = member.role === "owner";
+  const canShowActions = canManage && !isCurrentUser && !isOwner;
+  const canChangeRole =
+    currentUserRole === "owner" ||
+    (currentUserRole === "admin" && member.role === "member");
+
+  return (
+    <tr className="hover:bg-slate-50 h-14">
+      <td className="px-6 py-3">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-slate-200 flex items-center justify-center text-sm font-semibold text-slate-600 shrink-0">
+            {avatarInitial(member.email)}
+          </div>
+          <div>
+            <p className="text-sm font-medium text-slate-900">
+              {member.email}
+              {isCurrentUser && (
+                <span className="ml-2 text-xs text-slate-400">(you)</span>
+              )}
+            </p>
+          </div>
+        </div>
+      </td>
+      <td className="px-6 py-3">
+        <RoleBadge role={member.role} />
+      </td>
+      <td className="px-6 py-3">
+        <StatusBadge status={member.status} />
+      </td>
+      <td className="px-6 py-3 text-sm text-slate-500">
+        {formatDate(member.created_at)}
+      </td>
+      {canManage && (
+        <td className="px-6 py-3 text-right relative">
+          {canShowActions ? (
+            <>
+              <button
+                onClick={() => onToggleMenu(member.id)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-100 transition-colors"
+                aria-label={`Actions for ${member.email}`}
+              >
+                <MoreVertical className="w-4 h-4" />
+              </button>
+              {openMenu === member.id && (
+                <div className="absolute right-6 top-12 z-10 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1">
+                  {canChangeRole && (
+                    <button
+                      onClick={onChangeRole}
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                      <Shield className="w-4 h-4" />
+                      Change Role
+                    </button>
+                  )}
+                  {member.status === "pending" && (
+                    <button
+                      onClick={onResendInvite}
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                      <Mail className="w-4 h-4" />
+                      Resend Invite
+                    </button>
+                  )}
+                  <button
+                    onClick={onRemove}
+                    className="flex items-center gap-2 w-full px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Remove
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <span className="text-sm text-slate-300">&mdash;</span>
+          )}
+        </td>
+      )}
+    </tr>
+  );
+}

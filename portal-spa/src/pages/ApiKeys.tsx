@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Eye, EyeOff } from "lucide-react";
+import { Plus, Eye, EyeOff, AlertTriangle } from "lucide-react";
 import { api } from "../api/client.ts";
-import { handleApiError } from "../hooks/useAuth.ts";
+import { handleApiError, useAuth } from "../hooks/useAuth.ts";
 import type {
   ApiKey,
   CreateApiKeyRequest,
   CreateApiKeyResponse,
-  RotateApiKeyResponse
+  RotateApiKeyResponse,
+  RateLimitEntry
 } from "../types/index.ts";
 import { CreateKeyModal } from "../components/CreateKeyModal.tsx";
 import { ConfirmModal } from "../components/ConfirmModal.tsx";
@@ -38,8 +39,49 @@ function formatDate(dateStr: string): string {
   });
 }
 
+function formatGraceCountdown(expiresAt: string): string {
+  const now = new Date();
+  const expires = new Date(expiresAt);
+  const diffMs = expires.getTime() - now.getTime();
+  if (diffMs <= 0) return "Expired";
+  const hours = Math.floor(diffMs / 3600000);
+  const minutes = Math.floor((diffMs % 3600000) / 60000);
+  if (hours > 0) return `${hours}h ${minutes}m remaining`;
+  return `${minutes}m remaining`;
+}
+
+function RateLimitCell({ entry }: { entry: RateLimitEntry | undefined }) {
+  if (!entry) {
+    return <span className="text-xs text-slate-300">&mdash;</span>;
+  }
+  const usedPct =
+    entry.limit > 0
+      ? Math.round(((entry.limit - entry.remaining) / entry.limit) * 100)
+      : 0;
+  const barColor = usedPct > 50 ? "bg-amber-400" : "bg-green-400";
+
+  return (
+    <div className="w-24">
+      <div className="flex items-center justify-between mb-0.5">
+        <span className="text-[10px] text-slate-500">
+          {entry.remaining}/{entry.limit}
+        </span>
+      </div>
+      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${barColor}`}
+          style={{ width: `${usedPct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function ApiKeys() {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
+  const canManageKeys = user?.role === "owner" || user?.role === "admin";
+
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [rawKey, setRawKey] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
@@ -59,6 +101,19 @@ export function ApiKeys() {
       }
     }
   });
+
+  const { data: rateLimits = [] } = useQuery({
+    queryKey: ["dashboard-rate-limits"],
+    queryFn: async () => {
+      try {
+        return await api.get<RateLimitEntry[]>("/dashboard/rate-limits");
+      } catch (err) {
+        handleApiError(err);
+      }
+    }
+  });
+
+  const rateLimitMap = new Map(rateLimits.map((rl) => [rl.key_id, rl]));
 
   const createMutation = useMutation({
     mutationFn: (data: CreateApiKeyRequest) =>
@@ -97,6 +152,11 @@ export function ApiKeys() {
     }
   }
 
+  // Check if any keys have active grace periods
+  const graceKeys = keys.filter(
+    (k) => k.status === "rotated" && k.grace_expires_at
+  );
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -106,19 +166,42 @@ export function ApiKeys() {
             Manage your API keys for programmatic access.
           </p>
         </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 h-10 px-5 bg-cyan-400 text-[#0A0F1C] text-sm font-semibold rounded-lg
-            hover:bg-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2"
-          aria-label="Create new API key"
-        >
-          <Plus className="w-4 h-4" />
-          Create Key
-        </button>
+        {canManageKeys && (
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center gap-2 h-10 px-5 bg-cyan-400 text-[#0A0F1C] text-sm font-semibold rounded-lg
+              hover:bg-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2"
+            aria-label="Create new API key"
+          >
+            <Plus className="w-4 h-4" />
+            Create Key
+          </button>
+        )}
       </div>
 
       {rawKey && (
         <KeyRevealBanner rawKey={rawKey} onDismiss={() => setRawKey(null)} />
+      )}
+
+      {/* Grace period banner */}
+      {graceKeys.length > 0 && (
+        <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-amber-800">
+              Grace period active for {graceKeys.length} rotated key
+              {graceKeys.length > 1 ? "s" : ""}
+            </p>
+            {graceKeys.map((k) => (
+              <p key={k.id} className="text-xs text-amber-600 mt-1">
+                <span className="font-mono">{k.name}</span> &mdash;{" "}
+                {k.grace_expires_at
+                  ? formatGraceCountdown(k.grace_expires_at)
+                  : "N/A"}
+              </p>
+            ))}
+          </div>
+        </div>
       )}
 
       {isLoading ? (
@@ -139,12 +222,14 @@ export function ApiKeys() {
       ) : keys.length === 0 ? (
         <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
           <p className="text-slate-500 mb-4">No API keys yet</p>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="text-cyan-500 text-sm font-medium hover:text-cyan-600"
-          >
-            Create your first API key
-          </button>
+          {canManageKeys && (
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="text-cyan-500 text-sm font-medium hover:text-cyan-600"
+            >
+              Create your first API key
+            </button>
+          )}
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -160,12 +245,17 @@ export function ApiKeys() {
                 <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono w-[120px]">
                   Status
                 </th>
+                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono w-[130px]">
+                  Rate Limit
+                </th>
                 <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
                   Created
                 </th>
-                <th className="text-right px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono w-[140px]">
-                  Actions
-                </th>
+                {canManageKeys && (
+                  <th className="text-right px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono w-[140px]">
+                    Actions
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
@@ -173,6 +263,8 @@ export function ApiKeys() {
                 <KeyRow
                   key={key.id}
                   apiKey={key}
+                  rateLimitEntry={rateLimitMap.get(key.id)}
+                  canManage={canManageKeys}
                   isExpanded={expandedKey === key.id}
                   onToggleExpand={() =>
                     setExpandedKey(expandedKey === key.id ? null : key.id)
@@ -230,26 +322,31 @@ export function ApiKeys() {
 
 function KeyRow({
   apiKey,
+  rateLimitEntry,
+  canManage,
   isExpanded,
   onToggleExpand,
   onRotate,
   onRevoke
 }: {
   apiKey: ApiKey;
+  rateLimitEntry: RateLimitEntry | undefined;
+  canManage: boolean;
   isExpanded: boolean;
   onToggleExpand: () => void;
   onRotate: () => void;
   onRevoke: () => void;
 }) {
   const [showPrefix, setShowPrefix] = useState(false);
-  const isRevoked = apiKey.status !== "active";
+  const isRevoked = apiKey.status === "revoked";
   const textColor = isRevoked ? "text-slate-400" : "text-slate-900";
   const mutedColor = isRevoked ? "text-slate-300" : "text-slate-500";
+  const colSpan = canManage ? 6 : 5;
 
   return (
     <>
       <tr
-        className="hover:bg-slate-50 cursor-pointer h-14"
+        className={`hover:bg-slate-50 cursor-pointer h-14 ${isRevoked ? "opacity-60" : ""}`}
         onClick={onToggleExpand}
         aria-expanded={isExpanded}
       >
@@ -280,44 +377,53 @@ function KeyRow({
         <td className="px-6 py-3">
           <StatusBadge status={apiKey.status} />
         </td>
+        <td className="px-6 py-3">
+          {isRevoked ? (
+            <span className="text-xs text-slate-300">&mdash;</span>
+          ) : (
+            <RateLimitCell entry={rateLimitEntry} />
+          )}
+        </td>
         <td className={`px-6 py-3 text-sm ${mutedColor}`}>
           {formatDate(apiKey.created_at)}
         </td>
-        <td className="px-6 py-3 text-right">
-          {apiKey.status === "active" ? (
-            <div className="flex items-center justify-end gap-2">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRotate();
-                }}
-                className="px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 rounded-md
-                  hover:bg-slate-200 transition-colors"
-                aria-label={`Rotate key ${apiKey.name}`}
-              >
-                Rotate
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRevoke();
-                }}
-                className="px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 rounded-md
-                  hover:bg-red-100 transition-colors"
-                aria-label={`Revoke key ${apiKey.name}`}
-              >
-                Revoke
-              </button>
-            </div>
-          ) : (
-            <span className="text-sm text-slate-300">&mdash;</span>
-          )}
-        </td>
+        {canManage && (
+          <td className="px-6 py-3 text-right">
+            {apiKey.status === "active" ? (
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRotate();
+                  }}
+                  className="px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 rounded-md
+                    hover:bg-slate-200 transition-colors"
+                  aria-label={`Rotate key ${apiKey.name}`}
+                >
+                  Rotate
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRevoke();
+                  }}
+                  className="px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 rounded-md
+                    hover:bg-red-100 transition-colors"
+                  aria-label={`Revoke key ${apiKey.name}`}
+                >
+                  Revoke
+                </button>
+              </div>
+            ) : (
+              <span className="text-sm text-slate-300">&mdash;</span>
+            )}
+          </td>
+        )}
       </tr>
       {isExpanded && (
         <tr>
           <td
-            colSpan={5}
+            colSpan={colSpan}
             className="px-6 py-4 bg-slate-50 border-t border-slate-100"
           >
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
@@ -341,6 +447,14 @@ function KeyRow({
                   {apiKey.id}
                 </p>
               </div>
+              {rateLimitEntry && (
+                <div>
+                  <p className="text-slate-500">Throttled (24h)</p>
+                  <p className="font-medium text-slate-900 mt-1">
+                    {rateLimitEntry.throttled_24h}
+                  </p>
+                </div>
+              )}
             </div>
           </td>
         </tr>

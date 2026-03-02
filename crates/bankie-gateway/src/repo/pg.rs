@@ -65,6 +65,7 @@ impl From<MemberRow> for OrgMember {
                 _ => MemberRole::Member,
             },
             status: match row.status.as_str() {
+                "pending" => MemberStatus::Pending,
                 "suspended" => MemberStatus::Suspended,
                 _ => MemberStatus::Active,
             },
@@ -304,6 +305,136 @@ impl super::member::MemberRepository for PgMemberRepository {
 
         Ok(row.map(OrgMember::from))
     }
+
+    async fn list_by_org(&self, org_id: Uuid) -> Result<Vec<OrgMember>, RepoError> {
+        let rows: Vec<MemberRow> = sqlx::query_as(
+            r#"
+            SELECT id, org_id, email, password_hash, role, status, created_at, updated_at
+            FROM portal.org_members
+            WHERE org_id = $1
+            ORDER BY created_at ASC
+            "#,
+        )
+        .bind(org_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(rows.into_iter().map(OrgMember::from).collect())
+    }
+
+    async fn find_by_id_and_org(
+        &self,
+        id: Uuid,
+        org_id: Uuid,
+    ) -> Result<Option<OrgMember>, RepoError> {
+        let row: Option<MemberRow> = sqlx::query_as(
+            r#"
+            SELECT id, org_id, email, password_hash, role, status, created_at, updated_at
+            FROM portal.org_members
+            WHERE id = $1 AND org_id = $2
+            "#,
+        )
+        .bind(id)
+        .bind(org_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(row.map(OrgMember::from))
+    }
+
+    async fn update_role(&self, id: Uuid, role: String) -> Result<Option<OrgMember>, RepoError> {
+        let row: Option<MemberRow> = sqlx::query_as(
+            r#"
+            UPDATE portal.org_members
+            SET role = $2, updated_at = now()
+            WHERE id = $1
+            RETURNING id, org_id, email, password_hash, role, status, created_at, updated_at
+            "#,
+        )
+        .bind(id)
+        .bind(&role)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(row.map(OrgMember::from))
+    }
+
+    async fn update_status(
+        &self,
+        id: Uuid,
+        status: String,
+    ) -> Result<Option<OrgMember>, RepoError> {
+        let row: Option<MemberRow> = sqlx::query_as(
+            r#"
+            UPDATE portal.org_members
+            SET status = $2, updated_at = now()
+            WHERE id = $1
+            RETURNING id, org_id, email, password_hash, role, status, created_at, updated_at
+            "#,
+        )
+        .bind(id)
+        .bind(&status)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(row.map(OrgMember::from))
+    }
+
+    async fn delete(&self, id: Uuid) -> Result<bool, RepoError> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM portal.org_members
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn create_with_status(
+        &self,
+        id: Uuid,
+        org_id: Uuid,
+        email: String,
+        password_hash: String,
+        role: String,
+        status: String,
+    ) -> Result<OrgMember, RepoError> {
+        let row: MemberRow = sqlx::query_as(
+            r#"
+            INSERT INTO portal.org_members (id, org_id, email, password_hash, role, status)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id, org_id, email, password_hash, role, status, created_at, updated_at
+            "#,
+        )
+        .bind(id)
+        .bind(org_id)
+        .bind(&email)
+        .bind(&password_hash)
+        .bind(&role)
+        .bind(&status)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("duplicate key")
+                || e.to_string().contains("unique constraint")
+            {
+                RepoError::Conflict("Email already registered".to_string())
+            } else {
+                RepoError::Database(e.to_string())
+            }
+        })?;
+
+        Ok(row.into())
+    }
 }
 
 // ─── PgApiKeyRepository ───
@@ -430,6 +561,24 @@ impl super::api_key::ApiKeyRepository for PgApiKeyRepository {
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
         Ok(row.map(ApiKey::from))
+    }
+
+    async fn list_expired_rotated(&self) -> Result<Vec<ApiKey>, RepoError> {
+        let rows: Vec<ApiKeyRow> = sqlx::query_as(
+            r#"
+            SELECT id, org_id, tenant_id, name, key_prefix, key_hash, scopes,
+                   status, grace_expires_at, created_at, updated_at
+            FROM portal.api_keys
+            WHERE status = 'rotated'
+              AND grace_expires_at IS NOT NULL
+              AND grace_expires_at < now()
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(rows.into_iter().map(ApiKey::from).collect())
     }
 }
 

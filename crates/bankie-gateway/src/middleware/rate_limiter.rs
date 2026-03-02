@@ -9,13 +9,19 @@ use crate::redis_ops;
 use crate::repo::api_key::ResolvedApiKey;
 
 /// Default burst capacity (max tokens in bucket).
-const DEFAULT_BURST: i64 = 100;
+pub const DEFAULT_BURST_CAP: i64 = 100;
 
 /// Default sustained rate (requests per minute).
-const DEFAULT_SUSTAINED_PER_MIN: i64 = 1000;
+pub const DEFAULT_SUSTAINED_CAP: i64 = 1000;
 
 /// Redis key prefix for rate limiting.
 const RATE_LIMIT_PREFIX: &str = "gw:rate:";
+
+/// Redis key prefix for tracking throttled request counts (24h window).
+pub const THROTTLED_PREFIX: &str = "gw:throttled:";
+
+/// TTL for throttled counters (24 hours).
+const THROTTLED_TTL_SECS: i64 = 86400;
 
 /// Rate limiter middleware using Redis token bucket algorithm.
 ///
@@ -42,8 +48,8 @@ pub async fn rate_limiter(req: Request<Body>, next: Next) -> Result<Response<Bod
             match redis_ops::rate_limit_check(
                 client,
                 &rate_key,
-                DEFAULT_BURST,
-                DEFAULT_SUSTAINED_PER_MIN,
+                DEFAULT_BURST_CAP,
+                DEFAULT_SUSTAINED_CAP,
                 now_secs,
             )
             .await
@@ -67,6 +73,17 @@ pub async fn rate_limiter(req: Request<Body>, next: Next) -> Result<Response<Bod
                 api_key_id = %resolved.api_key_id,
                 "Rate limit exceeded"
             );
+
+            // Track throttled request count in Redis (best-effort, 24h window)
+            if let Some(ref client) = redis_client {
+                let throttled_key = format!("{}{}", THROTTLED_PREFIX, resolved.api_key_id);
+                if let Err(e) =
+                    redis_ops::incr_with_expiry(client, &throttled_key, THROTTLED_TTL_SECS).await
+                {
+                    warn!("Failed to track throttled request: {}", e);
+                }
+            }
+
             let mut response = Response::new(Body::from(
                 serde_json::json!({
                     "code": 429,
@@ -75,12 +92,12 @@ pub async fn rate_limiter(req: Request<Body>, next: Next) -> Result<Response<Bod
                 .to_string(),
             ));
             *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
-            set_rate_limit_headers(&mut response, DEFAULT_BURST, rl.remaining, rl.reset_at);
+            set_rate_limit_headers(&mut response, DEFAULT_BURST_CAP, rl.remaining, rl.reset_at);
             Ok(response)
         }
         Some(rl) => {
             let mut response = next.run(req).await;
-            set_rate_limit_headers(&mut response, DEFAULT_BURST, rl.remaining, rl.reset_at);
+            set_rate_limit_headers(&mut response, DEFAULT_BURST_CAP, rl.remaining, rl.reset_at);
             Ok(response)
         }
         // Fail open: no rate limit info available
@@ -131,7 +148,7 @@ mod tests {
 
     #[test]
     fn test_default_burst_and_sustained() {
-        assert_eq!(DEFAULT_BURST, 100);
-        assert_eq!(DEFAULT_SUSTAINED_PER_MIN, 1000);
+        assert_eq!(DEFAULT_BURST_CAP, 100);
+        assert_eq!(DEFAULT_SUSTAINED_CAP, 1000);
     }
 }

@@ -2,6 +2,7 @@ pub mod api_key;
 pub mod auth;
 pub mod dashboard;
 pub mod data_proxy;
+pub mod member;
 pub mod org;
 
 use std::sync::Arc;
@@ -24,6 +25,7 @@ pub fn portal_router(state: Arc<PortalState>) -> Router {
         .merge(api_key::api_key_routes())
         .merge(dashboard::dashboard_routes())
         .merge(data_proxy::data_proxy_routes())
+        .merge(member::member_routes())
         .route_layer(axum_mw::from_fn_with_state(
             Arc::clone(&state),
             session_auth,

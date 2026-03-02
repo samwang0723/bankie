@@ -8,6 +8,7 @@ use axum::{
 
 use bankie_common::error::AppError;
 
+use crate::middleware::rbac::require_org_management;
 use crate::models::auth::SessionClaims;
 use crate::models::org::{slugify, CreateOrgRequest, Organization, UpdateOrgRequest};
 use crate::state::PortalState;
@@ -103,11 +104,7 @@ async fn update_org(
     }
 
     // Only owner/admin can update
-    if claims.role != "owner" && claims.role != "admin" {
-        return Err(AppError::Forbidden(
-            "Only owner or admin can update organization".to_string(),
-        ));
-    }
+    require_org_management(&claims)?;
 
     if req.name.is_none() && req.status.is_none() {
         return Err(AppError::BadRequest(

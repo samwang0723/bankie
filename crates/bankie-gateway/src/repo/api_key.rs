@@ -34,6 +34,9 @@ pub trait ApiKeyRepository: Send + Sync {
         status: KeyStatus,
         grace_expires_at: Option<DateTime<Utc>>,
     ) -> Result<Option<ApiKey>, RepoError>;
+
+    /// List rotated keys whose grace period has expired (system-wide, for cron job).
+    async fn list_expired_rotated(&self) -> Result<Vec<ApiKey>, RepoError>;
 }
 
 // === Resolved API key (for gateway middleware) ===

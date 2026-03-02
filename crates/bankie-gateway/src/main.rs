@@ -10,6 +10,7 @@ use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 use tracing::info;
 
 use bankie_gateway::config::SETTINGS;
+use bankie_gateway::job;
 use bankie_gateway::middleware;
 use bankie_gateway::proxy;
 use bankie_gateway::repo::pg::{
@@ -54,6 +55,9 @@ async fn main() {
         jwt_secret: settings.jwt_secret.clone(),
         redis_client: Some(redis_client.clone()),
     });
+    // Spawn background job: auto-revoke rotated keys past grace period
+    job::spawn_grace_expiry_job(portal_state.clone());
+
     let portal_routes = portal_router(portal_state);
 
     // Build the proxied API routes with full middleware stack:
