@@ -164,6 +164,7 @@ mod tests {
     fn owner_claims(org_id: &str, csrf: &str) -> SessionClaims {
         SessionClaims {
             sub: uuid::Uuid::new_v4().to_string(),
+            name: "Test User".to_string(),
             org_id: org_id.to_string(),
             tenant_id: 1,
             role: "owner".to_string(),
@@ -175,6 +176,7 @@ mod tests {
     fn member_claims(org_id: &str, csrf: &str) -> SessionClaims {
         SessionClaims {
             sub: uuid::Uuid::new_v4().to_string(),
+            name: "Test User".to_string(),
             org_id: org_id.to_string(),
             tenant_id: 1,
             role: "member".to_string(),

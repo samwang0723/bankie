@@ -20,6 +20,8 @@ pub enum BankAccountCommand {
         #[serde(default, alias = "user_id")]
         external_reference_id: Option<String>,
         currency: Currency,
+        #[serde(default)]
+        name: Option<String>,
         #[serde(skip_deserializing, default)]
         tenant_id: i32,
     },

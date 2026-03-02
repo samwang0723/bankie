@@ -1,14 +1,15 @@
-import { useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { Landmark } from 'lucide-react';
-import { useAuth } from '../hooks/useAuth.ts';
-import { ApiClientError } from '../api/client.ts';
+import { useState, type FormEvent } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { Landmark } from "lucide-react";
+import { useAuth } from "../hooks/useAuth.ts";
+import { ApiClientError } from "../api/client.ts";
 
 export function Signup() {
-  const [orgName, setOrgName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [orgName, setOrgName] = useState("");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const { signup } = useAuth();
@@ -16,23 +17,23 @@ export function Signup() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setError('');
+    setError("");
 
     if (password.length < 8) {
-      setError('Password must be at least 8 characters');
+      setError("Password must be at least 8 characters");
       return;
     }
 
     setLoading(true);
 
     try {
-      await signup({ org_name: orgName, email, password });
-      navigate('/', { replace: true });
+      await signup({ org_name: orgName, name, email, password });
+      navigate("/", { replace: true });
     } catch (err) {
       if (err instanceof ApiClientError) {
         setError(err.apiError.message);
       } else {
-        setError('An unexpected error occurred');
+        setError("An unexpected error occurred");
       }
     } finally {
       setLoading(false);
@@ -46,7 +47,9 @@ export function Signup() {
           {/* Logo */}
           <div className="flex flex-col items-center gap-2 mb-8">
             <Landmark className="w-10 h-10 text-cyan-400" />
-            <span className="font-mono text-[28px] font-bold text-white">Bankie</span>
+            <span className="font-mono text-[28px] font-bold text-white">
+              Bankie
+            </span>
             <span className="text-sm text-slate-400">Developer Portal</span>
           </div>
 
@@ -76,6 +79,26 @@ export function Signup() {
                 className="w-full px-3.5 py-2.5 bg-[#0F172A] border border-slate-600 rounded-lg text-sm text-white
                   placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-cyan-400"
                 placeholder="Acme Corp"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="full-name"
+                className="block text-sm font-medium text-slate-300 mb-1.5"
+              >
+                Full name
+              </label>
+              <input
+                id="full-name"
+                type="text"
+                required
+                autoComplete="name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full px-3.5 py-2.5 bg-[#0F172A] border border-slate-600 rounded-lg text-sm text-white
+                  placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-cyan-400"
+                placeholder="Jane Doe"
               />
             </div>
 
@@ -127,14 +150,16 @@ export function Signup() {
                 hover:bg-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2
                 focus:ring-offset-[#1E293B] disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? 'Creating account...' : 'Create Account'}
+              {loading ? "Creating account..." : "Create Account"}
             </button>
           </form>
 
           {/* Divider */}
           <div className="flex items-center gap-3 my-6">
             <div className="flex-1 h-px bg-slate-600" />
-            <span className="font-mono text-xs text-slate-500 tracking-widest">OR</span>
+            <span className="font-mono text-xs text-slate-500 tracking-widest">
+              OR
+            </span>
             <div className="flex-1 h-px bg-slate-600" />
           </div>
 

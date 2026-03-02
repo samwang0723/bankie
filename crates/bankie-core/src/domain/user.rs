@@ -18,6 +18,8 @@ pub struct BankAccountWithLedger {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub currency: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ledger_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub available: Option<Decimal>,

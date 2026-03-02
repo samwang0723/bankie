@@ -7,6 +7,7 @@ use super::member::MemberRole;
 #[derive(Debug, Deserialize)]
 pub struct SignupRequest {
     pub org_name: String,
+    pub name: String,
     pub email: String,
     pub password: String,
 }
@@ -20,6 +21,7 @@ pub struct LoginRequest {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SessionClaims {
     pub sub: String,
+    pub name: String,
     pub org_id: String,
     pub tenant_id: i32,
     pub role: String,
@@ -40,6 +42,7 @@ pub struct AuthResponse {
 #[derive(Debug, Serialize)]
 pub struct AuthUser {
     pub id: Uuid,
+    pub name: String,
     pub email: String,
     pub role: MemberRole,
     pub created_at: DateTime<Utc>,

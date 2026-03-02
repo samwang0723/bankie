@@ -1,14 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  UserPlus,
-  MoreVertical,
-  Mail,
-  Shield,
-  Trash2,
-  Copy,
-  Check
-} from "lucide-react";
+import { UserPlus, Mail, Copy, Check } from "lucide-react";
 import { api } from "../api/client.ts";
 import { handleApiError, useAuth } from "../hooks/useAuth.ts";
 import { ConfirmModal } from "../components/ConfirmModal.tsx";
@@ -20,6 +12,34 @@ import type {
   InviteMemberResponse,
   UpdateRoleRequest
 } from "../types/index.ts";
+
+const AVATAR_COLORS = [
+  "bg-cyan-500",
+  "bg-violet-500",
+  "bg-amber-500",
+  "bg-rose-500",
+  "bg-emerald-500",
+  "bg-blue-500",
+  "bg-pink-500",
+  "bg-teal-500"
+];
+
+function avatarColor(id: string): string {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  }
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
+function avatarInitial(name: string, email: string): string {
+  if (name) return name.charAt(0).toUpperCase();
+  return email.charAt(0).toUpperCase();
+}
+
+function displayName(member: OrgMember): string {
+  return member.name || member.email.split("@")[0];
+}
 
 function RoleBadge({ role }: { role: OrgRole }) {
   const styles: Record<OrgRole, string> = {
@@ -59,8 +79,8 @@ function formatDate(dateStr: string): string {
   });
 }
 
-function avatarInitial(email: string): string {
-  return email.charAt(0).toUpperCase();
+function capitalizeRole(role: string): string {
+  return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
 export function Members() {
@@ -71,7 +91,6 @@ export function Members() {
   const [showInviteForm, setShowInviteForm] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
-  const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [changeRoleTarget, setChangeRoleTarget] = useState<OrgMember | null>(
     null
   );
@@ -147,7 +166,6 @@ export function Members() {
   function openChangeRole(member: OrgMember) {
     setSelectedRole(member.role);
     setChangeRoleTarget(member);
-    setOpenMenu(null);
   }
 
   return (
@@ -184,6 +202,8 @@ export function Members() {
               <div className="flex items-center gap-4">
                 <div className="h-9 w-9 bg-slate-200 rounded-full" />
                 <div className="h-4 bg-slate-200 rounded w-32" />
+                <div className="h-4 bg-slate-200 rounded w-48" />
+                <div className="h-4 bg-slate-200 rounded w-16" />
                 <div className="h-4 bg-slate-200 rounded w-24" />
                 <div className="h-4 bg-slate-200 rounded w-16" />
               </div>
@@ -203,16 +223,19 @@ export function Members() {
                   Member
                 </th>
                 <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
-                  Role
+                  Email
                 </th>
                 <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
-                  Status
+                  Role
                 </th>
                 <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
                   Joined
                 </th>
+                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
+                  Status
+                </th>
                 {canManage && (
-                  <th className="text-right px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono w-[80px]">
+                  <th className="text-right px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
                     Actions
                   </th>
                 )}
@@ -226,19 +249,9 @@ export function Members() {
                   canManage={canManage}
                   isCurrentUser={member.id === user?.id}
                   currentUserRole={user?.role ?? "member"}
-                  openMenu={openMenu}
-                  onToggleMenu={(id) =>
-                    setOpenMenu(openMenu === id ? null : id)
-                  }
                   onChangeRole={() => openChangeRole(member)}
-                  onRemove={() => {
-                    setRemoveTarget(member);
-                    setOpenMenu(null);
-                  }}
-                  onResendInvite={() => {
-                    setResendTarget(member);
-                    setOpenMenu(null);
-                  }}
+                  onRemove={() => setRemoveTarget(member)}
+                  onResendInvite={() => setResendTarget(member)}
                 />
               ))}
             </tbody>
@@ -315,18 +328,37 @@ export function Members() {
           aria-labelledby="change-role-title"
         >
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4">
-            <div className="px-6 py-4">
+            <div className="px-6 py-5">
               <h2
                 id="change-role-title"
                 className="text-lg font-semibold text-slate-900"
               >
                 Change Role
               </h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Update role for {changeRoleTarget.email}
+
+              {/* Member info header */}
+              <div className="flex items-center gap-3 mt-4 mb-5">
+                <div
+                  className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold text-white shrink-0 ${avatarColor(changeRoleTarget.id)}`}
+                >
+                  {avatarInitial(changeRoleTarget.name, changeRoleTarget.email)}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-900 truncate">
+                    {displayName(changeRoleTarget)}
+                  </p>
+                  <p className="text-xs text-slate-500 truncate">
+                    {changeRoleTarget.email}
+                  </p>
+                </div>
+                <RoleBadge role={changeRoleTarget.role} />
+              </div>
+
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">
+                Select new role
               </p>
 
-              <div className="mt-4 space-y-3">
+              <div className="space-y-3">
                 <label className="flex items-start gap-3 p-3 rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-50">
                   <input
                     type="radio"
@@ -388,7 +420,9 @@ export function Members() {
                 className="px-4 py-2 text-sm font-semibold rounded-lg bg-cyan-400 text-[#0A0F1C]
                   hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {changeRoleMutation.isPending ? "Saving..." : "Update Role"}
+                {changeRoleMutation.isPending
+                  ? "Saving..."
+                  : `Change to ${capitalizeRole(selectedRole)}`}
               </button>
             </div>
           </div>
@@ -406,7 +440,7 @@ export function Members() {
           message={
             removeTarget.status === "pending"
               ? `Cancel the pending invitation for ${removeTarget.email}? The invite link will no longer work.`
-              : `Are you sure you want to remove ${removeTarget.email} from the organization? They will lose all access.`
+              : `Are you sure you want to remove ${displayName(removeTarget)} (${removeTarget.email}) from the organization? They will lose all access.`
           }
           confirmLabel={
             removeTarget.status === "pending" ? "Cancel Invite" : "Remove"
@@ -418,16 +452,58 @@ export function Members() {
         />
       )}
 
-      {/* Resend Invite Confirmation */}
+      {/* Resend Invite Modal */}
       {resendTarget && (
-        <ConfirmModal
-          title="Resend Invitation"
-          message={`Resend the invitation email to ${resendTarget.email}? The invitation will remain valid for 7 days.`}
-          confirmLabel="Resend"
-          onConfirm={() => resendMutation.mutate(resendTarget.id)}
-          onCancel={() => setResendTarget(null)}
-          isLoading={resendMutation.isPending}
-        />
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="resend-invite-title"
+        >
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4">
+            <div className="px-6 py-5 text-center">
+              <div className="mx-auto w-12 h-12 rounded-full bg-cyan-50 flex items-center justify-center mb-4">
+                <Mail className="w-6 h-6 text-cyan-600" />
+              </div>
+              <h2
+                id="resend-invite-title"
+                className="text-lg font-semibold text-slate-900"
+              >
+                Resend Invitation
+              </h2>
+              <p className="mt-2 text-sm text-slate-500">
+                A new invitation email will be sent to:
+              </p>
+              <div className="mt-3 inline-flex items-center px-3 py-1.5 rounded-md bg-slate-800 text-white text-sm font-mono">
+                {resendTarget.email}
+              </div>
+              <p className="mt-4 text-xs text-slate-400">
+                The previous invitation link will be invalidated. The new link
+                expires in 7 days.
+              </p>
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setResendTarget(null)}
+                disabled={resendMutation.isPending}
+                className="px-4 py-2 text-sm text-slate-700 hover:text-slate-900"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => resendMutation.mutate(resendTarget.id)}
+                disabled={resendMutation.isPending}
+                className="px-4 py-2 text-sm font-semibold rounded-lg bg-cyan-400 text-[#0A0F1C]
+                  hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {resendMutation.isPending ? "Sending..." : "Resend Invite"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Invite Link Modal */}
@@ -502,8 +578,6 @@ function MemberRow({
   canManage,
   isCurrentUser,
   currentUserRole,
-  openMenu,
-  onToggleMenu,
   onChangeRole,
   onRemove,
   onResendInvite
@@ -512,8 +586,6 @@ function MemberRow({
   canManage: boolean;
   isCurrentUser: boolean;
   currentUserRole: OrgRole;
-  openMenu: string | null;
-  onToggleMenu: (id: string) => void;
   onChangeRole: () => void;
   onRemove: () => void;
   onResendInvite: () => void;
@@ -526,71 +598,66 @@ function MemberRow({
 
   return (
     <tr className="hover:bg-slate-50 h-14">
+      {/* MEMBER: avatar + name */}
       <td className="px-6 py-3">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-slate-200 flex items-center justify-center text-sm font-semibold text-slate-600 shrink-0">
-            {avatarInitial(member.email)}
+          <div
+            className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold text-white shrink-0 ${avatarColor(member.id)}`}
+          >
+            {avatarInitial(member.name, member.email)}
           </div>
-          <div>
-            <p className="text-sm font-medium text-slate-900">
-              {member.email}
-              {isCurrentUser && (
-                <span className="ml-2 text-xs text-slate-400">(you)</span>
-              )}
-            </p>
-          </div>
+          <span className="text-sm font-semibold text-slate-900">
+            {displayName(member)}
+            {isCurrentUser && (
+              <span className="ml-2 text-xs font-normal text-slate-400">
+                (you)
+              </span>
+            )}
+          </span>
         </div>
       </td>
+      {/* EMAIL */}
+      <td className="px-6 py-3 text-sm text-slate-500">{member.email}</td>
+      {/* ROLE */}
       <td className="px-6 py-3">
         <RoleBadge role={member.role} />
       </td>
-      <td className="px-6 py-3">
-        <StatusBadge status={member.status} />
-      </td>
+      {/* JOINED */}
       <td className="px-6 py-3 text-sm text-slate-500">
         {formatDate(member.created_at)}
       </td>
+      {/* STATUS */}
+      <td className="px-6 py-3">
+        <StatusBadge status={member.status} />
+      </td>
+      {/* ACTIONS: inline text buttons */}
       {canManage && (
-        <td className="px-6 py-3 text-right relative">
+        <td className="px-6 py-3 text-right">
           {canShowActions ? (
-            <>
-              <button
-                onClick={() => onToggleMenu(member.id)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-100 transition-colors"
-                aria-label={`Actions for ${member.email}`}
-              >
-                <MoreVertical className="w-4 h-4" />
-              </button>
-              {openMenu === member.id && (
-                <div className="absolute right-6 top-12 z-10 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1">
-                  {canChangeRole && (
-                    <button
-                      onClick={onChangeRole}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                    >
-                      <Shield className="w-4 h-4" />
-                      Change Role
-                    </button>
-                  )}
-                  {member.status === "pending" && (
-                    <button
-                      onClick={onResendInvite}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                    >
-                      <Mail className="w-4 h-4" />
-                      Resend Invite
-                    </button>
-                  )}
-                  <button
-                    onClick={onRemove}
-                    className="flex items-center gap-2 w-full px-4 py-2 text-sm text-red-600 hover:bg-red-50"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    {member.status === "pending" ? "Cancel Invite" : "Remove"}
-                  </button>
-                </div>
+            <div className="flex items-center justify-end gap-3">
+              {canChangeRole && (
+                <button
+                  onClick={onChangeRole}
+                  className="text-xs font-medium text-cyan-600 hover:text-cyan-700 transition-colors"
+                >
+                  Change Role
+                </button>
               )}
-            </>
+              {member.status === "pending" && (
+                <button
+                  onClick={onResendInvite}
+                  className="text-xs font-medium text-cyan-600 hover:text-cyan-700 transition-colors"
+                >
+                  Resend
+                </button>
+              )}
+              <button
+                onClick={onRemove}
+                className="text-xs font-medium text-red-600 hover:text-red-700 transition-colors"
+              >
+                {member.status === "pending" ? "Cancel" : "Remove"}
+              </button>
+            </div>
           ) : (
             <span className="text-sm text-slate-300">&mdash;</span>
           )}

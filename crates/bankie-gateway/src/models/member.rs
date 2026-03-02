@@ -39,6 +39,7 @@ pub enum MemberStatus {
 pub struct OrgMember {
     pub id: Uuid,
     pub org_id: Uuid,
+    pub name: String,
     pub email: String,
     #[serde(skip_serializing)]
     pub password_hash: String,
@@ -57,6 +58,8 @@ pub struct OrgMember {
 pub struct InviteMemberRequest {
     pub email: String,
     pub role: String,
+    #[serde(default)]
+    pub name: String,
 }
 
 /// Response after inviting a member, includes the one-time invite link.
@@ -71,6 +74,8 @@ pub struct InviteMemberResponse {
 pub struct AcceptInviteRequest {
     pub token: String,
     pub password: String,
+    #[serde(default)]
+    pub name: String,
 }
 
 /// Info returned when validating an invite token.
@@ -145,6 +150,7 @@ mod tests {
         let member = OrgMember {
             id: Uuid::new_v4(),
             org_id: Uuid::new_v4(),
+            name: "Test User".to_string(),
             email: "test@example.com".to_string(),
             password_hash: "secret_hash".to_string(),
             role: MemberRole::Owner,
@@ -164,6 +170,7 @@ mod tests {
         let member = OrgMember {
             id: Uuid::new_v4(),
             org_id: Uuid::new_v4(),
+            name: "Test User".to_string(),
             email: "test@example.com".to_string(),
             password_hash: "hash".to_string(),
             role: MemberRole::Member,
@@ -183,6 +190,7 @@ mod tests {
         let member = OrgMember {
             id: Uuid::new_v4(),
             org_id: Uuid::new_v4(),
+            name: "Test User".to_string(),
             email: "test@example.com".to_string(),
             password_hash: "hash".to_string(),
             role: MemberRole::Member,

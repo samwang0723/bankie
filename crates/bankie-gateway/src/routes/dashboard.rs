@@ -106,7 +106,7 @@ async fn activity(
 /// GET /portal/v1/dashboard/rate-limits
 ///
 /// Returns per-key rate limit usage for the current org.
-/// Each entry includes: key_id, key_name, key_prefix, remaining tokens, burst limit,
+/// Each entry includes real API usage from api_logs, Redis token bucket state,
 /// and throttled request count in the last 24h.
 async fn rate_limits(
     state: axum::extract::State<Arc<PortalState>>,
@@ -123,10 +123,24 @@ async fn rate_limits(
         .await
         .map_err(AppError::internal)?;
 
+    // Collect non-revoked key IDs for per-key request counts
+    let active_key_ids: Vec<uuid::Uuid> = keys
+        .iter()
+        .filter(|k| k.status != KeyStatus::Revoked)
+        .map(|k| k.id)
+        .collect();
+
+    // Query real request counts from api_logs (24h)
+    let since = Utc::now() - Duration::hours(24);
+    let per_key_counts = state
+        .dashboard_repo
+        .count_api_calls_per_key_since(active_key_ids, since)
+        .await
+        .unwrap_or_default();
+
     let mut results = Vec::new();
 
     for key in &keys {
-        // Only show rate limit data for active and rotated keys (not revoked)
         if key.status == KeyStatus::Revoked {
             continue;
         }
@@ -160,6 +174,8 @@ async fn rate_limits(
             .map(|s| s.limit)
             .unwrap_or(DEFAULT_BURST_CAP);
 
+        let requests_24h = per_key_counts.get(&key.id).copied().unwrap_or(0);
+
         results.push(serde_json::json!({
             "key_id": key.id,
             "key_name": key.name,
@@ -169,6 +185,7 @@ async fn rate_limits(
             "limit": limit,
             "sustained_per_min": DEFAULT_SUSTAINED_CAP,
             "throttled_24h": throttled_count,
+            "requests_24h": requests_24h,
         }));
     }
 

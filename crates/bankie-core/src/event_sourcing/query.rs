@@ -42,6 +42,7 @@ impl View<BankAccount> for BankAccountView {
                 kind,
                 external_reference_id,
                 account_number,
+                name,
                 currency,
             } => {
                 self.id = base_event.get_aggregate_id();
@@ -54,6 +55,7 @@ impl View<BankAccount> for BankAccountView {
                 self.currency = *currency;
                 self.external_reference_id = external_reference_id.clone();
                 self.account_number = account_number.clone();
+                self.name = name.clone();
                 self.tenant_id = base_event.get_tenant_id();
             }
             BankAccountEvent::AccountKycApproved {
@@ -178,6 +180,7 @@ mod tests {
                 kind: BankAccountKind::Checking,
                 external_reference_id: Some("user-123".to_string()),
                 account_number: "123456789012".to_string(),
+                name: Some("Business Checking".to_string()),
                 currency: Currency::USD,
             },
         };
@@ -190,6 +193,38 @@ mod tests {
         assert_eq!(view.currency, Currency::USD);
         assert_eq!(view.external_reference_id, Some("user-123".to_string()));
         assert_eq!(view.account_number, "123456789012");
+        assert_eq!(view.name, Some("Business Checking".to_string()));
+    }
+
+    // Q1b: BankAccountView update for AccountOpened without name (backward compat)
+    #[test]
+    fn test_update_with_account_opened_no_name() {
+        let mut view = BankAccountView::default();
+        let base_event = BaseEvent {
+            aggregate_id: "acc2".to_string(),
+            parent_id: "".to_string(),
+            created_at: Utc::now().to_string(),
+            tenant_id: 0,
+        };
+        let event = EventEnvelope {
+            aggregate_id: "acc2".to_string(),
+            metadata: Default::default(),
+            sequence: 1,
+            payload: BankAccountEvent::AccountOpened {
+                base_event: base_event.clone(),
+                account_type: BankAccountType::Retail,
+                kind: BankAccountKind::Checking,
+                external_reference_id: None,
+                account_number: "999888777666".to_string(),
+                name: None,
+                currency: Currency::USD,
+            },
+        };
+        view.update(&event);
+
+        assert_eq!(view.id, "acc2");
+        assert!(view.name.is_none());
+        assert_eq!(view.account_number, "999888777666");
     }
 
     // Q2: BankAccountView update for AccountKycApproved
