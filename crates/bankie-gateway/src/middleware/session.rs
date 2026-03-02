@@ -118,6 +118,7 @@ mod tests {
     fn test_claims(csrf: &str) -> SessionClaims {
         SessionClaims {
             sub: uuid::Uuid::new_v4().to_string(),
+            name: "Test User".to_string(),
             org_id: uuid::Uuid::new_v4().to_string(),
             tenant_id: 1,
             role: "owner".to_string(),

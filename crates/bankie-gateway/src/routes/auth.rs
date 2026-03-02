@@ -79,6 +79,7 @@ async fn signup(
         .create(
             member_id,
             org.id,
+            req.name.clone(),
             req.email.clone(),
             password_hash,
             "owner".to_string(),
@@ -181,6 +182,7 @@ fn build_session_response(
 
     let claims = SessionClaims {
         sub: member.id.to_string(),
+        name: member.name.clone(),
         org_id: org.id.to_string(),
         tenant_id: org.tenant_id,
         role: serde_json::to_value(&member.role)
@@ -201,6 +203,7 @@ fn build_session_response(
     let auth_resp = AuthResponse {
         user: AuthUser {
             id: member.id,
+            name: member.name.clone(),
             email: member.email.clone(),
             role: member.role.clone(),
             created_at: member.created_at,
@@ -361,7 +364,7 @@ async fn accept_invite(
     // Accept invite: sets status=active, clears token fields
     let activated = state
         .member_repo
-        .accept_invite(member.id, password_hash)
+        .accept_invite(member.id, req.name.clone(), password_hash)
         .await
         .map_err(AppError::internal)?
         .ok_or_else(|| AppError::internal("Failed to activate member"))?;
@@ -452,6 +455,7 @@ mod tests {
         OrgMember {
             id,
             org_id,
+            name: "Test User".to_string(),
             email: "test@example.com".to_string(),
             password_hash: hash_password("password123").unwrap(),
             role: MemberRole::Owner,
@@ -490,10 +494,11 @@ mod tests {
             });
 
         member_repo.expect_create().returning(
-            move |id, org_id_arg, email, password_hash, _role| {
+            move |id, org_id_arg, name, email, password_hash, _role| {
                 Ok(OrgMember {
                     id,
                     org_id: org_id_arg,
+                    name,
                     email,
                     password_hash,
                     role: MemberRole::Owner,
@@ -511,6 +516,7 @@ mod tests {
 
         let body = serde_json::json!({
             "org_name": "Test Org",
+            "name": "Test User",
             "email": "new@example.com",
             "password": "password123"
         });
@@ -547,6 +553,7 @@ mod tests {
 
         let body = serde_json::json!({
             "org_name": "",
+            "name": "Test User",
             "email": "test@example.com",
             "password": "password123"
         });
@@ -573,6 +580,7 @@ mod tests {
 
         let body = serde_json::json!({
             "org_name": "Test",
+            "name": "Test User",
             "email": "not-an-email",
             "password": "password123"
         });
@@ -599,6 +607,7 @@ mod tests {
 
         let body = serde_json::json!({
             "org_name": "Test",
+            "name": "Test User",
             "email": "test@example.com",
             "password": "short"
         });
@@ -631,6 +640,7 @@ mod tests {
 
         let body = serde_json::json!({
             "org_name": "Test",
+            "name": "Test User",
             "email": "test@example.com",
             "password": "password123"
         });
@@ -847,6 +857,7 @@ mod tests {
         let member = OrgMember {
             id: uuid::Uuid::new_v4(),
             org_id,
+            name: String::new(),
             email: "invited@example.com".to_string(),
             password_hash: "pending_invite".to_string(),
             role: MemberRole::Member,
@@ -901,6 +912,7 @@ mod tests {
         let member = OrgMember {
             id: uuid::Uuid::new_v4(),
             org_id,
+            name: String::new(),
             email: "invited@example.com".to_string(),
             password_hash: "pending_invite".to_string(),
             role: MemberRole::Member,
@@ -968,6 +980,7 @@ mod tests {
         let pending = OrgMember {
             id: member_id,
             org_id,
+            name: String::new(),
             email: "invited@example.com".to_string(),
             password_hash: "pending_invite".to_string(),
             role: MemberRole::Member,
@@ -984,6 +997,7 @@ mod tests {
         let activated = OrgMember {
             id: member_id,
             org_id,
+            name: "Invited User".to_string(),
             email: "invited@example.com".to_string(),
             password_hash: "argon2_hash".to_string(),
             role: MemberRole::Member,
@@ -995,7 +1009,7 @@ mod tests {
         };
         member_repo
             .expect_accept_invite()
-            .returning(move |_, _| Ok(Some(activated.clone())));
+            .returning(move |_, _, _| Ok(Some(activated.clone())));
 
         let mut org_repo = MockOrgRepository::new();
         let org = test_org(org_id, 1);

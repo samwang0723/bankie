@@ -272,6 +272,7 @@ mod tests {
     fn test_mint_portal_jwt_success() {
         let session = SessionClaims {
             sub: "user-123".to_string(),
+            name: "Test User".to_string(),
             org_id: "org-456".to_string(),
             tenant_id: 42,
             role: "owner".to_string(),
@@ -291,6 +292,7 @@ mod tests {
 
         let session = SessionClaims {
             sub: "user-123".to_string(),
+            name: "Test User".to_string(),
             org_id: "org-456".to_string(),
             tenant_id: 42,
             role: "owner".to_string(),
@@ -325,6 +327,7 @@ mod tests {
 
         let session = SessionClaims {
             sub: "user-abc".to_string(),
+            name: "Test User".to_string(),
             org_id: "org-def".to_string(),
             tenant_id: 7,
             role: "admin".to_string(),

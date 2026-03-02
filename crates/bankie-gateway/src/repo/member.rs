@@ -13,6 +13,7 @@ pub trait MemberRepository: Send + Sync {
         &self,
         id: Uuid,
         org_id: Uuid,
+        name: String,
         email: String,
         password_hash: String,
         role: String,
@@ -48,6 +49,7 @@ pub trait MemberRepository: Send + Sync {
         &self,
         id: Uuid,
         org_id: Uuid,
+        name: String,
         email: String,
         password_hash: String,
         role: String,
@@ -60,10 +62,11 @@ pub trait MemberRepository: Send + Sync {
     async fn find_by_invite_token_hash(&self, hash: String)
         -> Result<Option<OrgMember>, RepoError>;
 
-    /// Accept an invite: set password, status=active, clear invite token fields.
+    /// Accept an invite: set password and name, status=active, clear invite token fields.
     async fn accept_invite(
         &self,
         id: Uuid,
+        name: String,
         password_hash: String,
     ) -> Result<Option<OrgMember>, RepoError>;
 
