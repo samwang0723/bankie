@@ -54,23 +54,30 @@ function RateLimitCell({ entry }: { entry: RateLimitEntry | undefined }) {
   if (!entry) {
     return <span className="text-xs text-slate-300">&mdash;</span>;
   }
-  const usedPct =
-    entry.limit > 0
-      ? Math.round(((entry.limit - entry.remaining) / entry.limit) * 100)
-      : 0;
-  const barColor = usedPct > 50 ? "bg-amber-400" : "bg-green-400";
+  const cap =
+    entry.sustained_per_min > 0 ? entry.sustained_per_min : entry.limit;
+  const remainingPct = cap > 0 ? Math.round((entry.remaining / cap) * 100) : 0;
+  const barColor =
+    remainingPct === 0
+      ? "bg-red-500"
+      : remainingPct <= 25
+        ? "bg-amber-400"
+        : "bg-green-400";
+  const barWidth = remainingPct === 0 ? 100 : remainingPct;
 
   return (
-    <div className="w-24">
+    <div className="w-28">
       <div className="flex items-center justify-between mb-0.5">
-        <span className="text-[10px] text-slate-500">
-          {entry.remaining}/{entry.limit}
+        <span
+          className={`text-[10px] ${remainingPct === 0 ? "text-red-600 font-medium" : "text-slate-500"}`}
+        >
+          {entry.remaining}/{cap.toLocaleString()} req/min
         </span>
       </div>
       <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${barColor}`}
-          style={{ width: `${usedPct}%` }}
+          style={{ width: `${barWidth}%` }}
         />
       </div>
     </div>
