@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   BookOpen,
   Terminal,
@@ -10,6 +11,9 @@ import {
   Check,
   Key
 } from "lucide-react";
+import { api } from "../api/client.ts";
+import { handleApiError } from "../hooks/useAuth.ts";
+import type { ApiKey } from "../types/index.ts";
 
 type EndpointCategory =
   | "all"
@@ -770,10 +774,16 @@ function EndpointRow({
 
 export function ApiDocs() {
   const [filter, setFilter] = useState<EndpointCategory>("all");
-  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [selectedKey, setSelectedKey] = useState("");
 
-  const keyDisplay = apiKeyInput.trim() || API_KEY_PLACEHOLDER;
-  const quickStartKey = apiKeyInput.trim() || "bk_live_your_api_key";
+  const { data: apiKeys = [] } = useQuery<ApiKey[]>({
+    queryKey: ["api-keys"],
+    queryFn: () => api.get<ApiKey[]>("/api-keys").catch(handleApiError)
+  });
+
+  const activeKeys = apiKeys.filter((k) => k.status === "active");
+  const keyDisplay = selectedKey || API_KEY_PLACEHOLDER;
+  const quickStartKey = selectedKey || "bk_live_your_api_key";
 
   const filteredEndpoints =
     filter === "all"
@@ -795,26 +805,33 @@ export function ApiDocs() {
         </p>
       </div>
 
-      {/* API Key Input */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 mb-6">
-        <div className="flex items-center gap-4 flex-wrap">
-          <div className="flex items-center gap-2 text-sm font-medium text-slate-700 shrink-0">
-            <Key className="w-4 h-4 text-cyan-400" />
-            <span>API Key</span>
+      {/* API Key Selector */}
+      {activeKeys.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 p-4 mb-6">
+          <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-700 shrink-0">
+              <Key className="w-4 h-4 text-cyan-400" />
+              <span>API Key</span>
+            </div>
+            <select
+              value={selectedKey}
+              onChange={(e) => setSelectedKey(e.target.value)}
+              className="px-3 py-1.5 bg-[#0F172A] border border-slate-600 rounded-lg text-sm font-mono text-white
+                focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-cyan-400 min-w-[280px]"
+            >
+              <option value="">bk_live_YOUR_API_KEY (placeholder)</option>
+              {activeKeys.map((k) => (
+                <option key={k.id} value={`${k.key_prefix}...`}>
+                  {k.name} ({k.key_prefix}...)
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-slate-400">
+              Select a key to populate curl examples below.
+            </p>
           </div>
-          <input
-            type="text"
-            value={apiKeyInput}
-            onChange={(e) => setApiKeyInput(e.target.value)}
-            placeholder="Paste your API key here (bk_live_...)"
-            className="flex-1 px-3 py-1.5 bg-[#0F172A] border border-slate-600 rounded-lg text-sm font-mono text-white
-              placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-cyan-400 min-w-[280px]"
-          />
-          <p className="text-xs text-slate-400">
-            Paste your key to populate all curl examples below.
-          </p>
         </div>
-      </div>
+      )}
 
       {/* Quick Start */}
       <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6">
