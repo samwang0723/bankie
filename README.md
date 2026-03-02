@@ -30,18 +30,22 @@ Multi-tenant banking system with a Developer Portal, built in Rust. Implements s
 - **Sub-accounts** — Checking (master), Interest, Yield linked via `parent_id`
 - **Double-entry bookkeeping** — every transaction creates journal entries with debit/credit lines
 - **Multi-asset support** — USD, TWD, BTC, ETH, USDT with currency-aware precision
+- **FX Rate Engine** — real-time USD normalization via CoinGecko (crypto) and ExchangeRate API (fiat), Redis-cached, graceful degradation
 - **Outbox pattern** — async ledger processing with Redis distributed locking
 - **Idempotency** — Redis-backed `Idempotency-Key` header deduplication
-- **Settlement reports** — CSV export with running balances and CSV-injection prevention
+- **Settlement reports** — CSV export with running balances, FX rate columns, and CSV-injection prevention
 - **Balance snapshots** — daily snapshots for historical balance queries
 
 ### Developer Portal
-- **Session auth** — argon2id password hashing, HttpOnly session cookies, CSRF double-submit
+- **Session auth** — argon2id password hashing, HttpOnly Secure session cookies, CSRF double-submit
 - **Organization management** — signup, org CRUD, member invite/revoke with RBAC (owner/admin/member)
-- **API key lifecycle** — create (raw key shown once), rotate (with grace period), revoke
+- **API key lifecycle** — create (raw key shown once), rotate (with grace period), revoke, instant cache invalidation
 - **Rate limiting** — Redis token bucket (burst 100, sustained 1000/min) per API key
+- **Login brute-force protection** — Redis-based rate limiting (5 attempts/email/15min) with 429 + Retry-After
+- **API request logging** — all proxy requests logged to partitioned `portal.api_logs` table
+- **Audit logging** — key operations (create/rotate/revoke) logged to `portal.audit_logs`
 - **Data proxy** — session-auth routes that mint short-lived JWTs (60s) to forward to Core
-- **Portal SPA** — Dashboard, API Keys, Accounts, Transactions, Reports, Org Settings
+- **Portal SPA** — Dashboard, API Keys, Accounts, Transactions (with USD Value column), Reports, Org Settings
 
 ## Quick Start
 
@@ -136,7 +140,7 @@ Portal routes use session cookie auth. External API proxy uses Bearer API key au
 # Build (use SQLX_OFFLINE=true when no live DB available)
 SQLX_OFFLINE=true cargo build
 
-# Unit tests (230 tests: 118 core + 104 gateway + 8 common, no DB needed)
+# Unit tests (251 tests: 128 core + 114 gateway + 9 common, no DB needed)
 SQLX_OFFLINE=true cargo test -- --nocapture
 cargo test -p bankie-core test_name -- --nocapture      # Single test in crate
 cargo test -p bankie-gateway test_name -- --nocapture
