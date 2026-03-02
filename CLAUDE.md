@@ -24,7 +24,7 @@ SQLX_OFFLINE=true cargo build
 cargo build --release --bin bankie
 cargo build --release --bin bankie-gateway
 
-# Run tests (230 unit tests: 118 core + 104 gateway + 8 common, no DB needed)
+# Run tests (251 unit tests: 128 core + 114 gateway + 9 common, no DB needed)
 SQLX_OFFLINE=true cargo test -- --nocapture
 cargo test -p bankie-core test_name -- --nocapture    # Single test in specific crate
 cargo test -p bankie-gateway test_name -- --nocapture
@@ -43,7 +43,7 @@ DATABASE_URL="postgres://bankie_app:password@localhost:5432/bankie_main" cargo s
 make docker-up && make docker-e2e        # Docker full-stack
 make local-setup && make local-e2e       # Local dev
 
-# Docker lifecycle (5 services: postgres, redis, migrations, bankie-core, bankie-gateway, portal-spa)
+# Docker lifecycle (6 services: postgres, redis, migrations, bankie-core, bankie-gateway, portal-spa)
 make docker-up                           # Build and start full stack
 make docker-down                         # Stop (preserves data)
 make docker-clean                        # Stop + remove volumes (full data reset)
@@ -168,8 +168,9 @@ Protected: session_auth (cookie JWT + CSRF validation) → org/api-key/dashboard
 
 **API proxy routes** (`/*` fallback):
 ```
-api_key_resolver (Bearer → DB lookup + Redis cache 5min)
+api_key_resolver (Bearer → DB lookup + Redis cache 5min, invalidated on revoke/rotate)
   → rate_limiter (Redis token bucket via Lua script)
+  → api_logger (async write to portal.api_logs)
   → jwt_minter (60s internal JWT)
   → reverse_proxy → Core :3030
 ```
@@ -188,6 +189,20 @@ TraceLayer → CompressionLayer → AddExtension(State) → AddExtension(Redis)
 - `Currency` enum (USD, TWD, BTC, ETH, USDT) with per-currency precision (2, 0, 8, 18, 6)
 - `AssetRegistry` — `Arc<RwLock<HashMap<String, Asset>>>` loaded at startup
 - `Money` type carries `amount: Decimal` + `currency: Currency`, use `money.asset_code()`
+
+### FX Rate Engine
+
+Real-time USD normalization for multi-currency transactions (`crates/bankie-core/src/common/fx_rate.rs`):
+
+- **FxRateProvider trait** with three implementations:
+  - `CoinGeckoProvider` — crypto rates (BTC, ETH, USDT), 60s cache TTL
+  - `ExchangeRateProvider` — fiat rates (TWD), 1h cache TTL
+  - `MockProvider` — configurable static rates for tests
+- **FxRateService** — coordinates providers with Redis caching (`fx:USD:{CURRENCY}`)
+- **Integration**: wired into `BankAccountServices` via builder pattern (`with_fx_rate_service()`), called in `helper::create_transaction_with_journal()` before DB insert
+- **Transaction fields**: `fx_rate_to_usd Option<Decimal>`, `amount_usd Option<Decimal>`, `fx_rate_source Option<String>` — all nullable for graceful degradation
+- **Graceful degradation**: FX rate failure never blocks a transaction — proceeds with NULL USD fields
+- **Settlement CSV**: includes `amount_usd`, `fx_rate_to_usd`, `fx_rate_source` columns
 
 ### Key Data Flows
 
@@ -223,11 +238,20 @@ Multiple account types (Checking, Interest, Yield) linked via `parent_id`. Maste
 |-----|----------|---------|
 | Ledger job | Every 10s | Polls outbox → executes `LedgerCommand::Credit` or `DebitRelease`. Redis-locked. |
 | Balance snapshot | Daily midnight UTC | Snapshots all active account balances. Redis-locked. |
+| API logging | Per request | Async write to `portal.api_logs` (partitioned by month) via `api_logger` middleware. |
+
+### Security Hardening
+
+- Session cookies (`portal_session`, `csrf_token`) include `Secure` flag when `ENV != local`
+- JWT token removed from login/signup response body — auth is cookie-only
+- `tenant_id` removed from `CreateOrgRequest` — auto-assigned via DB sequence
+- Login brute-force protection: Redis INCR with 15min TTL, max 5 failed attempts per email, returns 429 + `Retry-After`
+- API key cache (`gw:api_key:{hash}`) actively deleted on revoke/rotate — no stale cache window
 
 ### Structured Error Responses
 
 `AppError` enum in `crates/bankie-common/src/error.rs` (shared by both core and gateway):
-- `BadRequest(400)`, `Unauthorized(401)`, `Forbidden(403)`, `NotFound(404)`, `Conflict(409)`, `UnprocessableEntity(422)`, `InternalServerError(500)`
+- `BadRequest(400)`, `Unauthorized(401)`, `Forbidden(403)`, `NotFound(404)`, `Conflict(409)`, `TooManyRequests(429)`, `UnprocessableEntity(422)`, `InternalServerError(500)`
 
 ## API Endpoints
 
@@ -257,7 +281,8 @@ Multiple account types (Checking, Interest, Yield) linked via `parent_id`. Maste
 | POST | `/portal/v1/auth/signup` | None | Create org + owner member |
 | POST | `/portal/v1/auth/login` | None | Login → session cookie |
 | POST | `/portal/v1/auth/logout` | None | Clear cookies |
-| GET | `/portal/v1/dashboard/stats` | Session | Org stats + key counts |
+| GET | `/portal/v1/dashboard/stats` | Session | Org stats, key counts, scopes granted, 24h API calls |
+| GET | `/portal/v1/dashboard/activity` | Session | Recent audit log activity feed |
 | GET | `/portal/v1/organization` | Session | Get org details |
 | PUT | `/portal/v1/organization` | Session | Update org |
 | GET | `/portal/v1/api-keys` | Session | List API keys |
@@ -278,14 +303,15 @@ React 19 + Vite + TailwindCSS 4 + TanStack Query. Source at `portal-spa/src/`.
 
 - **API client** (`api/client.ts`): base URL `/api/portal/v1`, CSRF token from cookie, credentials `same-origin`
 - **Auth** (`hooks/useAuth.ts`): context provider, login/signup/logout, 401 redirect
-- **Pages**: Login, Signup, Dashboard, ApiKeys, Organization, Accounts, Transactions, Reports, ApiDocs
+- **Pages**: Login, Signup, Dashboard, ApiKeys, Organization, Accounts, Transactions (with USD Value column + FX rates), Reports, ApiDocs
+- **Utilities** (`utils/currency.ts`): shared currency formatting with per-currency precision, USD value + FX rate formatters
 - **Types** (`types/index.ts`): TypeScript interfaces matching gateway response shapes
 - **Vite proxy**: `/api` → `http://localhost:4040` (dev only; production uses nginx)
 - **Production**: nginx serves SPA at `:80`, proxies `/api/portal/` → `http://bankie-gateway:4040/portal/`
 
 ## Testing Patterns
 
-- **230 unit tests** (118 core + 104 gateway + 8 common) + **59 e2e tests**, unit tests need no DB (`SQLX_OFFLINE=true`)
+- **251 unit tests** (128 core + 114 gateway + 9 common) + **59 e2e tests**, unit tests need no DB (`SQLX_OFFLINE=true`)
 - Core aggregate tests use `cqrs_es::test::TestFramework` with given/when/then pattern and `test_case!`/`test_error_case!` macros
 - `MockBankAccountServices` (manual mock) with `Mutex<Option<Result<...>>>` fields for negative-path testing
 - Core DB layer uses `mockall::automock` on `DatabaseClient` trait
