@@ -67,21 +67,15 @@ function RateLimitCell({ entry }: { entry: RateLimitEntry | undefined }) {
   const successPct = total > 0 ? Math.round((requests / total) * 100) : 100;
 
   return (
-    <div className="w-32">
-      <div className="flex items-center gap-1.5 mb-0.5">
-        <span className="text-[11px] font-medium text-slate-900">
+    <div className="w-36">
+      <span className="text-[11px] text-slate-500">
+        <span className="font-semibold text-slate-700">
           {requests.toLocaleString()}
         </span>
-        <span className="text-[10px] text-slate-400">calls</span>
-        {throttled > 0 && (
-          <span
-            className={`text-[10px] ${isCritical ? "text-red-600" : "text-amber-600"}`}
-          >
-            /{throttled}
-          </span>
-        )}
-      </div>
-      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+        {" / "}
+        {entry.sustained_per_min.toLocaleString()} req/min
+      </span>
+      <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden mt-1">
         <div
           className={`h-full rounded-full transition-all ${barColor}`}
           style={{ width: `${successPct}%` }}

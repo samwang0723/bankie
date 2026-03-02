@@ -96,37 +96,29 @@ function RateLimitBar({ entry }: { entry: RateLimitEntry }) {
           </p>
         </div>
         <span className="text-xs shrink-0 ml-2 text-slate-500">
+          <span className="font-semibold text-slate-700">
+            {requests.toLocaleString()}
+          </span>
+          {" / "}
           {entry.sustained_per_min.toLocaleString()} req/min
         </span>
       </div>
-      <div className="flex items-center gap-3 mb-1">
-        <div className="flex-1 h-2.5 bg-slate-100 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${barColor}`}
-            style={{ width: `${successPct}%` }}
-          />
-        </div>
+      <div className="w-full h-2.5 bg-slate-200 rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${barColor}`}
+          style={{ width: `${successPct}%` }}
+        />
       </div>
-      <div className="flex items-center gap-3 text-xs">
-        <span className="text-slate-600">
-          <span className="font-semibold text-slate-900">
-            {requests.toLocaleString()}
-          </span>{" "}
-          calls
-        </span>
-        {throttled > 0 && (
-          <span
-            className={
-              isCritical ? "font-medium text-red-600" : "text-amber-600"
-            }
-          >
-            {throttled.toLocaleString()} throttled
-          </span>
-        )}
-        {total === 0 && (
-          <span className="text-slate-400">No traffic in 24h</span>
-        )}
-      </div>
+      {throttled > 0 && (
+        <p
+          className={`mt-1 text-xs ${isCritical ? "font-medium text-red-600" : "text-amber-600"}`}
+        >
+          {throttled.toLocaleString()} throttled (burst limit)
+        </p>
+      )}
+      {total === 0 && (
+        <p className="mt-1 text-xs text-slate-400">No traffic in 24h</p>
+      )}
     </div>
   );
 }
