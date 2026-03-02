@@ -15,7 +15,7 @@ use chrono::{Local, NaiveDate};
 use rust_decimal::Decimal;
 use serde_json::to_value;
 use sqlx::postgres::PgPool;
-use sqlx::Error;
+use sqlx::{Error, Row};
 use uuid::Uuid;
 
 #[async_trait]
@@ -164,29 +164,33 @@ impl DatabaseClient for PgPool {
             .await?;
         }
 
-        // Insert Transaction
-        let transaction_id = sqlx::query!(
+        // Insert Transaction (using query() instead of query!() to avoid sqlx offline cache for new columns)
+        let row = sqlx::query(
             r#"
             INSERT INTO transactions (id, bank_account_id, transaction_reference,
-            transaction_date, amount, currency, description, metadata, status, journal_entry_id, tenant_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            transaction_date, amount, currency, description, metadata, status, journal_entry_id, tenant_id,
+            fx_rate_to_usd, amount_usd, fx_rate_source)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             RETURNING id
             "#,
-            transaction.id,
-            transaction.bank_account_id,
-            transaction.transaction_reference,
-            transaction.transaction_date,
-            transaction.amount,
-            transaction.currency,
-            transaction.description,
-            transaction.metadata,
-            transaction.status,
-            journal_entry_id,
-            tenant_id
         )
+        .bind(transaction.id)
+        .bind(transaction.bank_account_id)
+        .bind(&transaction.transaction_reference)
+        .bind(transaction.transaction_date)
+        .bind(transaction.amount)
+        .bind(&transaction.currency)
+        .bind(&transaction.description)
+        .bind(&transaction.metadata)
+        .bind(&transaction.status)
+        .bind(journal_entry_id)
+        .bind(tenant_id)
+        .bind(transaction.fx_rate_to_usd)
+        .bind(transaction.amount_usd)
+        .bind(&transaction.fx_rate_source)
         .fetch_one(&mut *tx)
-        .await?
-        .id;
+        .await?;
+        let transaction_id: Uuid = row.get("id");
 
         // Insert Outbox
         let transaction_type = transaction.transaction_type();
@@ -535,7 +539,10 @@ impl DatabaseClient for PgPool {
                 metadata,
                 status,
                 journal_entry_id,
-                tenant_id
+                tenant_id,
+                fx_rate_to_usd,
+                amount_usd,
+                fx_rate_source
             FROM transactions
             WHERE ($1::uuid IS NULL OR bank_account_id = $1)
             AND tenant_id = $2
@@ -579,7 +586,8 @@ impl DatabaseClient for PgPool {
             r#"
             SELECT
                 id, bank_account_id, transaction_reference, transaction_date,
-                amount, currency, description, metadata, status, journal_entry_id, tenant_id
+                amount, currency, description, metadata, status, journal_entry_id, tenant_id,
+                fx_rate_to_usd, amount_usd, fx_rate_source
             FROM transactions
             WHERE ($1::uuid IS NULL OR bank_account_id = $1)
               AND tenant_id = $8
@@ -1011,7 +1019,10 @@ impl DatabaseClient for PgPool {
                 t.journal_entry_id,
                 COALESCE(jl.debit_amount, 0) as debit_amount,
                 COALESCE(jl.credit_amount, 0) as credit_amount,
-                b.payload->>'account_number' as account_number
+                b.payload->>'account_number' as account_number,
+                t.amount_usd,
+                t.fx_rate_to_usd,
+                t.fx_rate_source
             FROM transactions t
             LEFT JOIN journal_entries je ON t.journal_entry_id = je.id
             LEFT JOIN journal_lines jl ON je.id = jl.journal_entry_id

@@ -7,6 +7,7 @@ use tokio::sync::mpsc::Sender;
 use tracing::{error, info};
 
 use crate::common::asset::AssetRegistry;
+use crate::common::fx_rate::FxRateService;
 use crate::configs::settings::SETTINGS;
 use crate::domain::models::{BankAccount, BankAccountView, Ledger, LedgerView};
 use crate::event_sourcing::command::BankAccountCommand;
@@ -24,6 +25,7 @@ pub struct ApplicationState<C: DatabaseClient + Send + Sync> {
     pub cache: Option<Arc<redis::Client>>,
     pub command_sender: Option<Arc<Sender<BankAccountCommand>>>,
     pub asset_registry: AssetRegistry,
+    pub fx_rate_service: Option<Arc<FxRateService>>,
 }
 
 impl<C: DatabaseClient + Send + Sync> ApplicationState<C> {
@@ -35,6 +37,7 @@ impl<C: DatabaseClient + Send + Sync> ApplicationState<C> {
             cache: None,
             command_sender: None,
             asset_registry: AssetRegistry::with_defaults(),
+            fx_rate_service: None,
         }
     }
 
@@ -60,6 +63,11 @@ impl<C: DatabaseClient + Send + Sync> ApplicationState<C> {
 
     pub fn with_asset_registry(mut self, registry: AssetRegistry) -> Self {
         self.asset_registry = registry;
+        self
+    }
+
+    pub fn with_fx_rate_service(mut self, service: Arc<FxRateService>) -> Self {
+        self.fx_rate_service = Some(service);
         self
     }
 }
@@ -97,7 +105,6 @@ pub async fn new_application_state(tx: Sender<BankAccountCommand>) -> SharedStat
         cqrs: ledger_cqrs,
         query: ledger_query,
     };
-    let (bc_cqrs, bc_query) = configure_bank_account(pool.clone(), ledger_loader_saver.clone());
 
     let cache = match redis::Client::open(SETTINGS.redis.connection_string()) {
         Ok(c) => c,
@@ -106,6 +113,22 @@ pub async fn new_application_state(tx: Sender<BankAccountCommand>) -> SharedStat
             panic!("Redis connection required for startup");
         }
     };
+
+    // Initialize FX rate service with providers
+    let fx_rate_service = {
+        use crate::common::fx_rate::{CoinGeckoProvider, ExchangeRateProvider, FxRateProvider};
+        let providers: Vec<Box<dyn FxRateProvider>> = vec![
+            Box::new(CoinGeckoProvider::new()),
+            Box::new(ExchangeRateProvider::new()),
+        ];
+        Arc::new(FxRateService::new(providers, Arc::new(cache.clone())))
+    };
+
+    let (bc_cqrs, bc_query) = configure_bank_account(
+        pool.clone(),
+        ledger_loader_saver.clone(),
+        Some(fx_rate_service.clone()),
+    );
 
     // Load assets from DB
     let adapter = Adapter::new(pool.clone());
@@ -129,6 +152,7 @@ pub async fn new_application_state(tx: Sender<BankAccountCommand>) -> SharedStat
             })
             .with_ledger(ledger_loader_saver)
             .with_command_sender(tx)
-            .with_asset_registry(asset_registry),
+            .with_asset_registry(asset_registry)
+            .with_fx_rate_service(fx_rate_service),
     )
 }

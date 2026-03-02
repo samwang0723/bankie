@@ -40,6 +40,32 @@ export function formatBalance(
   return currency === "USD" ? `$${formatted}` : formatted;
 }
 
+/** Format a USD value for display (e.g. "$16,621.50"). Returns null if input is null/undefined. */
+export function formatUsdValue(
+  value: string | null | undefined
+): string | null {
+  if (value == null) return null;
+  const num = parseFloat(value);
+  if (isNaN(num)) return null;
+  const formatted = num.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+  return `$${formatted}`;
+}
+
+/** Format an FX rate for display (e.g. "@ 66,486.00"). Returns null if rate is null or 1. */
+export function formatFxRate(rate: string | null | undefined): string | null {
+  if (rate == null) return null;
+  const num = parseFloat(rate);
+  if (isNaN(num) || num === 1) return null;
+  const formatted = num.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 8
+  });
+  return `@ ${formatted}`;
+}
+
 /** Format a transaction amount with +/- prefix, respecting per-currency precision. */
 export function formatAmount(
   amount: string,

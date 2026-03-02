@@ -34,6 +34,7 @@ mockall = { workspace = true }
 tokio-cron-scheduler = { version = "*", features = ["signal"] }
 uuid = { workspace = true }
 redis = { workspace = true }
+reqwest = { workspace = true }
 
 [[bin]]
 name = "bankie"

@@ -28,6 +28,9 @@ pub struct Transaction {
     pub journal_entry_id: Option<Uuid>,
     #[serde(default)]
     pub tenant_id: i32,
+    pub fx_rate_to_usd: Option<Decimal>,
+    pub amount_usd: Option<Decimal>,
+    pub fx_rate_source: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -42,6 +45,9 @@ pub struct TransactionWithMoney {
     pub description: Option<String>,
     pub metadata: Value,
     pub status: String,
+    pub amount_usd: Option<String>,
+    pub fx_rate_to_usd: Option<String>,
+    pub fx_rate_source: Option<String>,
 }
 
 impl Transaction {
@@ -61,6 +67,8 @@ impl Transaction {
         let precision = default_precision(&self.currency) as usize;
         let amount_str = format!("{:.prec$}", self.amount, prec = precision);
         let tx_type = self.transaction_type().to_string();
+        let amount_usd = self.amount_usd.map(|v| format!("{:.2}", v));
+        let fx_rate_to_usd = self.fx_rate_to_usd.map(|v| format!("{}", v));
         TransactionWithMoney {
             id: self.id,
             bank_account_id: self.bank_account_id,
@@ -72,6 +80,9 @@ impl Transaction {
             description: self.description,
             metadata: self.metadata,
             status: self.status,
+            amount_usd,
+            fx_rate_to_usd,
+            fx_rate_source: self.fx_rate_source,
         }
     }
 }
@@ -131,6 +142,9 @@ mod tests {
             status: "completed".to_string(),
             journal_entry_id: None,
             tenant_id: 1,
+            fx_rate_to_usd: None,
+            amount_usd: None,
+            fx_rate_source: None,
         }
     }
 
@@ -196,6 +210,9 @@ mod tests {
             status: "posted".to_string(),
             journal_entry_id: Some(Uuid::new_v4()),
             tenant_id: 1,
+            fx_rate_to_usd: Some(Decimal::ONE),
+            amount_usd: Some(dec!(100)),
+            fx_rate_source: Some("static".to_string()),
         };
         let with_money = tx.into_transaction_with_money();
         assert_eq!(with_money.id, original_id);
@@ -203,6 +220,9 @@ mod tests {
         assert_eq!(with_money.transaction_reference, "DE-999");
         assert_eq!(with_money.description, Some("Test deposit".to_string()));
         assert_eq!(with_money.status, "posted");
+        assert_eq!(with_money.amount_usd, Some("100.00".to_string()));
+        assert_eq!(with_money.fx_rate_to_usd, Some("1".to_string()));
+        assert_eq!(with_money.fx_rate_source, Some("static".to_string()));
     }
 }
 
@@ -219,6 +239,9 @@ pub struct SettlementReportRow {
     pub debit_amount: Decimal,
     pub credit_amount: Decimal,
     pub account_number: Option<String>,
+    pub amount_usd: Option<Decimal>,
+    pub fx_rate_to_usd: Option<Decimal>,
+    pub fx_rate_source: Option<String>,
 }
 
 #[derive(FromRow, Debug, Serialize)]
