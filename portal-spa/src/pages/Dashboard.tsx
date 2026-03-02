@@ -64,35 +64,50 @@ function StatCard({
   );
 }
 
+function usageDotColor(pct: number): string {
+  if (pct >= 75) return "bg-amber-500";
+  if (pct >= 50) return "bg-orange-400";
+  return "bg-green-500";
+}
+
 function RateLimitBar({ entry }: { entry: RateLimitEntry }) {
   const usedPct =
     entry.limit > 0
       ? Math.round(((entry.limit - entry.remaining) / entry.limit) * 100)
       : 0;
-  const barColor = usedPct > 50 ? "bg-amber-400" : "bg-green-400";
+  const barColor =
+    usedPct >= 75
+      ? "bg-amber-400"
+      : usedPct >= 50
+        ? "bg-orange-400"
+        : "bg-green-400";
+  const dotColor = usageDotColor(usedPct);
 
   return (
-    <div className="flex items-center gap-3 py-2.5 border-b border-slate-100 last:border-0">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between mb-1">
+    <div className="py-3 border-b border-slate-100 last:border-0">
+      <div className="flex items-center justify-between mb-1.5">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
           <p className="text-sm font-medium text-slate-900 truncate">
             {entry.key_name}
           </p>
-          <span className="text-xs text-slate-500 shrink-0 ml-2">
-            {entry.remaining}/{entry.limit}
-          </span>
         </div>
-        <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${barColor}`}
-            style={{ width: `${usedPct}%` }}
-          />
-        </div>
+        <span className="text-xs text-slate-500 shrink-0 ml-2">
+          {entry.remaining.toLocaleString()} / {entry.limit.toLocaleString()}{" "}
+          remaining{" "}
+          <span className="font-semibold text-slate-700">{usedPct}%</span>
+        </span>
+      </div>
+      <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${barColor}`}
+          style={{ width: `${usedPct}%` }}
+        />
       </div>
       {entry.throttled_24h > 0 && (
-        <span className="text-xs font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full shrink-0">
-          {entry.throttled_24h} throttled
-        </span>
+        <p className="mt-1 text-xs font-medium text-amber-600">
+          {entry.throttled_24h} throttled in 24h
+        </p>
       )}
     </div>
   );
@@ -154,7 +169,7 @@ export function Dashboard() {
         )}
       </div>
 
-      {/* Stats cards */}
+      {/* Stats cards — order: Keys, Calls, Throttled, Scopes */}
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
           {[1, 2, 3, 4].map((i) => (
@@ -181,56 +196,37 @@ export function Dashboard() {
             icon={BarChart3}
           />
           <StatCard
-            label="Scopes Granted"
-            value={stats?.scopes_granted ?? 0}
-            icon={Shield}
-          />
-          <StatCard
             label="Throttled (24h)"
             value={stats?.throttled_today ?? 0}
             icon={AlertTriangle}
             variant="amber"
           />
+          <StatCard
+            label="Scopes Granted"
+            value={stats?.scopes_granted ?? 0}
+            icon={Shield}
+          />
         </div>
       )}
 
-      {/* Middle section: Rate Limit Usage */}
-      {rateLimits && rateLimits.length > 0 && (
-        <div className="mt-8">
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <h2 className="text-base font-semibold text-slate-900 mb-4">
-              Rate Limit Usage by Key
-            </h2>
+      {/* Rate Limit Usage + Recent Activity — side-by-side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-8">
+        {/* Rate Limit Usage */}
+        <div className="bg-white rounded-xl border border-slate-200 p-6">
+          <h2 className="text-base font-semibold text-slate-900 mb-4">
+            Rate Limit Usage
+          </h2>
+          {!rateLimits || rateLimits.length === 0 ? (
+            <p className="text-sm text-slate-500 text-center py-4">
+              No API keys with rate limit data
+            </p>
+          ) : (
             <div className="space-y-0">
               {rateLimits.map((entry) => (
                 <RateLimitBar key={entry.key_id} entry={entry} />
               ))}
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Bottom section: Quick Start + Recent Activity */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-8">
-        {/* Quick Start */}
-        <div className="bg-white rounded-xl border border-slate-200 p-6">
-          <h2 className="text-base font-semibold text-slate-900 mb-4">
-            Quick Start
-          </h2>
-          <div className="space-y-4">
-            {[
-              "Create your organization",
-              "Generate an API key",
-              "Make your first API call"
-            ].map((step, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <div className="w-7 h-7 rounded-full bg-cyan-400 text-[#0A0F1C] text-sm font-bold flex items-center justify-center shrink-0">
-                  {i + 1}
-                </div>
-                <span className="text-sm text-slate-700">{step}</span>
-              </div>
-            ))}
-          </div>
+          )}
         </div>
 
         {/* Recent Activity */}
