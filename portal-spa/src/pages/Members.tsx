@@ -1,11 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  UserPlus,
-  Mail,
-  Copy,
-  Check
-} from "lucide-react";
+import { UserPlus, Mail, Copy, Check } from "lucide-react";
 import { api } from "../api/client.ts";
 import { handleApiError, useAuth } from "../hooks/useAuth.ts";
 import { ConfirmModal } from "../components/ConfirmModal.tsx";
@@ -26,7 +21,7 @@ const AVATAR_COLORS = [
   "bg-emerald-500",
   "bg-blue-500",
   "bg-pink-500",
-  "bg-teal-500",
+  "bg-teal-500"
 ];
 
 function avatarColor(id: string): string {
@@ -643,7 +638,7 @@ function MemberRow({
               {canChangeRole && (
                 <button
                   onClick={onChangeRole}
-                  className="text-sm font-medium text-cyan-600 hover:text-cyan-700 transition-colors"
+                  className="text-xs font-medium text-cyan-600 hover:text-cyan-700 transition-colors"
                 >
                   Change Role
                 </button>
@@ -651,14 +646,14 @@ function MemberRow({
               {member.status === "pending" && (
                 <button
                   onClick={onResendInvite}
-                  className="text-sm font-medium text-cyan-600 hover:text-cyan-700 transition-colors"
+                  className="text-xs font-medium text-cyan-600 hover:text-cyan-700 transition-colors"
                 >
                   Resend
                 </button>
               )}
               <button
                 onClick={onRemove}
-                className="text-sm font-medium text-red-600 hover:text-red-700 transition-colors"
+                className="text-xs font-medium text-red-600 hover:text-red-700 transition-colors"
               >
                 {member.status === "pending" ? "Cancel" : "Remove"}
               </button>
