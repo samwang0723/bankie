@@ -13,6 +13,7 @@ export function AcceptInvite() {
   const [loading, setLoading] = useState(true);
   const [validationError, setValidationError] = useState("");
 
+  const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [submitError, setSubmitError] = useState("");
@@ -59,6 +60,7 @@ export function AcceptInvite() {
       await api.post<void>("/auth/invite/accept", {
         token,
         password,
+        name: name || undefined
       } as AcceptInviteRequest);
       navigate("/", { replace: true });
     } catch (err) {
@@ -87,9 +89,7 @@ export function AcceptInvite() {
 
           {loading && (
             <div className="text-center">
-              <p className="text-sm text-slate-400">
-                Validating invitation...
-              </p>
+              <p className="text-sm text-slate-400">Validating invitation...</p>
             </div>
           )}
 
@@ -139,6 +139,25 @@ export function AcceptInvite() {
               )}
 
               <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                  <label
+                    htmlFor="full-name"
+                    className="block text-sm font-medium text-slate-300 mb-1.5"
+                  >
+                    Full name
+                  </label>
+                  <input
+                    id="full-name"
+                    type="text"
+                    autoComplete="name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-[#0F172A] border border-slate-600 rounded-lg text-sm text-white
+                      placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-cyan-400"
+                    placeholder="Jane Doe"
+                  />
+                </div>
+
                 <div>
                   <label
                     htmlFor="password"
