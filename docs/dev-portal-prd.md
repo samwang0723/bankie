@@ -8,8 +8,8 @@
 | **Audiences** | Engineering, Product, Security, Compliance |
 | **Status** | Implemented (Phase 1 + 1.1 + 1.2 Complete) |
 | **Version** | 1.3 |
-| **Reviewers** | sam.wang (SVP Eng), chad.liu, sims.xu, ivan.kp.lau |
-| **Domain Owners** | Fiat Tech: sims.xu, donald.ding, auli.chan · Onboarding Tech: chad.liu, ivan.kp.lau |
+| **Reviewers** | — |
+| **Domain Owners** | Fiat Tech · Onboarding Tech |
 | **PRD Date** | 2026-02-26 |
 | **Implementation PRs** | #8 (foundation), #13 (dashboard polish), #15 (security hardening), #16 (FX rate engine) |
 

@@ -8,7 +8,7 @@
 | **Audiences** | Engineering, Product, Security, Compliance |
 | **Status** | Draft |
 | **Version** | 2.0 |
-| **Reviewers** | chad.liu, sims.xu, ivan.kp.lau, jason.kc.wong |
+| **Reviewers** | — |
 | **Useful Links** | PRD: `.claude/tasks/dev-portal-prd/pm.md` · Architecture: `.claude/tasks/dev-portal-prd/architect.md` |
 | **Approved Date** | — |
 

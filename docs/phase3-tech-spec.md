@@ -8,7 +8,7 @@
 | **Audiences** | Engineering, Product, Security |
 | **Status** | Draft |
 | **Version** | 1.1 |
-| **Reviewers** | chad.liu, sims.xu, ivan.kp.lau, jason.kc.wong |
+| **Reviewers** | — |
 | **Dependencies** | Phase 2 complete (RBAC, rate limiter, grace expiry, member invite) — PR #19 |
 | **Useful Links** | PRD: `docs/phase3-prd.md` · Tech Spec v2: `docs/dev-portal-tech-spec.md` |
 | **Approved Date** | — |

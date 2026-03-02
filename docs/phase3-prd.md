@@ -8,7 +8,7 @@
 | **Audiences** | Engineering, Product, Security |
 | **Status** | Draft |
 | **Version** | 1.0 |
-| **Reviewers** | sam.wang (SVP Eng), chad.liu, sims.xu, ivan.kp.lau |
+| **Reviewers** | — |
 | **PRD Date** | 2026-03-02 |
 | **Depends On** | Phase 2 (RBAC, rate limiter, grace expiry) — Complete |
 
