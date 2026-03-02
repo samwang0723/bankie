@@ -59,6 +59,22 @@ export interface InviteMemberRequest {
   role: string;
 }
 
+export interface InviteMemberResponse {
+  member: OrgMember;
+  invite_link: string;
+}
+
+export interface AcceptInviteRequest {
+  token: string;
+  password: string;
+}
+
+export interface InviteInfo {
+  email: string;
+  org_name: string;
+  role: OrgRole;
+}
+
 export interface UpdateRoleRequest {
   role: string;
 }

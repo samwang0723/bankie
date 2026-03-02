@@ -1,6 +1,14 @@
 import { useState, type FormEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { UserPlus, MoreVertical, Mail, Shield, Trash2 } from "lucide-react";
+import {
+  UserPlus,
+  MoreVertical,
+  Mail,
+  Shield,
+  Trash2,
+  Copy,
+  Check
+} from "lucide-react";
 import { api } from "../api/client.ts";
 import { handleApiError, useAuth } from "../hooks/useAuth.ts";
 import { ConfirmModal } from "../components/ConfirmModal.tsx";
@@ -9,6 +17,7 @@ import type {
   OrgRole,
   MemberStatus,
   InviteMemberRequest,
+  InviteMemberResponse,
   UpdateRoleRequest
 } from "../types/index.ts";
 
@@ -63,10 +72,14 @@ export function Members() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
   const [openMenu, setOpenMenu] = useState<string | null>(null);
-  const [changeRoleTarget, setChangeRoleTarget] = useState<OrgMember | null>(null);
+  const [changeRoleTarget, setChangeRoleTarget] = useState<OrgMember | null>(
+    null
+  );
   const [selectedRole, setSelectedRole] = useState<string>("member");
   const [removeTarget, setRemoveTarget] = useState<OrgMember | null>(null);
   const [resendTarget, setResendTarget] = useState<OrgMember | null>(null);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const { data: members = [], isLoading } = useQuery({
     queryKey: ["members"],
@@ -81,11 +94,13 @@ export function Members() {
 
   const inviteMutation = useMutation({
     mutationFn: (data: InviteMemberRequest) =>
-      api.post<OrgMember>("/members/invite", data),
-    onSuccess: () => {
+      api.post<InviteMemberResponse>("/members/invite", data),
+    onSuccess: (response) => {
       setInviteEmail("");
       setInviteRole("member");
       setShowInviteForm(false);
+      setInviteLink(response.invite_link);
+      setCopied(false);
       queryClient.invalidateQueries({ queryKey: ["members"] });
     }
   });
@@ -109,15 +124,24 @@ export function Members() {
 
   const resendMutation = useMutation({
     mutationFn: (id: string) =>
-      api.post<void>(`/members/${id}/resend-invite`, {}),
-    onSuccess: () => {
+      api.post<InviteMemberResponse>(`/members/${id}/resend-invite`, {}),
+    onSuccess: (response) => {
       setResendTarget(null);
+      setInviteLink(response.invite_link);
+      setCopied(false);
     }
   });
 
   function handleInviteSubmit(e: FormEvent) {
     e.preventDefault();
     inviteMutation.mutate({ email: inviteEmail, role: inviteRole });
+  }
+
+  async function handleCopyLink() {
+    if (!inviteLink) return;
+    await navigator.clipboard.writeText(inviteLink);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }
 
   function openChangeRole(member: OrgMember) {
@@ -153,7 +177,10 @@ export function Members() {
       {isLoading ? (
         <div className="bg-white rounded-xl border border-slate-200">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="p-4 border-b border-slate-100 animate-pulse">
+            <div
+              key={i}
+              className="p-4 border-b border-slate-100 animate-pulse"
+            >
               <div className="flex items-center gap-4">
                 <div className="h-9 w-9 bg-slate-200 rounded-full" />
                 <div className="h-4 bg-slate-200 rounded w-32" />
@@ -200,10 +227,18 @@ export function Members() {
                   isCurrentUser={member.id === user?.id}
                   currentUserRole={user?.role ?? "member"}
                   openMenu={openMenu}
-                  onToggleMenu={(id) => setOpenMenu(openMenu === id ? null : id)}
+                  onToggleMenu={(id) =>
+                    setOpenMenu(openMenu === id ? null : id)
+                  }
                   onChangeRole={() => openChangeRole(member)}
-                  onRemove={() => { setRemoveTarget(member); setOpenMenu(null); }}
-                  onResendInvite={() => { setResendTarget(member); setOpenMenu(null); }}
+                  onRemove={() => {
+                    setRemoveTarget(member);
+                    setOpenMenu(null);
+                  }}
+                  onResendInvite={() => {
+                    setResendTarget(member);
+                    setOpenMenu(null);
+                  }}
                 />
               ))}
             </tbody>
@@ -219,7 +254,10 @@ export function Members() {
           </h2>
           <form onSubmit={handleInviteSubmit} className="flex items-end gap-4">
             <div className="flex-1">
-              <label htmlFor="invite-email" className="block text-sm font-medium text-slate-500 mb-1.5">
+              <label
+                htmlFor="invite-email"
+                className="block text-sm font-medium text-slate-500 mb-1.5"
+              >
                 Email Address
               </label>
               <input
@@ -234,7 +272,10 @@ export function Members() {
               />
             </div>
             <div className="w-40">
-              <label htmlFor="invite-role" className="block text-sm font-medium text-slate-500 mb-1.5">
+              <label
+                htmlFor="invite-role"
+                className="block text-sm font-medium text-slate-500 mb-1.5"
+              >
                 Role
               </label>
               <select
@@ -258,7 +299,9 @@ export function Members() {
             </button>
           </form>
           {inviteMutation.error && (
-            <p className="mt-3 text-sm text-red-600">{inviteMutation.error.message}</p>
+            <p className="mt-3 text-sm text-red-600">
+              {inviteMutation.error.message}
+            </p>
           )}
         </div>
       )}
@@ -273,7 +316,10 @@ export function Members() {
         >
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4">
             <div className="px-6 py-4">
-              <h2 id="change-role-title" className="text-lg font-semibold text-slate-900">
+              <h2
+                id="change-role-title"
+                className="text-lg font-semibold text-slate-900"
+              >
                 Change Role
               </h2>
               <p className="mt-1 text-sm text-slate-500">
@@ -293,7 +339,8 @@ export function Members() {
                   <div>
                     <p className="text-sm font-medium text-slate-900">Admin</p>
                     <p className="text-xs text-slate-500">
-                      Can manage API keys, invite members, and update org settings.
+                      Can manage API keys, invite members, and update org
+                      settings.
                     </p>
                   </div>
                 </label>
@@ -309,7 +356,8 @@ export function Members() {
                   <div>
                     <p className="text-sm font-medium text-slate-900">Member</p>
                     <p className="text-xs text-slate-500">
-                      Read-only access. Cannot manage keys, members, or settings.
+                      Read-only access. Cannot manage keys, members, or
+                      settings.
                     </p>
                   </div>
                 </label>
@@ -333,7 +381,10 @@ export function Members() {
                     role: selectedRole
                   })
                 }
-                disabled={changeRoleMutation.isPending || selectedRole === changeRoleTarget.role}
+                disabled={
+                  changeRoleMutation.isPending ||
+                  selectedRole === changeRoleTarget.role
+                }
                 className="px-4 py-2 text-sm font-semibold rounded-lg bg-cyan-400 text-[#0A0F1C]
                   hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -367,6 +418,70 @@ export function Members() {
           onCancel={() => setResendTarget(null)}
           isLoading={resendMutation.isPending}
         />
+      )}
+
+      {/* Invite Link Modal */}
+      {inviteLink && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="invite-link-title"
+        >
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4">
+            <div className="px-6 py-4">
+              <h2
+                id="invite-link-title"
+                className="text-lg font-semibold text-slate-900"
+              >
+                Invitation Link
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Share this link with the invited member. It expires in 7 days.
+              </p>
+
+              <div className="mt-4 flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={inviteLink}
+                  className="flex-1 h-11 px-3.5 bg-[#F8FAFC] border border-slate-200 rounded-lg text-sm text-slate-900 font-mono
+                    focus:outline-none select-all"
+                  onClick={(e) => (e.target as HTMLInputElement).select()}
+                />
+                <button
+                  type="button"
+                  onClick={handleCopyLink}
+                  className="h-11 px-4 flex items-center gap-2 text-sm font-semibold rounded-lg border border-slate-200
+                    hover:bg-slate-50 transition-colors shrink-0"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="w-4 h-4 text-green-600" />
+                      <span className="text-green-600">Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-4 h-4 text-slate-600" />
+                      <span className="text-slate-700">Copy</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setInviteLink(null)}
+                className="px-4 py-2 text-sm font-semibold rounded-lg bg-cyan-400 text-[#0A0F1C]
+                  hover:bg-cyan-500"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

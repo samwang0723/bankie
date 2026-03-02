@@ -12,11 +12,14 @@ use crate::middleware::rbac::require_member_management;
 use crate::models::auth::SessionClaims;
 use crate::models::dashboard::NewAuditLog;
 use crate::models::member::{
-    parse_assignable_role, InviteMemberRequest, MemberRole, MemberStatus, OrgMember,
-    UpdateRoleRequest,
+    generate_invite_token, hash_invite_token, parse_assignable_role, InviteMemberRequest,
+    InviteMemberResponse, MemberRole, MemberStatus, OrgMember, UpdateRoleRequest,
 };
 use crate::repo::dashboard::DashboardRepository;
 use crate::state::PortalState;
+
+/// Invite link validity period in days.
+const INVITE_EXPIRY_DAYS: i64 = 7;
 
 /// Protected member management routes (session auth required).
 pub fn member_routes() -> Router<Arc<PortalState>> {
@@ -49,12 +52,13 @@ async fn list_members(
 /// POST /portal/v1/members/invite
 ///
 /// Invite a new member to the organization. Requires owner or admin role.
-/// Creates a member with `pending` status and a placeholder password hash.
+/// Creates a member with `pending` status, generates a one-time invite token,
+/// and returns the invite link. The raw token is shown once; only the hash is stored.
 async fn invite_member(
     State(state): State<Arc<PortalState>>,
     claims: axum::Extension<SessionClaims>,
     Json(req): Json<InviteMemberRequest>,
-) -> Result<Json<OrgMember>, AppError> {
+) -> Result<Json<InviteMemberResponse>, AppError> {
     require_member_management(&claims)?;
     let org_id = parse_org_id(&claims)?;
 
@@ -77,8 +81,12 @@ async fn invite_member(
         return Err(AppError::Conflict("Email already registered".to_string()));
     }
 
+    // Generate invite token
+    let raw_token = generate_invite_token();
+    let token_hash = hash_invite_token(&raw_token);
+    let expires_at = chrono::Utc::now() + chrono::Duration::days(INVITE_EXPIRY_DAYS);
+
     // Create member with pending status and placeholder password hash.
-    // The invited member will set their own password when they accept the invite.
     let member_id = uuid::Uuid::new_v4();
     let role_str = serde_json::to_value(&role)
         .ok()
@@ -91,9 +99,11 @@ async fn invite_member(
             member_id,
             org_id,
             req.email.clone(),
-            "pending_invite".to_string(), // placeholder; not a valid argon2 hash
+            "pending_invite".to_string(),
             role_str,
             "pending".to_string(),
+            Some(token_hash),
+            Some(expires_at),
         )
         .await
         .map_err(AppError::internal)?;
@@ -110,7 +120,12 @@ async fn invite_member(
     )
     .await;
 
-    Ok(Json(member))
+    let invite_link = format!("/invite?token={raw_token}");
+
+    Ok(Json(InviteMemberResponse {
+        member,
+        invite_link,
+    }))
 }
 
 /// POST /portal/v1/members/:id/role
@@ -261,11 +276,12 @@ async fn remove_member(
 /// POST /portal/v1/members/:id/resend-invite
 ///
 /// Resend an invitation to a pending member. Owner/admin only.
+/// Regenerates the invite token and expiry, returns the new invite link.
 async fn resend_invite(
     State(state): State<Arc<PortalState>>,
     claims: axum::Extension<SessionClaims>,
     Path(member_id): Path<uuid::Uuid>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<InviteMemberResponse>, AppError> {
     require_member_management(&claims)?;
     let org_id = parse_org_id(&claims)?;
 
@@ -282,13 +298,17 @@ async fn resend_invite(
         ));
     }
 
-    // In a full implementation, this would trigger an email.
-    // For now, we update the timestamp to track the resend.
-    state
+    // Generate new invite token
+    let raw_token = generate_invite_token();
+    let token_hash = hash_invite_token(&raw_token);
+    let expires_at = chrono::Utc::now() + chrono::Duration::days(INVITE_EXPIRY_DAYS);
+
+    let updated = state
         .member_repo
-        .update_status(member_id, "pending".to_string())
+        .update_invite_token(member_id, token_hash, expires_at)
         .await
-        .map_err(AppError::internal)?;
+        .map_err(AppError::internal)?
+        .ok_or_else(|| AppError::NotFound("Member not found".to_string()))?;
 
     // Best-effort audit log
     audit_log(
@@ -302,7 +322,12 @@ async fn resend_invite(
     )
     .await;
 
-    Ok(Json(serde_json::json!({"message": "Invitation resent"})))
+    let invite_link = format!("/invite?token={raw_token}");
+
+    Ok(Json(InviteMemberResponse {
+        member: updated,
+        invite_link,
+    }))
 }
 
 fn parse_org_id(claims: &SessionClaims) -> Result<uuid::Uuid, AppError> {
@@ -411,6 +436,8 @@ mod tests {
             password_hash: "hash".to_string(),
             role,
             status: MemberStatus::Active,
+            invite_token_hash: None,
+            invite_expires_at: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
@@ -424,6 +451,8 @@ mod tests {
             password_hash: "pending_invite".to_string(),
             role: MemberRole::Member,
             status: MemberStatus::Pending,
+            invite_token_hash: Some("somehash".to_string()),
+            invite_expires_at: Some(chrono::Utc::now() + chrono::Duration::days(7)),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
@@ -477,7 +506,7 @@ mod tests {
         let mut mock = MockMemberRepository::new();
         mock.expect_find_by_email().returning(|_| Ok(None));
         mock.expect_create_with_status().returning(
-            |id, org_id, email, password_hash, role, _status| {
+            |id, org_id, email, password_hash, role, _status, _token_hash, _expires_at| {
                 Ok(OrgMember {
                     id,
                     org_id,
@@ -485,6 +514,8 @@ mod tests {
                     password_hash,
                     role: parse_role(&role),
                     status: MemberStatus::Pending,
+                    invite_token_hash: _token_hash,
+                    invite_expires_at: _expires_at,
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),
                 })
@@ -513,6 +544,17 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify response contains invite_link
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let resp: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(resp["invite_link"]
+            .as_str()
+            .unwrap()
+            .starts_with("/invite?token="));
+        assert!(resp["member"]["email"].as_str().is_some());
     }
 
     #[tokio::test]
@@ -963,8 +1005,8 @@ mod tests {
             .returning(move |_, _| Ok(Some(target.clone())));
 
         let updated = pending_member(member_id, org_id);
-        mock.expect_update_status()
-            .returning(move |_, _| Ok(Some(updated.clone())));
+        mock.expect_update_invite_token()
+            .returning(move |_, _, _| Ok(Some(updated.clone())));
 
         let state = make_state(mock);
         let csrf = "csrf123";
@@ -986,6 +1028,16 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify response contains new invite_link
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let resp: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(resp["invite_link"]
+            .as_str()
+            .unwrap()
+            .starts_with("/invite?token="));
     }
 
     #[tokio::test]

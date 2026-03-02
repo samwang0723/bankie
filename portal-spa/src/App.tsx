@@ -14,6 +14,7 @@ import { Accounts } from "./pages/Accounts.tsx";
 import { Transactions } from "./pages/Transactions.tsx";
 import { Reports } from "./pages/Reports.tsx";
 import { Members } from "./pages/Members.tsx";
+import { AcceptInvite } from "./pages/AcceptInvite.tsx";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,6 +36,7 @@ export default function App() {
               {/* Public routes */}
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<Signup />} />
+              <Route path="/invite" element={<AcceptInvite />} />
 
               {/* Protected routes */}
               <Route
