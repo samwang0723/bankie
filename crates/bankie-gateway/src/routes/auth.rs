@@ -1,13 +1,21 @@
 use std::sync::Arc;
 
-use axum::{extract::State, http::header, response::Response, routing::post, Json, Router};
+use axum::{
+    extract::{Query, State},
+    http::header,
+    response::Response,
+    routing::{get, post},
+    Json, Router,
+};
 
 use bankie_common::error::AppError;
 
 use crate::models::auth::{
     AuthOrganization, AuthResponse, AuthUser, LoginRequest, SessionClaims, SignupRequest,
 };
-use crate::models::member::{MemberStatus, OrgMember};
+use crate::models::member::{
+    hash_invite_token, AcceptInviteRequest, InviteInfo, MemberStatus, OrgMember,
+};
 use crate::models::org::{slugify, Organization};
 use crate::state::PortalState;
 
@@ -17,6 +25,8 @@ pub fn auth_routes() -> Router<Arc<PortalState>> {
         .route("/auth/signup", post(signup))
         .route("/auth/login", post(login))
         .route("/auth/logout", post(logout))
+        .route("/auth/invite", get(validate_invite))
+        .route("/auth/invite/accept", post(accept_invite))
 }
 
 /// POST /portal/v1/auth/signup
@@ -258,6 +268,115 @@ async fn record_failed_login(state: &PortalState, email: &str) {
     }
 }
 
+/// Query parameter for invite validation.
+#[derive(Debug, serde::Deserialize)]
+struct InviteQuery {
+    token: String,
+}
+
+/// GET /portal/v1/auth/invite?token=<raw>
+///
+/// Public endpoint. Hash the token, look up the member, validate not expired.
+/// Returns `{ email, org_name, role }` for the accept form.
+async fn validate_invite(
+    State(state): State<Arc<PortalState>>,
+    Query(query): Query<InviteQuery>,
+) -> Result<Json<InviteInfo>, AppError> {
+    let token_hash = hash_invite_token(&query.token);
+
+    let member = state
+        .member_repo
+        .find_by_invite_token_hash(token_hash)
+        .await
+        .map_err(AppError::internal)?
+        .ok_or_else(|| AppError::NotFound("Invalid or expired invite link".to_string()))?;
+
+    // Check expiry
+    if let Some(expires_at) = member.invite_expires_at {
+        if expires_at < chrono::Utc::now() {
+            return Err(AppError::BadRequest(
+                "Invite link has expired. Please ask the admin to resend the invite.".to_string(),
+            ));
+        }
+    } else {
+        return Err(AppError::NotFound(
+            "Invalid or expired invite link".to_string(),
+        ));
+    }
+
+    // Resolve org name
+    let org = state
+        .org_repo
+        .find_by_id(member.org_id)
+        .await
+        .map_err(AppError::internal)?
+        .ok_or_else(|| AppError::internal("Organization not found for invite"))?;
+
+    Ok(Json(InviteInfo {
+        email: member.email,
+        org_name: org.name,
+        role: member.role,
+    }))
+}
+
+/// POST /portal/v1/auth/invite/accept
+///
+/// Public endpoint. Accepts an invite: validates token, hashes password,
+/// activates the member, and sets session cookies (same as login).
+async fn accept_invite(
+    State(state): State<Arc<PortalState>>,
+    Json(req): Json<AcceptInviteRequest>,
+) -> Result<Response, AppError> {
+    if req.password.len() < 8 {
+        return Err(AppError::BadRequest(
+            "Password must be at least 8 characters".to_string(),
+        ));
+    }
+
+    let token_hash = hash_invite_token(&req.token);
+
+    let member = state
+        .member_repo
+        .find_by_invite_token_hash(token_hash)
+        .await
+        .map_err(AppError::internal)?
+        .ok_or_else(|| AppError::NotFound("Invalid or expired invite link".to_string()))?;
+
+    // Check expiry
+    if let Some(expires_at) = member.invite_expires_at {
+        if expires_at < chrono::Utc::now() {
+            return Err(AppError::BadRequest(
+                "Invite link has expired. Please ask the admin to resend the invite.".to_string(),
+            ));
+        }
+    } else {
+        return Err(AppError::NotFound(
+            "Invalid or expired invite link".to_string(),
+        ));
+    }
+
+    // Hash password
+    let password_hash = hash_password(&req.password)?;
+
+    // Accept invite: sets status=active, clears token fields
+    let activated = state
+        .member_repo
+        .accept_invite(member.id, password_hash)
+        .await
+        .map_err(AppError::internal)?
+        .ok_or_else(|| AppError::internal("Failed to activate member"))?;
+
+    // Resolve organization for session
+    let org = state
+        .org_repo
+        .find_by_id(activated.org_id)
+        .await
+        .map_err(AppError::internal)?
+        .ok_or_else(|| AppError::internal("Organization not found for member"))?;
+
+    build_session_response(&state, &activated, &org)
+}
+
 /// Returns true when the deployment environment should use HTTPS (i.e. not local dev).
 fn is_secure_env() -> bool {
     let env = std::env::var("ENV").unwrap_or_else(|_| "local".to_string());
@@ -337,17 +456,15 @@ mod tests {
             password_hash: hash_password("password123").unwrap(),
             role: MemberRole::Owner,
             status: MemberStatus::Active,
+            invite_token_hash: None,
+            invite_expires_at: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
     }
 
     fn signup_app(state: Arc<PortalState>) -> Router {
-        Router::new()
-            .route("/auth/signup", post(signup))
-            .route("/auth/login", post(login))
-            .route("/auth/logout", post(logout))
-            .with_state(state)
+        Router::new().merge(auth_routes()).with_state(state)
     }
 
     // --- Signup Tests ---
@@ -381,6 +498,8 @@ mod tests {
                     password_hash,
                     role: MemberRole::Owner,
                     status: MemberStatus::Active,
+                    invite_token_hash: None,
+                    invite_expires_at: None,
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),
                 })
@@ -712,5 +831,263 @@ mod tests {
     fn test_verify_wrong_password_fails() {
         let hash = hash_password("correct_password").unwrap();
         assert!(verify_password("wrong_password", &hash).is_err());
+    }
+
+    // --- Validate Invite Tests ---
+
+    #[tokio::test]
+    async fn test_validate_invite_success() {
+        use crate::models::member::hash_invite_token;
+
+        let org_id = uuid::Uuid::new_v4();
+        let raw_token = "abc123def456";
+        let token_hash = hash_invite_token(raw_token);
+
+        let mut member_repo = MockMemberRepository::new();
+        let member = OrgMember {
+            id: uuid::Uuid::new_v4(),
+            org_id,
+            email: "invited@example.com".to_string(),
+            password_hash: "pending_invite".to_string(),
+            role: MemberRole::Member,
+            status: MemberStatus::Pending,
+            invite_token_hash: Some(token_hash),
+            invite_expires_at: Some(chrono::Utc::now() + chrono::Duration::days(7)),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        member_repo
+            .expect_find_by_invite_token_hash()
+            .returning(move |_| Ok(Some(member.clone())));
+
+        let mut org_repo = MockOrgRepository::new();
+        let org = test_org(org_id, 1);
+        org_repo
+            .expect_find_by_id()
+            .returning(move |_| Ok(Some(org.clone())));
+
+        let state = test_state_with(org_repo, member_repo);
+        let app = signup_app(state);
+
+        let response = app
+            .oneshot(
+                HttpRequest::builder()
+                    .uri(format!("/auth/invite?token={raw_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let resp: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(resp["email"], "invited@example.com");
+        assert_eq!(resp["org_name"], "Test Org");
+    }
+
+    #[tokio::test]
+    async fn test_validate_invite_expired() {
+        use crate::models::member::hash_invite_token;
+
+        let org_id = uuid::Uuid::new_v4();
+        let raw_token = "expired_token_123";
+        let token_hash = hash_invite_token(raw_token);
+
+        let mut member_repo = MockMemberRepository::new();
+        let member = OrgMember {
+            id: uuid::Uuid::new_v4(),
+            org_id,
+            email: "invited@example.com".to_string(),
+            password_hash: "pending_invite".to_string(),
+            role: MemberRole::Member,
+            status: MemberStatus::Pending,
+            invite_token_hash: Some(token_hash),
+            invite_expires_at: Some(chrono::Utc::now() - chrono::Duration::hours(1)),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        member_repo
+            .expect_find_by_invite_token_hash()
+            .returning(move |_| Ok(Some(member.clone())));
+
+        let state = test_state_with(MockOrgRepository::new(), member_repo);
+        let app = signup_app(state);
+
+        let response = app
+            .oneshot(
+                HttpRequest::builder()
+                    .uri(format!("/auth/invite?token={raw_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_validate_invite_not_found() {
+        let mut member_repo = MockMemberRepository::new();
+        member_repo
+            .expect_find_by_invite_token_hash()
+            .returning(|_| Ok(None));
+
+        let state = test_state_with(MockOrgRepository::new(), member_repo);
+        let app = signup_app(state);
+
+        let response = app
+            .oneshot(
+                HttpRequest::builder()
+                    .uri("/auth/invite?token=nonexistent_token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // --- Accept Invite Tests ---
+
+    #[tokio::test]
+    async fn test_accept_invite_success() {
+        use crate::models::member::hash_invite_token;
+
+        let org_id = uuid::Uuid::new_v4();
+        let member_id = uuid::Uuid::new_v4();
+        let raw_token = "valid_token_for_accept";
+        let token_hash = hash_invite_token(raw_token);
+
+        let mut member_repo = MockMemberRepository::new();
+        let pending = OrgMember {
+            id: member_id,
+            org_id,
+            email: "invited@example.com".to_string(),
+            password_hash: "pending_invite".to_string(),
+            role: MemberRole::Member,
+            status: MemberStatus::Pending,
+            invite_token_hash: Some(token_hash),
+            invite_expires_at: Some(chrono::Utc::now() + chrono::Duration::days(7)),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        member_repo
+            .expect_find_by_invite_token_hash()
+            .returning(move |_| Ok(Some(pending.clone())));
+
+        let activated = OrgMember {
+            id: member_id,
+            org_id,
+            email: "invited@example.com".to_string(),
+            password_hash: "argon2_hash".to_string(),
+            role: MemberRole::Member,
+            status: MemberStatus::Active,
+            invite_token_hash: None,
+            invite_expires_at: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        member_repo
+            .expect_accept_invite()
+            .returning(move |_, _| Ok(Some(activated.clone())));
+
+        let mut org_repo = MockOrgRepository::new();
+        let org = test_org(org_id, 1);
+        org_repo
+            .expect_find_by_id()
+            .returning(move |_| Ok(Some(org.clone())));
+
+        let state = test_state_with(org_repo, member_repo);
+        let app = signup_app(state);
+
+        let body = serde_json::json!({
+            "token": raw_token,
+            "password": "strongpassword123"
+        });
+
+        let response = app
+            .oneshot(
+                HttpRequest::builder()
+                    .method("POST")
+                    .uri("/auth/invite/accept")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify session cookies are set
+        let cookies: Vec<_> = response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect();
+        assert!(cookies.iter().any(|c| c.starts_with("portal_session=")));
+        assert!(cookies.iter().any(|c| c.starts_with("csrf_token=")));
+    }
+
+    #[tokio::test]
+    async fn test_accept_invite_short_password() {
+        let state = test_state_with(MockOrgRepository::new(), MockMemberRepository::new());
+        let app = signup_app(state);
+
+        let body = serde_json::json!({
+            "token": "some_token",
+            "password": "short"
+        });
+
+        let response = app
+            .oneshot(
+                HttpRequest::builder()
+                    .method("POST")
+                    .uri("/auth/invite/accept")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_accept_invite_invalid_token() {
+        let mut member_repo = MockMemberRepository::new();
+        member_repo
+            .expect_find_by_invite_token_hash()
+            .returning(|_| Ok(None));
+
+        let state = test_state_with(MockOrgRepository::new(), member_repo);
+        let app = signup_app(state);
+
+        let body = serde_json::json!({
+            "token": "nonexistent_token",
+            "password": "strongpassword123"
+        });
+
+        let response = app
+            .oneshot(
+                HttpRequest::builder()
+                    .method("POST")
+                    .uri("/auth/invite/accept")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

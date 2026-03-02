@@ -41,14 +41,42 @@ export type Environment = "live" | "test";
 
 export type OrgRole = "owner" | "admin" | "member";
 
-// Organization Members
+// Organization Members (matches gateway OrgMember)
 export interface OrgMember {
   id: string;
-  user_id: string;
+  org_id: string;
   email: string;
   role: OrgRole;
-  invited_at: string;
-  joined_at: string | null;
+  status: MemberStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export type MemberStatus = "active" | "pending" | "suspended";
+
+export interface InviteMemberRequest {
+  email: string;
+  role: string;
+}
+
+export interface InviteMemberResponse {
+  member: OrgMember;
+  invite_link: string;
+}
+
+export interface AcceptInviteRequest {
+  token: string;
+  password: string;
+}
+
+export interface InviteInfo {
+  email: string;
+  org_name: string;
+  role: OrgRole;
+}
+
+export interface UpdateRoleRequest {
+  role: string;
 }
 
 // API Keys (matches gateway KeyListItem)
@@ -92,6 +120,7 @@ export interface DashboardStats {
   active_api_keys: number;
   scopes_granted: number;
   total_requests_today: number;
+  throttled_today: number;
   org_name: string;
   environment: Environment;
 }
@@ -141,6 +170,18 @@ export interface Transaction {
   amount_usd: string | null;
   fx_rate_to_usd: string | null;
   fx_rate_source: string | null;
+}
+
+// Rate Limits (matches gateway /dashboard/rate-limits response)
+export interface RateLimitEntry {
+  key_id: string;
+  key_name: string;
+  key_prefix: string;
+  status: ApiKeyStatus;
+  remaining: number;
+  limit: number;
+  sustained_per_min: number;
+  throttled_24h: number;
 }
 
 // Ledger

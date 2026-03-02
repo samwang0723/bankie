@@ -13,6 +13,8 @@ import { ApiDocs } from "./pages/ApiDocs.tsx";
 import { Accounts } from "./pages/Accounts.tsx";
 import { Transactions } from "./pages/Transactions.tsx";
 import { Reports } from "./pages/Reports.tsx";
+import { Members } from "./pages/Members.tsx";
+import { AcceptInvite } from "./pages/AcceptInvite.tsx";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -34,6 +36,7 @@ export default function App() {
               {/* Public routes */}
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<Signup />} />
+              <Route path="/invite" element={<AcceptInvite />} />
 
               {/* Protected routes */}
               <Route
@@ -46,6 +49,7 @@ export default function App() {
                 <Route index element={<Dashboard />} />
                 <Route path="api-keys" element={<ApiKeys />} />
                 <Route path="organization" element={<Organization />} />
+                <Route path="members" element={<Members />} />
                 <Route path="api-docs" element={<ApiDocs />} />
                 <Route path="accounts" element={<Accounts />} />
                 <Route path="transactions" element={<Transactions />} />

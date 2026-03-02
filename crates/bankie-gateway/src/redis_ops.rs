@@ -32,6 +32,27 @@ pub async fn get_ttl(client: &redis::Client, key: &str) -> Result<i64, redis::Re
     Ok(ttl)
 }
 
+/// Atomically SET a key only if it does not exist, with an expiry (SET NX EX).
+/// Returns true if the key was set, false if it already existed.
+pub async fn set_nx_ex(
+    client: &redis::Client,
+    key: &str,
+    value: &str,
+    ttl_seconds: i64,
+) -> Result<bool, redis::RedisError> {
+    let mut con = client.get_multiplexed_async_connection().await?;
+    let result: bool = redis::cmd("SET")
+        .arg(key)
+        .arg(value)
+        .arg("NX")
+        .arg("EX")
+        .arg(ttl_seconds)
+        .query_async(&mut con)
+        .await
+        .unwrap_or(false);
+    Ok(result)
+}
+
 /// Delete a key from Redis. Returns the number of keys removed.
 pub async fn del_key(client: &redis::Client, key: &str) -> Result<i64, redis::RedisError> {
     let mut con = client.get_multiplexed_async_connection().await?;
@@ -136,4 +157,36 @@ pub struct RateLimitResult {
     pub allowed: bool,
     pub remaining: i64,
     pub reset_at: i64,
+}
+
+/// Read the current rate limit bucket state for a key without consuming a token.
+/// Returns (remaining tokens, burst limit) or None if no state exists.
+pub async fn get_rate_limit_state(
+    client: &redis::Client,
+    key: &str,
+    burst: i64,
+) -> Result<Option<RateLimitState>, redis::RedisError> {
+    let mut con = client.get_multiplexed_async_connection().await?;
+
+    let data: (Option<i64>, Option<i64>) = redis::cmd("HMGET")
+        .arg(key)
+        .arg("tokens")
+        .arg("last_refill")
+        .query_async(&mut con)
+        .await?;
+
+    match data {
+        (Some(tokens), Some(_last_refill)) => Ok(Some(RateLimitState {
+            remaining: tokens,
+            limit: burst,
+        })),
+        _ => Ok(None),
+    }
+}
+
+/// Current state of a rate limit bucket (read-only view).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RateLimitState {
+    pub remaining: i64,
+    pub limit: i64,
 }
