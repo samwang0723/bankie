@@ -453,6 +453,74 @@ const ERROR_CODES = [
   }
 ];
 
+function HighlightedCurl({ text }: { text: string }) {
+  // Tokenize curl command for syntax highlighting matching Quick Start style
+  const tokens: { value: string; className: string }[] = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    // Match curl command word
+    const curlMatch = remaining.match(/^(curl)\b/);
+    if (curlMatch) {
+      tokens.push({ value: curlMatch[1], className: "text-cyan-400" });
+      remaining = remaining.slice(curlMatch[1].length);
+      continue;
+    }
+
+    // Match flags like -H, -X, -d, -o
+    const flagMatch = remaining.match(/^(-[A-Za-z]+)/);
+    if (flagMatch) {
+      tokens.push({ value: flagMatch[1], className: "text-cyan-400" });
+      remaining = remaining.slice(flagMatch[1].length);
+      continue;
+    }
+
+    // Match double-quoted strings
+    const dqMatch = remaining.match(/^("(?:[^"\\]|\\.)*")/);
+    if (dqMatch) {
+      tokens.push({ value: dqMatch[1], className: "text-green-400" });
+      remaining = remaining.slice(dqMatch[1].length);
+      continue;
+    }
+
+    // Match single-quoted strings (JSON bodies)
+    const sqMatch = remaining.match(/^('(?:[^'\\]|\\.)*')/s);
+    if (sqMatch) {
+      tokens.push({ value: sqMatch[1], className: "text-green-400" });
+      remaining = remaining.slice(sqMatch[1].length);
+      continue;
+    }
+
+    // Match URLs (http:// or https://)
+    const urlMatch = remaining.match(/^(https?:\/\/[^\s"']+)/);
+    if (urlMatch) {
+      tokens.push({ value: urlMatch[1], className: "text-slate-400" });
+      remaining = remaining.slice(urlMatch[1].length);
+      continue;
+    }
+
+    // Default: plain text (whitespace, backslashes, newlines)
+    const plainMatch = remaining.match(/^([^a-zA-Z"'h-]+|[a-zA-Z]+)/);
+    if (plainMatch) {
+      tokens.push({ value: plainMatch[0], className: "text-slate-300" });
+      remaining = remaining.slice(plainMatch[0].length);
+    } else {
+      tokens.push({ value: remaining[0], className: "text-slate-300" });
+      remaining = remaining.slice(1);
+    }
+  }
+
+  return (
+    <pre className="text-sm font-mono text-slate-300 leading-relaxed whitespace-pre">
+      {tokens.map((token, i) => (
+        <span key={i} className={token.className}>
+          {token.value}
+        </span>
+      ))}
+    </pre>
+  );
+}
+
 function MethodBadge({ method }: { method: string }) {
   const styles: Record<string, string> = {
     GET: "bg-green-50 text-green-700",
@@ -675,9 +743,7 @@ function EndpointRow({ endpoint }: { endpoint: Endpoint }) {
                     <CopyButton text={endpoint.curlExample} />
                   </div>
                   <div className="bg-[#0A0F1C] rounded-lg p-4 overflow-x-auto">
-                    <pre className="text-sm font-mono text-slate-300 leading-relaxed whitespace-pre">
-                      {endpoint.curlExample}
-                    </pre>
+                    <HighlightedCurl text={endpoint.curlExample} />
                   </div>
                 </div>
               )}
