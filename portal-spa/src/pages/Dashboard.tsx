@@ -64,24 +64,21 @@ function StatCard({
   );
 }
 
-function usageDotColor(pct: number): string {
-  if (pct >= 75) return "bg-amber-500";
-  if (pct >= 50) return "bg-orange-400";
-  return "bg-green-500";
-}
-
 function RateLimitBar({ entry }: { entry: RateLimitEntry }) {
-  const usedPct =
-    entry.limit > 0
-      ? Math.round(((entry.limit - entry.remaining) / entry.limit) * 100)
-      : 0;
+  const remainingPct =
+    entry.limit > 0 ? Math.round((entry.remaining / entry.limit) * 100) : 0;
   const barColor =
-    usedPct >= 75
+    remainingPct <= 25
       ? "bg-amber-400"
-      : usedPct >= 50
+      : remainingPct <= 50
         ? "bg-orange-400"
         : "bg-green-400";
-  const dotColor = usageDotColor(usedPct);
+  const dotColor =
+    remainingPct <= 25
+      ? "bg-amber-500"
+      : remainingPct <= 50
+        ? "bg-orange-400"
+        : "bg-green-500";
 
   return (
     <div className="py-3 border-b border-slate-100 last:border-0">
@@ -93,15 +90,15 @@ function RateLimitBar({ entry }: { entry: RateLimitEntry }) {
           </p>
         </div>
         <span className="text-xs text-slate-500 shrink-0 ml-2">
-          {(entry.limit - entry.remaining).toLocaleString()} /{" "}
-          {entry.limit.toLocaleString()} used{" "}
-          <span className="font-semibold text-slate-700">{usedPct}%</span>
+          {entry.remaining.toLocaleString()} / {entry.limit.toLocaleString()}{" "}
+          remaining{" "}
+          <span className="font-semibold text-slate-700">{remainingPct}%</span>
         </span>
       </div>
-      <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+      <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${barColor}`}
-          style={{ width: `${usedPct}%` }}
+          style={{ width: `${remainingPct}%` }}
         />
       </div>
       {entry.throttled_24h > 0 && (
@@ -214,7 +211,7 @@ export function Dashboard() {
         {/* Rate Limit Usage */}
         <div className="bg-white rounded-xl border border-slate-200 p-6">
           <h2 className="text-base font-semibold text-slate-900 mb-4">
-            Rate Limit Usage
+            Rate Limit Usage by Key
           </h2>
           {!rateLimits || rateLimits.length === 0 ? (
             <p className="text-sm text-slate-500 text-center py-4">
