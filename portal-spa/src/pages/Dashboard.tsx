@@ -113,7 +113,9 @@ function RateLimitBar({ entry }: { entry: RateLimitEntry }) {
         <p
           className={`mt-1 text-xs ${isCritical ? "font-medium text-red-600" : "text-amber-600"}`}
         >
-          {throttled.toLocaleString()} throttled (burst limit)
+          {throttled.toLocaleString()} throttled &mdash; exceeded burst cap (
+          {entry.limit}/req), sustained rate is{" "}
+          {entry.sustained_per_min.toLocaleString()}/min
         </p>
       )}
       {total === 0 && (
