@@ -187,6 +187,7 @@ export interface RateLimitEntry {
   limit: number;
   sustained_per_min: number;
   throttled_24h: number;
+  requests_24h: number;
 }
 
 // Ledger

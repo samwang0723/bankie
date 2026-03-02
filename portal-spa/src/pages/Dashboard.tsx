@@ -65,27 +65,26 @@ function StatCard({
 }
 
 function RateLimitBar({ entry }: { entry: RateLimitEntry }) {
-  const cap =
-    entry.sustained_per_min > 0 ? entry.sustained_per_min : entry.limit;
-  const remainingPct = cap > 0 ? Math.round((entry.remaining / cap) * 100) : 0;
-  const barColor =
-    remainingPct === 0
+  const requests = entry.requests_24h ?? 0;
+  const throttled = entry.throttled_24h ?? 0;
+  const total = requests + throttled;
+  const throttledPct = total > 0 ? Math.round((throttled / total) * 100) : 0;
+
+  // Health: green = no throttling, amber = some throttled, red = heavily throttled
+  const isHealthy = throttled === 0;
+  const isCritical = throttledPct >= 25;
+  const dotColor = isHealthy
+    ? "bg-green-500"
+    : isCritical
       ? "bg-red-500"
-      : remainingPct <= 25
-        ? "bg-amber-400"
-        : remainingPct <= 50
-          ? "bg-orange-400"
-          : "bg-green-400";
-  const dotColor =
-    remainingPct === 0
+      : "bg-amber-500";
+  const barColor = isHealthy
+    ? "bg-green-400"
+    : isCritical
       ? "bg-red-500"
-      : remainingPct <= 25
-        ? "bg-amber-500"
-        : remainingPct <= 50
-          ? "bg-orange-400"
-          : "bg-green-500";
-  // When fully exhausted, show a full red bar instead of empty
-  const barWidth = remainingPct === 0 ? 100 : remainingPct;
+      : "bg-amber-400";
+  // Bar shows success rate (requests out of total)
+  const successPct = total > 0 ? Math.round((requests / total) * 100) : 100;
 
   return (
     <div className="py-3 border-b border-slate-100 last:border-0">
@@ -96,28 +95,38 @@ function RateLimitBar({ entry }: { entry: RateLimitEntry }) {
             {entry.key_name}
           </p>
         </div>
-        <span
-          className={`text-xs shrink-0 ml-2 ${remainingPct === 0 ? "font-medium text-red-600" : "text-slate-500"}`}
-        >
-          {entry.remaining.toLocaleString()} / {cap.toLocaleString()} req/min{" "}
-          <span
-            className={`font-semibold ${remainingPct === 0 ? "text-red-700" : "text-slate-700"}`}
-          >
-            {remainingPct}%
-          </span>
+        <span className="text-xs shrink-0 ml-2 text-slate-500">
+          {entry.sustained_per_min.toLocaleString()} req/min
         </span>
       </div>
-      <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all ${barColor}`}
-          style={{ width: `${barWidth}%` }}
-        />
+      <div className="flex items-center gap-3 mb-1">
+        <div className="flex-1 h-2.5 bg-slate-100 rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all ${barColor}`}
+            style={{ width: `${successPct}%` }}
+          />
+        </div>
       </div>
-      {entry.throttled_24h > 0 && (
-        <p className="mt-1 text-xs font-medium text-amber-600">
-          {entry.throttled_24h} throttled in 24h
-        </p>
-      )}
+      <div className="flex items-center gap-3 text-xs">
+        <span className="text-slate-600">
+          <span className="font-semibold text-slate-900">
+            {requests.toLocaleString()}
+          </span>{" "}
+          calls
+        </span>
+        {throttled > 0 && (
+          <span
+            className={
+              isCritical ? "font-medium text-red-600" : "text-amber-600"
+            }
+          >
+            {throttled.toLocaleString()} throttled
+          </span>
+        )}
+        {total === 0 && (
+          <span className="text-slate-400">No traffic in 24h</span>
+        )}
+      </div>
     </div>
   );
 }

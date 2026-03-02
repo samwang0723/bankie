@@ -745,6 +745,28 @@ impl super::dashboard::DashboardRepository for PgDashboardRepository {
         Ok(row.0)
     }
 
+    async fn count_api_calls_per_key_since(
+        &self,
+        key_ids: Vec<Uuid>,
+        since: DateTime<Utc>,
+    ) -> Result<std::collections::HashMap<Uuid, i64>, super::RepoError> {
+        let rows: Vec<(Uuid, i64)> = sqlx::query_as(
+            r#"
+            SELECT api_key_id, COUNT(*) as count
+            FROM portal.api_logs
+            WHERE api_key_id = ANY($1) AND created_at >= $2
+            GROUP BY api_key_id
+            "#,
+        )
+        .bind(&key_ids)
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(rows.into_iter().collect())
+    }
+
     async fn list_recent_activity(
         &self,
         org_id: Uuid,

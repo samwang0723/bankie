@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
@@ -14,6 +16,13 @@ pub trait DashboardRepository: Send + Sync {
         org_id: Uuid,
         since: DateTime<Utc>,
     ) -> Result<i64, RepoError>;
+
+    /// Count API calls per key since a given timestamp.
+    async fn count_api_calls_per_key_since(
+        &self,
+        key_ids: Vec<Uuid>,
+        since: DateTime<Utc>,
+    ) -> Result<HashMap<Uuid, i64>, RepoError>;
 
     /// List recent activity (audit log entries) for an org.
     async fn list_recent_activity(

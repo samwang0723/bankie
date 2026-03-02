@@ -54,30 +54,37 @@ function RateLimitCell({ entry }: { entry: RateLimitEntry | undefined }) {
   if (!entry) {
     return <span className="text-xs text-slate-300">&mdash;</span>;
   }
-  const cap =
-    entry.sustained_per_min > 0 ? entry.sustained_per_min : entry.limit;
-  const remainingPct = cap > 0 ? Math.round((entry.remaining / cap) * 100) : 0;
-  const barColor =
-    remainingPct === 0
+  const requests = entry.requests_24h ?? 0;
+  const throttled = entry.throttled_24h ?? 0;
+  const total = requests + throttled;
+  const isHealthy = throttled === 0;
+  const isCritical = total > 0 && Math.round((throttled / total) * 100) >= 25;
+  const barColor = isHealthy
+    ? "bg-green-400"
+    : isCritical
       ? "bg-red-500"
-      : remainingPct <= 25
-        ? "bg-amber-400"
-        : "bg-green-400";
-  const barWidth = remainingPct === 0 ? 100 : remainingPct;
+      : "bg-amber-400";
+  const successPct = total > 0 ? Math.round((requests / total) * 100) : 100;
 
   return (
-    <div className="w-28">
-      <div className="flex items-center justify-between mb-0.5">
-        <span
-          className={`text-[10px] ${remainingPct === 0 ? "text-red-600 font-medium" : "text-slate-500"}`}
-        >
-          {entry.remaining}/{cap.toLocaleString()} req/min
+    <div className="w-32">
+      <div className="flex items-center gap-1.5 mb-0.5">
+        <span className="text-[11px] font-medium text-slate-900">
+          {requests.toLocaleString()}
         </span>
+        <span className="text-[10px] text-slate-400">calls</span>
+        {throttled > 0 && (
+          <span
+            className={`text-[10px] ${isCritical ? "text-red-600" : "text-amber-600"}`}
+          >
+            /{throttled}
+          </span>
+        )}
       </div>
       <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${barColor}`}
-          style={{ width: `${barWidth}%` }}
+          style={{ width: `${successPct}%` }}
         />
       </div>
     </div>
@@ -252,8 +259,8 @@ export function ApiKeys() {
                 <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono w-[120px]">
                   Status
                 </th>
-                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono w-[130px]">
-                  Rate Limit
+                <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono w-[140px]">
+                  Usage (24h)
                 </th>
                 <th className="text-left px-6 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider font-mono">
                   Created
@@ -433,7 +440,7 @@ function KeyRow({
             colSpan={colSpan}
             className="px-6 py-4 bg-slate-50 border-t border-slate-100"
           >
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 text-sm">
               <div>
                 <p className="text-slate-500">Scopes</p>
                 <p className="font-medium text-slate-900 mt-1">
@@ -455,12 +462,29 @@ function KeyRow({
                 </p>
               </div>
               {rateLimitEntry && (
-                <div>
-                  <p className="text-slate-500">Throttled (24h)</p>
-                  <p className="font-medium text-slate-900 mt-1">
-                    {rateLimitEntry.throttled_24h}
-                  </p>
-                </div>
+                <>
+                  <div>
+                    <p className="text-slate-500">Requests (24h)</p>
+                    <p className="font-medium text-slate-900 mt-1">
+                      {(rateLimitEntry.requests_24h ?? 0).toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Throttled (24h)</p>
+                    <p
+                      className={`font-medium mt-1 ${rateLimitEntry.throttled_24h > 0 ? "text-amber-600" : "text-slate-900"}`}
+                    >
+                      {rateLimitEntry.throttled_24h.toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Rate Limit</p>
+                    <p className="font-medium text-slate-900 mt-1">
+                      {rateLimitEntry.sustained_per_min.toLocaleString()}{" "}
+                      req/min
+                    </p>
+                  </div>
+                </>
               )}
             </div>
           </td>
