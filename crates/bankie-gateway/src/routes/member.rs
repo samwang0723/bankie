@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
+    http::HeaderMap,
     routing::{delete, get, post},
     Json, Router,
 };
@@ -57,6 +58,7 @@ async fn list_members(
 async fn invite_member(
     State(state): State<Arc<PortalState>>,
     claims: axum::Extension<SessionClaims>,
+    headers: HeaderMap,
     Json(req): Json<InviteMemberRequest>,
 ) -> Result<Json<InviteMemberResponse>, AppError> {
     require_member_management(&claims)?;
@@ -120,7 +122,8 @@ async fn invite_member(
     )
     .await;
 
-    let invite_link = format!("/invite?token={raw_token}");
+    let origin = extract_origin(&headers);
+    let invite_link = format!("{origin}/invite?token={raw_token}");
 
     Ok(Json(InviteMemberResponse {
         member,
@@ -280,6 +283,7 @@ async fn remove_member(
 async fn resend_invite(
     State(state): State<Arc<PortalState>>,
     claims: axum::Extension<SessionClaims>,
+    headers: HeaderMap,
     Path(member_id): Path<uuid::Uuid>,
 ) -> Result<Json<InviteMemberResponse>, AppError> {
     require_member_management(&claims)?;
@@ -322,12 +326,30 @@ async fn resend_invite(
     )
     .await;
 
-    let invite_link = format!("/invite?token={raw_token}");
+    let origin = extract_origin(&headers);
+    let invite_link = format!("{origin}/invite?token={raw_token}");
 
     Ok(Json(InviteMemberResponse {
         member: updated,
         invite_link,
     }))
+}
+
+/// Extract the origin from request headers for constructing invite links.
+/// Checks `Origin` header first, then falls back to `Host` header with `https://` prefix.
+fn extract_origin(headers: &HeaderMap) -> String {
+    if let Some(origin) = headers.get("origin").and_then(|v| v.to_str().ok()) {
+        return origin.to_string();
+    }
+    if let Some(host) = headers.get("host").and_then(|v| v.to_str().ok()) {
+        let scheme = if host.starts_with("localhost") || host.starts_with("127.0.0.1") {
+            "http"
+        } else {
+            "https"
+        };
+        return format!("{scheme}://{host}");
+    }
+    String::new()
 }
 
 fn parse_org_id(claims: &SessionClaims) -> Result<uuid::Uuid, AppError> {
@@ -537,6 +559,7 @@ mod tests {
                     .header("Cookie", format!("portal_session={jwt}"))
                     .header("X-CSRF-Token", csrf)
                     .header("Content-Type", "application/json")
+                    .header("Origin", "https://portal.example.com")
                     .body(Body::from(serde_json::to_string(&body).unwrap()))
                     .unwrap(),
             )
@@ -545,7 +568,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        // Verify response contains invite_link
+        // Verify response contains invite_link with full URL
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
@@ -553,7 +576,7 @@ mod tests {
         assert!(resp["invite_link"]
             .as_str()
             .unwrap()
-            .starts_with("/invite?token="));
+            .starts_with("https://portal.example.com/invite?token="));
         assert!(resp["member"]["email"].as_str().is_some());
     }
 
@@ -1021,6 +1044,7 @@ mod tests {
                     .uri(format!("/members/{member_id}/resend-invite"))
                     .header("Cookie", format!("portal_session={jwt}"))
                     .header("X-CSRF-Token", csrf)
+                    .header("Origin", "https://portal.example.com")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1029,7 +1053,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        // Verify response contains new invite_link
+        // Verify response contains new invite_link with full URL
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
@@ -1037,7 +1061,7 @@ mod tests {
         assert!(resp["invite_link"]
             .as_str()
             .unwrap()
-            .starts_with("/invite?token="));
+            .starts_with("https://portal.example.com/invite?token="));
     }
 
     #[tokio::test]

@@ -395,12 +395,22 @@ export function Members() {
         </div>
       )}
 
-      {/* Remove Member Confirmation */}
+      {/* Remove Member / Cancel Invite Confirmation */}
       {removeTarget && (
         <ConfirmModal
-          title="Remove Member"
-          message={`Are you sure you want to remove ${removeTarget.email} from the organization? They will lose all access.`}
-          confirmLabel="Remove"
+          title={
+            removeTarget.status === "pending"
+              ? "Cancel Invitation"
+              : "Remove Member"
+          }
+          message={
+            removeTarget.status === "pending"
+              ? `Cancel the pending invitation for ${removeTarget.email}? The invite link will no longer work.`
+              : `Are you sure you want to remove ${removeTarget.email} from the organization? They will lose all access.`
+          }
+          confirmLabel={
+            removeTarget.status === "pending" ? "Cancel Invite" : "Remove"
+          }
           destructive
           onConfirm={() => removeMutation.mutate(removeTarget.id)}
           onCancel={() => setRemoveTarget(null)}
@@ -576,7 +586,7 @@ function MemberRow({
                     className="flex items-center gap-2 w-full px-4 py-2 text-sm text-red-600 hover:bg-red-50"
                   >
                     <Trash2 className="w-4 h-4" />
-                    Remove
+                    {member.status === "pending" ? "Cancel Invite" : "Remove"}
                   </button>
                 </div>
               )}
