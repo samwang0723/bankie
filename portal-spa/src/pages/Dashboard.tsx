@@ -68,17 +68,23 @@ function RateLimitBar({ entry }: { entry: RateLimitEntry }) {
   const remainingPct =
     entry.limit > 0 ? Math.round((entry.remaining / entry.limit) * 100) : 0;
   const barColor =
-    remainingPct <= 25
-      ? "bg-amber-400"
-      : remainingPct <= 50
-        ? "bg-orange-400"
-        : "bg-green-400";
+    remainingPct === 0
+      ? "bg-red-500"
+      : remainingPct <= 25
+        ? "bg-amber-400"
+        : remainingPct <= 50
+          ? "bg-orange-400"
+          : "bg-green-400";
   const dotColor =
-    remainingPct <= 25
-      ? "bg-amber-500"
-      : remainingPct <= 50
-        ? "bg-orange-400"
-        : "bg-green-500";
+    remainingPct === 0
+      ? "bg-red-500"
+      : remainingPct <= 25
+        ? "bg-amber-500"
+        : remainingPct <= 50
+          ? "bg-orange-400"
+          : "bg-green-500";
+  // When fully exhausted, show a full red bar instead of empty
+  const barWidth = remainingPct === 0 ? 100 : remainingPct;
 
   return (
     <div className="py-3 border-b border-slate-100 last:border-0">
@@ -89,16 +95,22 @@ function RateLimitBar({ entry }: { entry: RateLimitEntry }) {
             {entry.key_name}
           </p>
         </div>
-        <span className="text-xs text-slate-500 shrink-0 ml-2">
+        <span
+          className={`text-xs shrink-0 ml-2 ${remainingPct === 0 ? "font-medium text-red-600" : "text-slate-500"}`}
+        >
           {entry.remaining.toLocaleString()} / {entry.limit.toLocaleString()}{" "}
           remaining{" "}
-          <span className="font-semibold text-slate-700">{remainingPct}%</span>
+          <span
+            className={`font-semibold ${remainingPct === 0 ? "text-red-700" : "text-slate-700"}`}
+          >
+            {remainingPct}%
+          </span>
         </span>
       </div>
       <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${barColor}`}
-          style={{ width: `${remainingPct}%` }}
+          style={{ width: `${barWidth}%` }}
         />
       </div>
       {entry.throttled_24h > 0 && (
