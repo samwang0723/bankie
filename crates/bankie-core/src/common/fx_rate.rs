@@ -304,10 +304,12 @@ impl FxRateProvider for ExchangeRateProvider {
 }
 
 /// Mock provider for testing with configurable static rates.
+#[cfg(test)]
 pub struct MockProvider {
     rates: std::collections::HashMap<String, Decimal>,
 }
 
+#[cfg(test)]
 impl MockProvider {
     pub fn new(rates: Vec<(&str, Decimal)>) -> Self {
         Self {
@@ -316,6 +318,7 @@ impl MockProvider {
     }
 }
 
+#[cfg(test)]
 #[async_trait]
 impl FxRateProvider for MockProvider {
     async fn get_usd_rate(&self, currency: &str) -> Result<FxRate, anyhow::Error> {
