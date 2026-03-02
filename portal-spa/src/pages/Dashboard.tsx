@@ -93,8 +93,8 @@ function RateLimitBar({ entry }: { entry: RateLimitEntry }) {
           </p>
         </div>
         <span className="text-xs text-slate-500 shrink-0 ml-2">
-          {entry.remaining.toLocaleString()} / {entry.limit.toLocaleString()}{" "}
-          remaining{" "}
+          {(entry.limit - entry.remaining).toLocaleString()} /{" "}
+          {entry.limit.toLocaleString()} used{" "}
           <span className="font-semibold text-slate-700">{usedPct}%</span>
         </span>
       </div>
