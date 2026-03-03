@@ -146,6 +146,7 @@ export interface ActivityEntry {
 export interface BankAccountView {
   id: string;
   account_number: string;
+  name: string | null;
   kind: string;
   currency: string;
   status: string;

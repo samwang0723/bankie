@@ -80,6 +80,7 @@ export function Accounts() {
     const term = search.toLowerCase();
     return (
       a.account_number.toLowerCase().includes(term) ||
+      (a.name ?? "").toLowerCase().includes(term) ||
       a.kind.toLowerCase().includes(term) ||
       a.currency.toLowerCase().includes(term) ||
       a.status.toLowerCase().includes(term)
@@ -196,6 +197,9 @@ export function Accounts() {
                 <th className="text-left px-6 text-xs font-semibold text-slate-500">
                   Account Number
                 </th>
+                <th className="text-left px-6 text-xs font-semibold text-slate-500">
+                  Name
+                </th>
                 <th className="text-left px-6 text-xs font-semibold text-slate-500 w-[100px]">
                   Type
                 </th>
@@ -219,6 +223,9 @@ export function Accounts() {
                   <tr className="hover:bg-slate-50 h-14">
                     <td className="px-6 text-[13px] font-mono font-medium text-slate-900">
                       {formatAccountNumber(account.account_number)}
+                    </td>
+                    <td className="px-6 text-[13px] text-slate-700">
+                      {account.name || "—"}
                     </td>
                     <td className="px-6 text-[13px] text-slate-900 w-[100px]">
                       {account.kind}
@@ -249,7 +256,7 @@ export function Accounts() {
                   {expandedId === account.id && (
                     <tr>
                       <td
-                        colSpan={6}
+                        colSpan={7}
                         className="px-6 py-4 bg-slate-50 border-t border-slate-100"
                       >
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
