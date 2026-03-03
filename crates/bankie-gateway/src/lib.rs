@@ -7,3 +7,4 @@ pub mod redis_ops;
 pub mod repo;
 pub mod routes;
 pub mod state;
+pub mod webhook;
