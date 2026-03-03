@@ -5,8 +5,10 @@
 #
 # Tests the full account lifecycle: health checks, house account management,
 # account opening/approval, deposits, withdrawals, transfers, freeze/unfreeze,
-# close, query endpoints, negative cases, and sub-account scenarios
-# (master/interest/yield with parent_id linkage and cross-account transfers).
+# close, query endpoints, negative cases, sub-account scenarios
+# (master/interest/yield with parent_id linkage and cross-account transfers),
+# and webhook delivery pipeline (portal signup → webhook endpoint → event
+# trigger → webhook.site verification → HMAC signature check).
 #
 # Prerequisites:
 #   make local-setup   (starts infra + DB + server)
@@ -19,8 +21,10 @@
 #   TOKEN=eyJ... ./scripts/e2e-test.sh
 #
 # Environment variables:
-#   BASE_URL      - Server URL (default: http://localhost:3030)
+#   BASE_URL      - Core server URL (default: http://localhost:3030)
+#   GATEWAY_URL   - Gateway server URL (default: http://localhost:4040)
 #   OUTBOX_WAIT   - Seconds to wait for async outbox processing (default: 15)
+#   WEBHOOK_WAIT  - Seconds to wait for webhook fan-out + delivery (default: 20)
 #   TOKEN         - JWT token (alternative to argument)
 #
 set -euo pipefail
@@ -1649,6 +1653,237 @@ if assert_status "$HTTP_STATUS" "200" "query unfrozen freeze-test account"; then
     fail "freeze-test account expected Approved, got ${local_status}"
   fi
 fi
+
+# ===========================================================================
+# SUITE 13: Webhook Delivery Pipeline (Portal + Core integration)
+# ===========================================================================
+suite "13. Webhook Delivery Pipeline"
+
+# Gateway URL — gateway runs alongside core in the same stack
+GATEWAY_URL="${GATEWAY_URL:-http://localhost:4040}"
+WEBHOOK_WAIT="${WEBHOOK_WAIT:-20}"
+
+# --- Step 1: Create webhook.site listener ---
+run_test "Create webhook.site listener token"
+WEBHOOK_SITE_RESP=$(curl -s https://webhook.site/token 2>/dev/null || echo "")
+WEBHOOK_TOKEN=$(echo "$WEBHOOK_SITE_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['uuid'])" 2>/dev/null || echo "")
+if [[ -n "$WEBHOOK_TOKEN" ]]; then
+  WEBHOOK_URL="https://webhook.site/${WEBHOOK_TOKEN}"
+  pass
+else
+  fail "Could not create webhook.site token (network or service unavailable)"
+  # Skip remaining webhook tests if webhook.site is unreachable
+  WEBHOOK_TOKEN=""
+fi
+
+if [[ -n "$WEBHOOK_TOKEN" ]]; then
+
+# --- Step 2: Sign up a test org + login (portal session) ---
+WEBHOOK_TS=$(date +%s)
+WEBHOOK_EMAIL="webhook-e2e-${WEBHOOK_TS}@test.local"
+WEBHOOK_PASSWORD="testpass1234"
+WEBHOOK_ORG="webhook-e2e-${WEBHOOK_TS}"
+COOKIE_JAR=$(mktemp)
+
+run_test "POST /portal/v1/auth/signup -- create webhook test org"
+SIGNUP_RESP=$(curl -s -w "\n%{http_code}" -c "$COOKIE_JAR" \
+  -X POST "${GATEWAY_URL}/portal/v1/auth/signup" \
+  -H "Content-Type: application/json" \
+  -d "{\"org_name\":\"${WEBHOOK_ORG}\",\"name\":\"Webhook Tester\",\"email\":\"${WEBHOOK_EMAIL}\",\"password\":\"${WEBHOOK_PASSWORD}\"}")
+SIGNUP_STATUS=$(echo "$SIGNUP_RESP" | tail -1)
+SIGNUP_BODY=$(echo "$SIGNUP_RESP" | sed '$d')
+if assert_status "$SIGNUP_STATUS" "200" "webhook signup"; then
+  pass
+fi
+
+# Extract CSRF token from cookie jar
+CSRF_TOKEN=$(grep csrf_token "$COOKIE_JAR" | awk '{print $NF}' || echo "")
+
+# --- Step 3: Create an API key via portal ---
+run_test "POST /portal/v1/api-keys -- create API key for webhook test"
+APIKEY_RESP=$(curl -s -w "\n%{http_code}" -b "$COOKIE_JAR" \
+  -X POST "${GATEWAY_URL}/portal/v1/api-keys" \
+  -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: ${CSRF_TOKEN}" \
+  -d '{"name":"webhook-e2e-key","scopes":["accounts:read","accounts:write"]}')
+APIKEY_STATUS=$(echo "$APIKEY_RESP" | tail -1)
+APIKEY_BODY=$(echo "$APIKEY_RESP" | sed '$d')
+if assert_status "$APIKEY_STATUS" "201" "create API key"; then
+  RAW_API_KEY=$(echo "$APIKEY_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['raw_key'])" 2>/dev/null || echo "")
+  if [[ -n "$RAW_API_KEY" ]]; then
+    pass
+  else
+    fail "create API key: could not extract raw_key"
+  fi
+fi
+
+# --- Step 4: Create a webhook endpoint via portal ---
+run_test "POST /portal/v1/webhooks -- create webhook endpoint"
+WH_CREATE_RESP=$(curl -s -w "\n%{http_code}" -b "$COOKIE_JAR" \
+  -X POST "${GATEWAY_URL}/portal/v1/webhooks" \
+  -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: ${CSRF_TOKEN}" \
+  -d "{\"url\":\"${WEBHOOK_URL}\",\"event_types\":[\"account.opened\",\"account.approved\"],\"description\":\"E2E test\"}")
+WH_CREATE_STATUS=$(echo "$WH_CREATE_RESP" | tail -1)
+WH_CREATE_BODY=$(echo "$WH_CREATE_RESP" | sed '$d')
+if assert_status "$WH_CREATE_STATUS" "201" "create webhook endpoint"; then
+  WH_ENDPOINT_ID=$(echo "$WH_CREATE_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+  WH_SIGNING_SECRET=$(echo "$WH_CREATE_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['signing_secret'])" 2>/dev/null || echo "")
+  if [[ -n "$WH_ENDPOINT_ID" && -n "$WH_SIGNING_SECRET" ]]; then
+    pass
+  else
+    fail "create webhook: could not extract endpoint id or signing secret"
+  fi
+fi
+
+# --- Step 5: Trigger a banking event via external API (API key auth through gateway) ---
+run_test "POST /v1/bank_account (via gateway) -- OpenAccount to trigger webhook"
+WH_OPEN_RESP=$(curl -s -w "\n%{http_code}" \
+  -X POST "${GATEWAY_URL}/v1/bank_account" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${RAW_API_KEY}" \
+  -d "{\"OpenAccount\":{\"account_type\":\"Retail\",\"kind\":\"Checking\",\"currency\":\"USD\",\"user_id\":\"webhook-e2e-user-${WEBHOOK_TS}\"}}")
+WH_OPEN_STATUS=$(echo "$WH_OPEN_RESP" | tail -1)
+WH_OPEN_BODY=$(echo "$WH_OPEN_RESP" | sed '$d')
+if assert_status "$WH_OPEN_STATUS" "201" "open account via gateway"; then
+  WH_ACCT_ID=$(echo "$WH_OPEN_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+  if [[ -n "$WH_ACCT_ID" ]]; then
+    pass
+  else
+    fail "open account via gateway: could not extract id"
+  fi
+fi
+
+# --- Step 6: Wait for fan-out (5s) + delivery (5s) + buffer ---
+echo -e "    ${YELLOW}(waiting ${WEBHOOK_WAIT}s for webhook fan-out + delivery cycles...)${NC}"
+sleep "$WEBHOOK_WAIT"
+
+# --- Step 7: Verify webhook received at webhook.site ---
+run_test "GET webhook.site -- verify at least 1 request received"
+WH_SITE_REQUESTS=$(curl -s "https://webhook.site/token/${WEBHOOK_TOKEN}/requests?sorting=newest" 2>/dev/null || echo "")
+WH_REQ_COUNT=$(echo "$WH_SITE_REQUESTS" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    print(len(data.get('data', [])))
+except:
+    print(0)
+" 2>/dev/null || echo "0")
+if [[ "$WH_REQ_COUNT" -ge 1 ]]; then
+  pass
+else
+  fail "webhook.site expected >= 1 requests, got ${WH_REQ_COUNT}"
+fi
+
+run_test "Verify X-Bankie-Signature header present on webhook delivery"
+WH_SIG_HEADER=$(echo "$WH_SITE_REQUESTS" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    req = data['data'][0]
+    headers = req.get('headers', {})
+    # webhook.site lowercases header names
+    sig = headers.get('x-bankie-signature', [''])[0] if isinstance(headers.get('x-bankie-signature'), list) else headers.get('x-bankie-signature', '')
+    print(sig)
+except:
+    print('')
+" 2>/dev/null || echo "")
+if [[ "$WH_SIG_HEADER" == t=* ]]; then
+  pass
+else
+  fail "X-Bankie-Signature header missing or malformed: '${WH_SIG_HEADER}'"
+fi
+
+run_test "Verify webhook payload contains event_type field"
+WH_EVENT_TYPE=$(echo "$WH_SITE_REQUESTS" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    req = data['data'][0]
+    body = json.loads(req.get('content', '{}'))
+    print(body.get('event_type', ''))
+except:
+    print('')
+" 2>/dev/null || echo "")
+if [[ "$WH_EVENT_TYPE" == "account.opened" ]]; then
+  pass
+else
+  fail "webhook payload event_type expected 'account.opened', got '${WH_EVENT_TYPE}'"
+fi
+
+# --- Step 8: Verify HMAC signature ---
+run_test "Verify HMAC-SHA256 signature matches signing secret"
+WH_SIG_VALID=$(echo "$WH_SITE_REQUESTS" | python3 -c "
+import sys, json, hmac, hashlib
+try:
+    data = json.load(sys.stdin)
+    req = data['data'][0]
+    body = req.get('content', '')
+    headers = req.get('headers', {})
+    sig_header = headers.get('x-bankie-signature', [''])[0] if isinstance(headers.get('x-bankie-signature'), list) else headers.get('x-bankie-signature', '')
+    # Parse t=...,v1=...
+    parts = dict(p.split('=', 1) for p in sig_header.split(','))
+    ts = parts['t']
+    v1 = parts['v1']
+    # Recompute: HMAC-SHA256(secret, '{ts}.{body}')
+    message = f'{ts}.{body}'.encode()
+    expected = hmac.new('${WH_SIGNING_SECRET}'.encode(), message, hashlib.sha256).hexdigest()
+    print('valid' if hmac.compare_digest(expected, v1) else 'invalid')
+except Exception as e:
+    print(f'error: {e}')
+" 2>/dev/null || echo "error")
+if [[ "$WH_SIG_VALID" == "valid" ]]; then
+  pass
+else
+  fail "HMAC signature verification: ${WH_SIG_VALID}"
+fi
+
+# --- Step 9: Check delivery logs via portal ---
+run_test "GET /portal/v1/webhooks/:id/deliveries -- verify at least 1 successful delivery"
+if [[ -n "$WH_ENDPOINT_ID" ]]; then
+  DELIV_RESP=$(curl -s -w "\n%{http_code}" -b "$COOKIE_JAR" \
+    "${GATEWAY_URL}/portal/v1/webhooks/${WH_ENDPOINT_ID}/deliveries?per_page=10")
+  DELIV_STATUS=$(echo "$DELIV_RESP" | tail -1)
+  DELIV_BODY=$(echo "$DELIV_RESP" | sed '$d')
+  if assert_status "$DELIV_STATUS" "200" "list deliveries"; then
+    DELIV_SUCCESS_COUNT=$(echo "$DELIV_BODY" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    deliveries = data.get('deliveries', [])
+    count = sum(1 for d in deliveries if d.get('status') == 'success')
+    print(count)
+except:
+    print(0)
+" 2>/dev/null || echo "0")
+    if [[ "$DELIV_SUCCESS_COUNT" -ge 1 ]]; then
+      pass
+    else
+      fail "expected >= 1 successful delivery, got ${DELIV_SUCCESS_COUNT}"
+    fi
+  fi
+else
+  fail "no endpoint id to query deliveries"
+fi
+
+# --- Step 10: Cleanup — delete the webhook endpoint ---
+run_test "DELETE /portal/v1/webhooks/:id -- cleanup webhook endpoint"
+if [[ -n "$WH_ENDPOINT_ID" ]]; then
+  DEL_RESP=$(curl -s -w "\n%{http_code}" -b "$COOKIE_JAR" \
+    -X DELETE "${GATEWAY_URL}/portal/v1/webhooks/${WH_ENDPOINT_ID}" \
+    -H "X-CSRF-Token: ${CSRF_TOKEN}")
+  DEL_STATUS=$(echo "$DEL_RESP" | tail -1)
+  if assert_status "$DEL_STATUS" "204" "delete webhook endpoint"; then
+    pass
+  fi
+else
+  fail "no endpoint id to delete"
+fi
+
+# Clean up cookie jar
+rm -f "$COOKIE_JAR"
+
+fi  # end of WEBHOOK_TOKEN guard
 
 # ===========================================================================
 # REPORT

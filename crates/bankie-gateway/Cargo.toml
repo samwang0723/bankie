@@ -24,10 +24,13 @@ redis = { workspace = true }
 config = { workspace = true }
 lazy_static = { workspace = true }
 sha2 = { workspace = true }
+hmac = { workspace = true }
 hex = { workspace = true }
 async-trait = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+reqwest = { workspace = true }
+url = { workspace = true }
 argon2 = "0.5"
 axum-extra = { version = "0.9", features = ["cookie"] }
 http = "1"

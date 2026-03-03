@@ -24,7 +24,7 @@ SQLX_OFFLINE=true cargo build
 cargo build --release --bin bankie
 cargo build --release --bin bankie-gateway
 
-# Run tests (303 unit tests: 131 core + 163 gateway + 9 common, no DB needed)
+# Run tests (410 unit tests: 131 core + 270 gateway + 9 common, no DB needed)
 SQLX_OFFLINE=true cargo test -- --nocapture
 cargo test -p bankie-core test_name -- --nocapture    # Single test in specific crate
 cargo test -p bankie-gateway test_name -- --nocapture
@@ -156,7 +156,7 @@ Key design decisions:
 
 ### Portal Schema (in `portal` PostgreSQL schema)
 
-7 tables: `organizations`, `org_members` (with `name`, `invite_token_hash`, `invite_expires_at`), `api_keys`, `webhook_endpoints`, `webhook_deliveries`, `api_logs` (range-partitioned by month), `audit_logs`. Migrations at `db/migrations/20260226*.sql` (base schema + tenant sync) and `20260302*.sql` (invite tokens + member name).
+8 tables: `organizations`, `org_members` (with `name`, `invite_token_hash`, `invite_expires_at`), `api_keys`, `webhook_endpoints`, `webhook_deliveries`, `webhook_events` (staging table with DB triggers for fan-out), `api_logs` (range-partitioned by month), `audit_logs`. Migrations at `db/migrations/20260226*.sql` (base schema + tenant sync), `20260302*.sql` (invite tokens + member name), and `20260303*.sql` (Phase 3: webhook_events staging, outbox triggers, api_logs partitions).
 
 ### Gateway Middleware Stack
 
@@ -172,7 +172,7 @@ Protected: session_auth (cookie JWT + CSRF validation)
 ```
 api_key_resolver (Bearer → DB lookup + Redis cache 5min, invalidated on revoke/rotate)
   → rate_limiter (Redis token bucket via Lua script)
-  → api_logger (async write to portal.api_logs)
+  → api_logger (async write to portal.api_logs, PII-redacted IPs + sensitive query params)
   → jwt_minter (60s internal JWT)
   → reverse_proxy → Core :3030
 ```
@@ -240,8 +240,10 @@ Multiple account types (Checking, Interest, Yield) linked via `parent_id`. Maste
 |-----|----------|---------|
 | Ledger job | Every 10s | Polls outbox → executes `LedgerCommand::Credit` or `DebitRelease`. Redis-locked. |
 | Balance snapshot | Daily midnight UTC | Snapshots all active account balances. Redis-locked. |
-| API logging | Per request | Async write to `portal.api_logs` (partitioned by month) via `api_logger` middleware. |
+| API logging | Per request | Async write to `portal.api_logs` (partitioned by month) via `api_logger` middleware. PII redacted (IP masking, sensitive query param stripping). |
 | Grace expiry | Every 60s | Revokes rotated API keys past grace period. Redis-locked (`gw:lock:grace_expiry`). Gateway-side (`crates/bankie-gateway/src/job.rs`). |
+| Webhook fan-out | Every 5s | Polls `webhook_events` staging table → creates delivery records for matching endpoints. Redis-locked (`gw:lock:webhook_fanout`). |
+| Webhook delivery | Every 5s | Sends pending webhook deliveries via HTTP POST with HMAC-SHA256 signing. Exponential backoff retry (30s→24h, 7 attempts max), circuit breaker (5 failures → disable endpoint), dead-letter. Redis-locked (`gw:lock:webhook_deliver`). |
 
 ### RBAC (Role-Based Access Control)
 
@@ -273,6 +275,25 @@ Role assignment rules: Owner can assign Admin/Member; Admin can only assign Memb
 - `tenant_id` removed from `CreateOrgRequest` — auto-assigned via DB sequence
 - Login brute-force protection: Redis INCR with 15min TTL, max 5 failed attempts per email, returns 429 + `Retry-After`
 - API key cache (`gw:api_key:{hash}`) actively deleted on revoke/rotate — no stale cache window
+
+### Webhook System
+
+Event-driven webhook delivery pipeline (`crates/bankie-gateway/src/webhook/`):
+
+**Architecture**: DB trigger → staging table → fan-out → delivery with retry
+```
+DB trigger (bank_account_events INSERT) → webhook_events staging table
+  → Fan-out job (5s) → matches endpoints by tenant_id + event_type → webhook_deliveries
+  → Delivery job (5s) → HTTP POST with HMAC-SHA256 signing → retry/circuit-break/dead-letter
+```
+
+**HMAC-SHA256 Signing** (`webhook/signing.rs`): Stripe-compatible format `t={timestamp},v1={hex_signature}`. Message = `{timestamp}.{payload}`. Header: `X-Bankie-Signature`.
+
+**Retry Strategy** (`webhook/deliverer.rs`): Exponential backoff [30s, 2m, 15m, 1h, 4h, 12h, 24h] with ±10% jitter. Max 7 attempts. Circuit breaker disables endpoint after 5 consecutive failures. Dead-letter after max attempts.
+
+**WebhookRepository** (`repo/webhook.rs`): 20-method trait covering endpoint CRUD, secret rotation, circuit breaker state, fan-out queries, staging events, delivery lifecycle, and API log insertion. PgWebhookRepository implements all SQL.
+
+**PII Redaction** (`middleware/api_logger.rs`): IPv4 masked to /24 subnet, IPv6 to /48 subnet. Sensitive query params (token, secret, password, key, api_key, credential) replaced with `[REDACTED]`. Applied at storage time and on read (double protection).
 
 ### Structured Error Responses
 
@@ -323,6 +344,13 @@ Role assignment rules: Owner can assign Admin/Member; Admin can only assign Memb
 | GET | `/portal/v1/auth/invite` | None | Validate invite token |
 | POST | `/portal/v1/auth/invite/accept` | None | Accept invite + set password |
 | GET | `/portal/v1/data/*` | Session | Data proxy → Core (accounts, transactions, reports) |
+| GET | `/portal/v1/logs` | Session | API logs viewer (paginated, filtered by method/status/path) |
+| GET | `/portal/v1/webhook-endpoints` | Session | List webhook endpoints |
+| POST | `/portal/v1/webhook-endpoints` | Session+RBAC | Create webhook endpoint (returns signing secret once) |
+| PUT | `/portal/v1/webhook-endpoints/:id` | Session+RBAC | Update webhook endpoint |
+| DELETE | `/portal/v1/webhook-endpoints/:id` | Session+RBAC | Delete webhook endpoint |
+| POST | `/portal/v1/webhook-endpoints/:id/rotate-secret` | Session+RBAC | Rotate signing secret |
+| GET | `/portal/v1/webhook-endpoints/:id/deliveries` | Session | List deliveries for endpoint (paginated, filtered by status) |
 
 ### Gateway (:4040) — External API Proxy
 
@@ -336,7 +364,7 @@ React 19 + Vite + TailwindCSS 4 + TanStack Query. Source at `portal-spa/src/`.
 
 - **API client** (`api/client.ts`): base URL `/api/portal/v1`, CSRF token from cookie, credentials `same-origin`
 - **Auth** (`hooks/useAuth.ts`): context provider, login/signup/logout, 401 redirect
-- **Pages**: Login, Signup, Dashboard, ApiKeys, Organization, Members, AcceptInvite, Accounts, Transactions (with USD Value column + FX rates), Reports, ApiDocs
+- **Pages**: Login, Signup, Dashboard, ApiKeys, Organization, Members, AcceptInvite, Accounts, Transactions (with USD Value column + FX rates), Reports, ApiDocs, Webhooks (endpoint CRUD + delivery history), Logs (API log viewer with filters)
 - **Utilities** (`utils/currency.ts`): shared currency formatting with per-currency precision, USD value + FX rate formatters
 - **Types** (`types/index.ts`): TypeScript interfaces matching gateway response shapes
 - **Vite proxy**: `/api` → `http://localhost:4040` (dev only; production uses nginx)
@@ -344,12 +372,13 @@ React 19 + Vite + TailwindCSS 4 + TanStack Query. Source at `portal-spa/src/`.
 
 ## Testing Patterns
 
-- **303 unit tests** (131 core + 163 gateway + 9 common) + **59 e2e tests**, unit tests need no DB (`SQLX_OFFLINE=true`)
+- **410 unit tests** (131 core + 270 gateway + 9 common) + **59 e2e tests**, unit tests need no DB (`SQLX_OFFLINE=true`)
 - Core aggregate tests use `cqrs_es::test::TestFramework` with given/when/then pattern and `test_case!`/`test_error_case!` macros
 - `MockBankAccountServices` (manual mock) with `Mutex<Option<Result<...>>>` fields for negative-path testing
 - Core DB layer uses `mockall::automock` on `DatabaseClient` trait
-- Gateway uses `mockall` on `OrgRepository`, `MemberRepository`, `ApiKeyRepository` traits
+- Gateway uses `mockall` on `OrgRepository`, `MemberRepository`, `ApiKeyRepository`, `WebhookRepository` traits
 - Gateway middleware tests (session, JWT minter, scope enforcer) use mock repos + tower's `oneshot`
+- Webhook tests: 20 model unit tests, 17 repo trait tests, 14 signing tests, 16 route tests, 5 dispatcher tests, 8 deliverer tests, 15 PII redaction tests, 9 logs route tests
 - E2E tests (`scripts/e2e-test.sh`) cover full banking lifecycle
 - Interactive testing console (`scripts/interactive.sh`) for manual API testing
 

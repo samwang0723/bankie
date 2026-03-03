@@ -3,6 +3,7 @@ pub mod dashboard;
 pub mod member;
 pub mod org;
 pub mod pg;
+pub mod webhook;
 
 use std::fmt;
 

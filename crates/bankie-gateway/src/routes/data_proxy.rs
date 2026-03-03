@@ -24,6 +24,7 @@ pub fn data_proxy_routes() -> Router<Arc<PortalState>> {
         .route("/data/accounts/{id}", get(get_account))
         .route("/data/accounts/{id}/sub-accounts", get(get_sub_accounts))
         .route("/data/accounts/{id}/balance-history", get(balance_history))
+        .route("/data/house-accounts", get(list_house_accounts))
         .route("/data/transactions", get(list_transactions))
         .route("/data/ledger/{id}", get(get_ledger))
         .route("/data/reports/settlement", get(settlement_report))
@@ -106,6 +107,11 @@ struct PaginationParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct HouseAccountParams {
+    currency: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct TransactionParams {
     bank_account_id: Option<String>,
     offset: Option<i64>,
@@ -154,6 +160,14 @@ async fn list_accounts(
     let limit = params.limit.map(|v| v.to_string());
     let qs = build_query(&[("offset", &offset), ("limit", &limit)]);
     forward_get(&claims, &format!("/v1/accounts{}", qs)).await
+}
+
+async fn list_house_accounts(
+    claims: axum::Extension<SessionClaims>,
+    Query(params): Query<HouseAccountParams>,
+) -> Result<Response<Body>, StatusCode> {
+    let qs = build_query(&[("currency", &params.currency)]);
+    forward_get(&claims, &format!("/v1/house_account{}", qs)).await
 }
 
 async fn get_account(
