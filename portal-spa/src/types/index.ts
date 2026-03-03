@@ -198,3 +198,72 @@ export interface LedgerView {
   current: string;
   currency: string;
 }
+
+// Webhook Endpoints (matches gateway WebhookEndpoint)
+export interface WebhookEndpoint {
+  id: string;
+  org_id: string;
+  url: string;
+  signing_secret: string;
+  event_types: string[];
+  description: string | null;
+  status: WebhookEndpointStatus;
+  failure_count: number;
+  disabled_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type WebhookEndpointStatus = "active" | "disabled";
+
+export interface CreateWebhookEndpointRequest {
+  url: string;
+  event_types: string[];
+  description?: string;
+}
+
+export interface UpdateWebhookEndpointRequest {
+  url?: string;
+  event_types?: string[];
+  description?: string;
+}
+
+export interface CreateWebhookEndpointResponse {
+  endpoint: WebhookEndpoint;
+  signing_secret: string;
+}
+
+// Webhook Deliveries (matches gateway WebhookDelivery)
+export interface WebhookDelivery {
+  id: string;
+  endpoint_id: string;
+  event_type: string;
+  event_source_id: string;
+  status: DeliveryStatus;
+  http_status: number | null;
+  attempt_number: number;
+  response_body: string | null;
+  latency_ms: number | null;
+  next_retry_at: string | null;
+  created_at: string;
+}
+
+export type DeliveryStatus = "pending" | "success" | "failed" | "dead_letter";
+
+// API Logs (matches gateway ApiLogEntry)
+export interface ApiLogEntry {
+  id: number;
+  method: string;
+  path: string;
+  status_code: number;
+  latency_ms: number | null;
+  client_ip: string | null;
+  created_at: string;
+}
+
+export interface ApiLogsResponse {
+  logs: ApiLogEntry[];
+  total: number;
+  page: number;
+  per_page: number;
+}

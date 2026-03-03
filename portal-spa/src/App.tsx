@@ -15,6 +15,8 @@ import { Transactions } from "./pages/Transactions.tsx";
 import { Reports } from "./pages/Reports.tsx";
 import { Members } from "./pages/Members.tsx";
 import { AcceptInvite } from "./pages/AcceptInvite.tsx";
+import { Webhooks } from "./pages/Webhooks.tsx";
+import { Logs } from "./pages/Logs.tsx";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -54,6 +56,8 @@ export default function App() {
                 <Route path="accounts" element={<Accounts />} />
                 <Route path="transactions" element={<Transactions />} />
                 <Route path="reports" element={<Reports />} />
+                <Route path="webhooks" element={<Webhooks />} />
+                <Route path="logs" element={<Logs />} />
               </Route>
 
               {/* Catch-all */}
