@@ -5,6 +5,7 @@ use tracing::{error, info, warn};
 use crate::models::webhook::PendingDelivery;
 use crate::state::PortalState;
 use crate::webhook::signing::sign_payload;
+use crate::webhook::ssrf::validate_url_safe;
 
 /// Maximum number of delivery attempts before dead-lettering.
 const MAX_ATTEMPTS: i32 = 7;
@@ -112,6 +113,23 @@ async fn deliver_single(
 ) {
     let delivery = &pending.delivery;
     let delivery_id = delivery.id;
+
+    // Defense-in-depth: SSRF check at delivery time (DNS may have changed since creation)
+    if let Err(reason) = validate_url_safe(&pending.endpoint_url) {
+        warn!(
+            "Delivery {}: SSRF blocked — {} (endpoint {})",
+            delivery_id, reason, delivery.endpoint_id
+        );
+        // Treat as permanent failure — dead-letter immediately
+        if let Err(e) = webhook_repo.move_to_dead_letter(delivery_id).await {
+            error!(
+                "Delivery {}: failed to dead-letter after SSRF block: {}",
+                delivery_id, e
+            );
+        }
+        return;
+    }
+
     let body = serde_json::to_string(&delivery.payload).unwrap_or_default();
     let timestamp = Utc::now().timestamp();
 
@@ -160,7 +178,12 @@ async fn deliver_single(
                 );
             } else {
                 // Non-2xx — handle failure
-                let response_body = resp.text().await.ok();
+                // Truncate response body to 4KB to prevent OOM from malicious endpoints
+                let response_body = resp
+                    .bytes()
+                    .await
+                    .ok()
+                    .map(|b| String::from_utf8_lossy(&b[..b.len().min(4096)]).to_string());
                 handle_delivery_failure(webhook_repo, &pending, status, latency_ms, response_body)
                     .await;
             }

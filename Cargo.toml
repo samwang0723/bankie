@@ -38,6 +38,7 @@ hmac = "0.12"
 hex = "0.4"
 async-trait = "0.1"
 reqwest = { version = "0.12", features = ["json"] }
+url = "2"
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "tokio"] }
 

@@ -1339,7 +1339,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
                    e.failure_count AS endpoint_failure_count
             FROM portal.webhook_deliveries d
             JOIN portal.webhook_endpoints e ON d.endpoint_id = e.id
-            WHERE d.status = 'pending'
+            WHERE d.status IN ('pending', 'failed')
               AND d.next_retry_at <= now()
               AND e.status = 'active'
             ORDER BY d.next_retry_at ASC

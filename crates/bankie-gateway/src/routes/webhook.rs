@@ -19,6 +19,7 @@ use crate::models::webhook::{
 };
 use crate::repo::dashboard::DashboardRepository;
 use crate::state::PortalState;
+use crate::webhook::ssrf::validate_url_hostname;
 
 /// Protected webhook management routes (session auth required).
 pub fn webhook_routes() -> Router<Arc<PortalState>> {
@@ -70,6 +71,7 @@ async fn create_endpoint(
     require_api_key_management(&claims)?;
 
     validate_https_url(&req.url)?;
+    validate_url_hostname(&req.url).map_err(AppError::BadRequest)?;
 
     if req.event_types.is_empty() {
         return Err(AppError::BadRequest(
@@ -207,6 +209,7 @@ async fn update_endpoint(
     // Validate URL if provided
     if let Some(ref url) = req.url {
         validate_https_url(url)?;
+        validate_url_hostname(url).map_err(AppError::BadRequest)?;
     }
 
     // Validate event types if provided
@@ -311,6 +314,10 @@ async fn delete_endpoint(
 /// POST /portal/v1/webhooks/:id/rotate-secret
 ///
 /// Rotate the signing secret. Returns the new secret (shown once).
+///
+/// **Known limitation (Phase 3.1 TODO)**: The old secret is immediately overwritten.
+/// The `grace_expires_at` in the response is cosmetic — dual-key support during
+/// grace period requires `old_signing_secret` + `secret_grace_expires_at` columns.
 async fn rotate_secret(
     State(state): State<Arc<PortalState>>,
     claims: axum::Extension<SessionClaims>,
