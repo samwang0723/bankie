@@ -17,6 +17,7 @@ import { Members } from "./pages/Members.tsx";
 import { AcceptInvite } from "./pages/AcceptInvite.tsx";
 import { Webhooks } from "./pages/Webhooks.tsx";
 import { Logs } from "./pages/Logs.tsx";
+import { AuditLogs } from "./pages/AuditLogs.tsx";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -58,6 +59,7 @@ export default function App() {
                 <Route path="reports" element={<Reports />} />
                 <Route path="webhooks" element={<Webhooks />} />
                 <Route path="logs" element={<Logs />} />
+                <Route path="audit-logs" element={<AuditLogs />} />
               </Route>
 
               {/* Catch-all */}

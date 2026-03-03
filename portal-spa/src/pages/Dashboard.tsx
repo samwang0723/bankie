@@ -1,12 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
-import { Key, BarChart3, Shield, Clock, AlertTriangle } from "lucide-react";
+import {
+  Key,
+  BarChart3,
+  Shield,
+  Clock,
+  AlertTriangle,
+  Radio
+} from "lucide-react";
 import { useAuth } from "../hooks/useAuth.ts";
 import { api } from "../api/client.ts";
 import { handleApiError } from "../hooks/useAuth.ts";
 import type {
   DashboardStats,
   ActivityEntry,
-  RateLimitEntry
+  RateLimitEntry,
+  WebhookEndpoint
 } from "../types/index.ts";
 import type { LucideIcon } from "lucide-react";
 
@@ -162,6 +170,23 @@ export function Dashboard() {
     }
   });
 
+  const { data: webhooks } = useQuery({
+    queryKey: ["webhook-endpoints"],
+    queryFn: async () => {
+      try {
+        return await api.get<WebhookEndpoint[]>("/webhooks");
+      } catch (err) {
+        handleApiError(err);
+      }
+    }
+  });
+
+  const webhookActive =
+    webhooks?.filter((w) => w.status === "active").length ?? 0;
+  const webhookDisabled =
+    webhooks?.filter((w) => w.status === "disabled").length ?? 0;
+  const webhookTotal = webhooks?.length ?? 0;
+
   return (
     <div>
       {/* Page header */}
@@ -222,8 +247,8 @@ export function Dashboard() {
         </div>
       )}
 
-      {/* Rate Limit Usage + Recent Activity — side-by-side */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-8">
+      {/* Rate Limit Usage + Webhook Status + Recent Activity */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mt-8">
         {/* Rate Limit Usage */}
         <div className="bg-white rounded-xl border border-slate-200 p-6">
           <h2 className="text-base font-semibold text-slate-900 mb-4">
@@ -238,6 +263,67 @@ export function Dashboard() {
               {rateLimits.map((entry) => (
                 <RateLimitBar key={entry.key_id} entry={entry} />
               ))}
+            </div>
+          )}
+        </div>
+
+        {/* Webhook Status */}
+        <div className="bg-white rounded-xl border border-slate-200 p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Radio className="w-5 h-5 text-cyan-400" />
+            <h2 className="text-base font-semibold text-slate-900">
+              Webhook Status
+            </h2>
+          </div>
+          {webhookTotal === 0 ? (
+            <p className="text-sm text-slate-500 text-center py-4">
+              No webhook endpoints configured
+            </p>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-500">Total Endpoints</span>
+                <span className="text-lg font-semibold text-slate-900">
+                  {webhookTotal}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-500">Active</span>
+                <span className="text-lg font-semibold text-green-600">
+                  {webhookActive}
+                </span>
+              </div>
+              {webhookDisabled > 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-500">Disabled</span>
+                  <span className="text-lg font-semibold text-red-600">
+                    {webhookDisabled}
+                  </span>
+                </div>
+              )}
+              {webhooks && webhooks.some((w) => w.failure_count > 0) && (
+                <div className="pt-3 border-t border-slate-100">
+                  <p className="text-xs font-medium text-slate-500 mb-2">
+                    Endpoints with failures
+                  </p>
+                  {webhooks
+                    .filter((w) => w.failure_count > 0)
+                    .map((w) => (
+                      <div
+                        key={w.id}
+                        className="flex items-center justify-between py-1.5"
+                      >
+                        <span className="text-xs text-slate-600 font-mono truncate max-w-[180px]">
+                          {w.url}
+                        </span>
+                        <span className="text-xs font-medium text-amber-600">
+                          {w.failure_count} failure
+                          {w.failure_count !== 1 ? "s" : ""}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              )}
             </div>
           )}
         </div>

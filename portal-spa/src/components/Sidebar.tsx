@@ -11,6 +11,7 @@ import {
   FileText,
   Radio,
   ScrollText,
+  ShieldCheck,
   LogOut
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth.ts";
@@ -25,7 +26,8 @@ const NAV_ITEMS = [
   { label: "Transactions", path: "/transactions", icon: ArrowLeftRight },
   { label: "Reports", path: "/reports", icon: FileText },
   { label: "Webhooks", path: "/webhooks", icon: Radio },
-  { label: "API Logs", path: "/logs", icon: ScrollText }
+  { label: "API Logs", path: "/logs", icon: ScrollText },
+  { label: "Audit Logs", path: "/audit-logs", icon: ShieldCheck }
 ] as const;
 
 interface SidebarProps {

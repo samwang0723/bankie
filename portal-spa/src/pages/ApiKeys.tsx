@@ -13,6 +13,7 @@ import type {
 import { CreateKeyModal } from "../components/CreateKeyModal.tsx";
 import { ConfirmModal } from "../components/ConfirmModal.tsx";
 import { KeyRevealBanner } from "../components/KeyRevealBanner.tsx";
+import { useToast } from "../hooks/useToast.tsx";
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
@@ -89,6 +90,7 @@ function RateLimitCell({ entry }: { entry: RateLimitEntry | undefined }) {
 export function ApiKeys() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const toast = useToast();
   const canManageKeys = user?.role === "owner" || user?.role === "admin";
 
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -131,7 +133,9 @@ export function ApiKeys() {
       setRawKey(response.raw_key);
       setShowCreateModal(false);
       queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-    }
+      toast.success("API key created successfully");
+    },
+    onError: (err) => toast.error(err.message)
   });
 
   const rotateMutation = useMutation({
@@ -141,7 +145,9 @@ export function ApiKeys() {
       setRawKey(response.new_key.raw_key);
       setConfirmAction(null);
       queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-    }
+      toast.success("API key rotated — grace period active");
+    },
+    onError: (err) => toast.error(err.message)
   });
 
   const revokeMutation = useMutation({
@@ -149,7 +155,9 @@ export function ApiKeys() {
     onSuccess: () => {
       setConfirmAction(null);
       queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-    }
+      toast.success("API key revoked");
+    },
+    onError: (err) => toast.error(err.message)
   });
 
   function handleConfirm() {

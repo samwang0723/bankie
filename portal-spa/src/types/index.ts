@@ -263,6 +263,26 @@ export interface WebhookDelivery {
 
 export type DeliveryStatus = "pending" | "success" | "failed" | "dead_letter";
 
+// Audit Logs (matches gateway audit_log route response)
+export interface AuditLogEntry {
+  id: number;
+  org_id: string;
+  actor_id: string;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  changes: Record<string, unknown> | null;
+  client_ip: string | null;
+  created_at: string;
+}
+
+export interface AuditLogsResponse {
+  data: AuditLogEntry[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
 // API Logs (matches gateway ApiLogEntry)
 export interface ApiLogEntry {
   id: number;

@@ -4,6 +4,7 @@ import { UserPlus, Mail, Copy, Check } from "lucide-react";
 import { api } from "../api/client.ts";
 import { handleApiError, useAuth } from "../hooks/useAuth.ts";
 import { ConfirmModal } from "../components/ConfirmModal.tsx";
+import { useToast } from "../hooks/useToast.tsx";
 import type {
   OrgMember,
   OrgRole,
@@ -86,6 +87,7 @@ function capitalizeRole(role: string): string {
 export function Members() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const toast = useToast();
   const canManage = user?.role === "owner" || user?.role === "admin";
 
   const [showInviteForm, setShowInviteForm] = useState(false);
@@ -121,7 +123,9 @@ export function Members() {
       setInviteLink(response.invite_link);
       setCopied(false);
       queryClient.invalidateQueries({ queryKey: ["members"] });
-    }
+      toast.success("Invitation sent successfully");
+    },
+    onError: (err) => toast.error(err.message)
   });
 
   const changeRoleMutation = useMutation({
@@ -130,7 +134,9 @@ export function Members() {
     onSuccess: () => {
       setChangeRoleTarget(null);
       queryClient.invalidateQueries({ queryKey: ["members"] });
-    }
+      toast.success("Member role updated");
+    },
+    onError: (err) => toast.error(err.message)
   });
 
   const removeMutation = useMutation({
@@ -138,7 +144,9 @@ export function Members() {
     onSuccess: () => {
       setRemoveTarget(null);
       queryClient.invalidateQueries({ queryKey: ["members"] });
-    }
+      toast.success("Member removed");
+    },
+    onError: (err) => toast.error(err.message)
   });
 
   const resendMutation = useMutation({
@@ -148,7 +156,9 @@ export function Members() {
       setResendTarget(null);
       setInviteLink(response.invite_link);
       setCopied(false);
-    }
+      toast.success("Invitation resent");
+    },
+    onError: (err) => toast.error(err.message)
   });
 
   function handleInviteSubmit(e: FormEvent) {
