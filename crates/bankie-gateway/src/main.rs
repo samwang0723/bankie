@@ -57,8 +57,10 @@ async fn main() {
         jwt_secret: settings.jwt_secret.clone(),
         redis_client: Some(redis_client.clone()),
     });
-    // Spawn background job: auto-revoke rotated keys past grace period
+    // Spawn background jobs
     job::spawn_grace_expiry_job(portal_state.clone());
+    job::spawn_webhook_fanout_job(portal_state.clone());
+    job::spawn_webhook_delivery_job(portal_state.clone());
 
     let portal_routes = portal_router(portal_state);
 

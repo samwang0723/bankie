@@ -8,9 +8,16 @@ use crate::models::api_key::KeyStatus;
 use crate::models::dashboard::NewAuditLog;
 use crate::redis_ops;
 use crate::state::PortalState;
+use crate::webhook::{deliverer, dispatcher};
 
 /// Redis lock key for grace period expiry job.
 const GRACE_EXPIRY_LOCK_KEY: &str = "gw:lock:grace_expiry";
+
+/// Redis lock key for webhook fan-out job.
+const FANOUT_LOCK_KEY: &str = "gw:lock:webhook_fanout";
+
+/// Redis lock key for webhook delivery job.
+const DELIVERY_LOCK_KEY: &str = "gw:lock:webhook_deliver";
 
 /// Lock timeout in seconds.
 const LOCK_TIMEOUT_SECS: i64 = 120;
@@ -30,6 +37,68 @@ pub fn spawn_grace_expiry_job(state: Arc<PortalState>) {
             run_grace_expiry_cycle(&state).await;
         }
     });
+}
+
+/// Spawn the webhook fan-out background job.
+///
+/// Runs every 5 seconds, polls webhook_events for unprocessed events,
+/// fans them out to matching endpoints as delivery records.
+pub fn spawn_webhook_fanout_job(state: Arc<PortalState>) {
+    tokio::spawn(async move {
+        let mut ticker = interval(Duration::from_secs(5));
+        loop {
+            ticker.tick().await;
+            run_webhook_fanout_cycle(&state).await;
+        }
+    });
+}
+
+/// Single cycle of the fan-out job with Redis lock.
+async fn run_webhook_fanout_cycle(state: &PortalState) {
+    let redis_client = match &state.redis_client {
+        Some(c) => c,
+        None => return,
+    };
+
+    let lock_id = match acquire_lock(redis_client, FANOUT_LOCK_KEY, 60).await {
+        Some(id) => id,
+        None => return,
+    };
+
+    dispatcher::run_fanout_cycle(state).await;
+
+    release_lock(redis_client, FANOUT_LOCK_KEY, &lock_id).await;
+}
+
+/// Spawn the webhook delivery background job.
+///
+/// Runs every 5 seconds, polls pending deliveries and sends HTTP requests
+/// with signed payloads, handling retries and circuit breaking.
+pub fn spawn_webhook_delivery_job(state: Arc<PortalState>) {
+    tokio::spawn(async move {
+        let mut ticker = interval(Duration::from_secs(5));
+        loop {
+            ticker.tick().await;
+            run_webhook_delivery_cycle(&state).await;
+        }
+    });
+}
+
+/// Single cycle of the delivery job with Redis lock.
+async fn run_webhook_delivery_cycle(state: &PortalState) {
+    let redis_client = match &state.redis_client {
+        Some(c) => c,
+        None => return,
+    };
+
+    let lock_id = match acquire_lock(redis_client, DELIVERY_LOCK_KEY, 60).await {
+        Some(id) => id,
+        None => return,
+    };
+
+    deliverer::run_delivery_cycle(state).await;
+
+    release_lock(redis_client, DELIVERY_LOCK_KEY, &lock_id).await;
 }
 
 /// Single cycle of the grace period expiry job.
