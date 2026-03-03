@@ -1,8 +1,9 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MemberRole {
     Owner,
@@ -27,7 +28,7 @@ impl MemberRole {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MemberStatus {
     Active,
@@ -35,17 +36,19 @@ pub enum MemberStatus {
     Suspended,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct OrgMember {
     pub id: Uuid,
     pub org_id: Uuid,
     pub name: String,
     pub email: String,
     #[serde(skip_serializing)]
+    #[schema(ignore)]
     pub password_hash: String,
     pub role: MemberRole,
     pub status: MemberStatus,
     #[serde(skip_serializing)]
+    #[schema(ignore)]
     pub invite_token_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invite_expires_at: Option<DateTime<Utc>>,
@@ -54,7 +57,7 @@ pub struct OrgMember {
 }
 
 /// Request to invite a new member to the organization.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct InviteMemberRequest {
     pub email: String,
     pub role: String,
@@ -63,14 +66,14 @@ pub struct InviteMemberRequest {
 }
 
 /// Response after inviting a member, includes the one-time invite link.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct InviteMemberResponse {
     pub member: OrgMember,
     pub invite_link: String,
 }
 
 /// Request to accept an invite.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct AcceptInviteRequest {
     pub token: String,
     pub password: String,
@@ -79,7 +82,7 @@ pub struct AcceptInviteRequest {
 }
 
 /// Info returned when validating an invite token.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct InviteInfo {
     pub email: String,
     pub org_name: String,
@@ -103,7 +106,7 @@ pub fn hash_invite_token(token: &str) -> String {
 }
 
 /// Request to change a member's role.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateRoleRequest {
     pub role: String,
 }

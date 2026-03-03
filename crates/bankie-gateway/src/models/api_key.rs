@@ -1,10 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 // === Key Status ===
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum KeyStatus {
     Active,
@@ -57,7 +58,7 @@ impl std::str::FromStr for Environment {
 
 // === ApiKey model ===
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ApiKey {
     pub id: Uuid,
     pub org_id: Uuid,
@@ -65,6 +66,7 @@ pub struct ApiKey {
     pub name: String,
     pub key_prefix: String,
     #[serde(skip_serializing)]
+    #[schema(ignore)]
     pub key_hash: String,
     pub scopes: Vec<String>,
     pub status: KeyStatus,
@@ -75,7 +77,7 @@ pub struct ApiKey {
 
 // === Request/Response DTOs ===
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateKeyRequest {
     pub name: String,
     #[serde(default)]
@@ -83,7 +85,7 @@ pub struct CreateKeyRequest {
     pub scopes: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CreateKeyResponse {
     pub id: Uuid,
     pub name: String,
@@ -93,7 +95,7 @@ pub struct CreateKeyResponse {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct KeyListItem {
     pub id: Uuid,
     pub name: String,
@@ -104,7 +106,7 @@ pub struct KeyListItem {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RotateKeyResponse {
     pub new_key: CreateKeyResponse,
     pub old_key_id: Uuid,

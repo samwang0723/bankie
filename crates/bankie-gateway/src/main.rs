@@ -8,10 +8,13 @@ use axum::{
 use serde_json::{json, Value};
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 use tracing::info;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 use bankie_gateway::config::SETTINGS;
 use bankie_gateway::job;
 use bankie_gateway::middleware;
+use bankie_gateway::openapi::ApiDoc;
 use bankie_gateway::proxy;
 use bankie_gateway::repo::pg::{
     PgApiKeyRepository, PgDashboardRepository, PgMemberRepository, PgOrgRepository,
@@ -83,6 +86,7 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
+        .merge(SwaggerUi::new("/docs").url("/docs/openapi.json", ApiDoc::openapi()))
         .merge(portal_routes)
         .merge(api_routes)
         .layer(CompressionLayer::new())

@@ -2,6 +2,7 @@ pub mod config;
 pub mod job;
 pub mod middleware;
 pub mod models;
+pub mod openapi;
 pub mod proxy;
 pub mod redis_ops;
 pub mod repo;
