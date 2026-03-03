@@ -15,6 +15,7 @@ use bankie_gateway::middleware;
 use bankie_gateway::proxy;
 use bankie_gateway::repo::pg::{
     PgApiKeyRepository, PgDashboardRepository, PgMemberRepository, PgOrgRepository,
+    PgWebhookRepository,
 };
 use bankie_gateway::routes::portal_router;
 use bankie_gateway::state::PortalState;
@@ -52,6 +53,7 @@ async fn main() {
         member_repo: Arc::new(PgMemberRepository::new(pool.clone())),
         api_key_repo: Arc::new(PgApiKeyRepository::new(pool.clone())),
         dashboard_repo: Arc::new(PgDashboardRepository::new(pool.clone())),
+        webhook_repo: Arc::new(PgWebhookRepository::new(pool.clone())),
         jwt_secret: settings.jwt_secret.clone(),
         redis_client: Some(redis_client.clone()),
     });

@@ -424,6 +424,7 @@ mod tests {
     use crate::repo::dashboard::MockDashboardRepository;
     use crate::repo::member::MockMemberRepository;
     use crate::repo::org::MockOrgRepository;
+    use crate::repo::webhook::MockWebhookRepository;
 
     fn test_state_with(
         org_repo: MockOrgRepository,
@@ -434,6 +435,7 @@ mod tests {
             member_repo: Arc::new(member_repo),
             api_key_repo: Arc::new(MockApiKeyRepository::new()),
             dashboard_repo: Arc::new(MockDashboardRepository::new()),
+            webhook_repo: Arc::new(MockWebhookRepository::new()),
             jwt_secret: "test-secret-key-at-least-32-chars-long!!".to_string(),
             redis_client: None,
         })

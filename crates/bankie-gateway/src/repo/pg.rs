@@ -8,6 +8,10 @@ use crate::models::api_key::{ApiKey, KeyStatus};
 use crate::models::dashboard::{AuditLogEntry, NewAuditLog};
 use crate::models::member::{MemberRole, MemberStatus, OrgMember};
 use crate::models::org::{OrgStatus, Organization};
+use crate::models::webhook::{
+    ApiLogEntry, DeliveryStatus, EndpointStatus, PendingDelivery, WebhookDelivery, WebhookEndpoint,
+    WebhookEvent,
+};
 
 // ─── Row types for sqlx deserialization ───
 
@@ -809,5 +813,803 @@ impl super::dashboard::DashboardRepository for PgDashboardRepository {
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
         Ok(())
+    }
+}
+
+// ─── PgWebhookRepository ───
+
+#[derive(sqlx::FromRow)]
+struct WebhookEndpointRow {
+    id: Uuid,
+    org_id: Uuid,
+    url: String,
+    signing_secret: String,
+    event_types: serde_json::Value,
+    description: Option<String>,
+    status: String,
+    failure_count: i32,
+    disabled_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+impl From<WebhookEndpointRow> for WebhookEndpoint {
+    fn from(row: WebhookEndpointRow) -> Self {
+        let event_types: Vec<String> = serde_json::from_value(row.event_types).unwrap_or_default();
+        WebhookEndpoint {
+            id: row.id,
+            org_id: row.org_id,
+            url: row.url,
+            signing_secret: row.signing_secret,
+            event_types,
+            description: row.description,
+            status: row
+                .status
+                .parse::<EndpointStatus>()
+                .unwrap_or(EndpointStatus::Active),
+            failure_count: row.failure_count,
+            disabled_at: row.disabled_at,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct WebhookDeliveryRow {
+    id: Uuid,
+    endpoint_id: Uuid,
+    event_type: String,
+    event_source_id: String,
+    payload: serde_json::Value,
+    http_status: Option<i32>,
+    attempt_number: i32,
+    status: String,
+    response_body: Option<String>,
+    latency_ms: Option<i32>,
+    next_retry_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+}
+
+impl From<WebhookDeliveryRow> for WebhookDelivery {
+    fn from(row: WebhookDeliveryRow) -> Self {
+        WebhookDelivery {
+            id: row.id,
+            endpoint_id: row.endpoint_id,
+            event_type: row.event_type,
+            event_source_id: row.event_source_id,
+            payload: row.payload,
+            http_status: row.http_status,
+            attempt_number: row.attempt_number,
+            status: row
+                .status
+                .parse::<DeliveryStatus>()
+                .unwrap_or(DeliveryStatus::Pending),
+            response_body: row.response_body,
+            latency_ms: row.latency_ms,
+            next_retry_at: row.next_retry_at,
+            created_at: row.created_at,
+        }
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct WebhookEventRow {
+    id: i64,
+    tenant_id: i32,
+    event_type: String,
+    aggregate_type: String,
+    aggregate_id: String,
+    source_id: String,
+    payload: serde_json::Value,
+    processed: bool,
+    created_at: DateTime<Utc>,
+}
+
+impl From<WebhookEventRow> for WebhookEvent {
+    fn from(row: WebhookEventRow) -> Self {
+        WebhookEvent {
+            id: row.id,
+            tenant_id: row.tenant_id,
+            event_type: row.event_type,
+            aggregate_type: row.aggregate_type,
+            aggregate_id: row.aggregate_id,
+            source_id: row.source_id,
+            payload: row.payload,
+            processed: row.processed,
+            created_at: row.created_at,
+        }
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct ApiLogRow {
+    id: i64,
+    api_key_id: Option<Uuid>,
+    tenant_id: Option<i32>,
+    method: String,
+    path: String,
+    status_code: i32,
+    latency_ms: Option<i32>,
+    client_ip: Option<String>,
+    created_at: DateTime<Utc>,
+}
+
+impl From<ApiLogRow> for ApiLogEntry {
+    fn from(row: ApiLogRow) -> Self {
+        ApiLogEntry {
+            id: row.id,
+            api_key_id: row.api_key_id,
+            tenant_id: row.tenant_id,
+            method: row.method,
+            path: row.path,
+            status_code: row.status_code,
+            latency_ms: row.latency_ms,
+            client_ip: row.client_ip,
+            created_at: row.created_at,
+        }
+    }
+}
+
+/// Joined row for pending deliveries (delivery + endpoint info).
+#[derive(sqlx::FromRow)]
+struct PendingDeliveryRow {
+    // delivery fields
+    id: Uuid,
+    endpoint_id: Uuid,
+    event_type: String,
+    event_source_id: String,
+    payload: serde_json::Value,
+    http_status: Option<i32>,
+    attempt_number: i32,
+    status: String,
+    response_body: Option<String>,
+    latency_ms: Option<i32>,
+    next_retry_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    // endpoint fields
+    endpoint_url: String,
+    signing_secret: String,
+    endpoint_failure_count: i32,
+}
+
+impl From<PendingDeliveryRow> for PendingDelivery {
+    fn from(row: PendingDeliveryRow) -> Self {
+        PendingDelivery {
+            delivery: WebhookDelivery {
+                id: row.id,
+                endpoint_id: row.endpoint_id,
+                event_type: row.event_type,
+                event_source_id: row.event_source_id,
+                payload: row.payload,
+                http_status: row.http_status,
+                attempt_number: row.attempt_number,
+                status: row
+                    .status
+                    .parse::<DeliveryStatus>()
+                    .unwrap_or(DeliveryStatus::Pending),
+                response_body: row.response_body,
+                latency_ms: row.latency_ms,
+                next_retry_at: row.next_retry_at,
+                created_at: row.created_at,
+            },
+            endpoint_url: row.endpoint_url,
+            signing_secret: row.signing_secret,
+            endpoint_failure_count: row.endpoint_failure_count,
+        }
+    }
+}
+
+pub struct PgWebhookRepository {
+    pool: PgPool,
+}
+
+impl PgWebhookRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl super::webhook::WebhookRepository for PgWebhookRepository {
+    // === Endpoint CRUD ===
+
+    async fn create_endpoint(
+        &self,
+        id: Uuid,
+        org_id: Uuid,
+        url: String,
+        signing_secret: String,
+        event_types: Vec<String>,
+        description: Option<String>,
+    ) -> Result<WebhookEndpoint, RepoError> {
+        let event_types_json = serde_json::to_value(&event_types).unwrap_or_default();
+        let row: WebhookEndpointRow = sqlx::query_as(
+            r#"
+            INSERT INTO portal.webhook_endpoints (id, org_id, url, signing_secret, event_types, description)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id, org_id, url, signing_secret, event_types, description,
+                      status, failure_count, disabled_at, created_at, updated_at
+            "#,
+        )
+        .bind(id)
+        .bind(org_id)
+        .bind(&url)
+        .bind(&signing_secret)
+        .bind(&event_types_json)
+        .bind(description.as_deref())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(row.into())
+    }
+
+    async fn find_endpoint_by_id(
+        &self,
+        id: Uuid,
+        org_id: Uuid,
+    ) -> Result<Option<WebhookEndpoint>, RepoError> {
+        let row: Option<WebhookEndpointRow> = sqlx::query_as(
+            r#"
+            SELECT id, org_id, url, signing_secret, event_types, description,
+                   status, failure_count, disabled_at, created_at, updated_at
+            FROM portal.webhook_endpoints
+            WHERE id = $1 AND org_id = $2
+            "#,
+        )
+        .bind(id)
+        .bind(org_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(row.map(WebhookEndpoint::from))
+    }
+
+    async fn list_endpoints_by_org(&self, org_id: Uuid) -> Result<Vec<WebhookEndpoint>, RepoError> {
+        let rows: Vec<WebhookEndpointRow> = sqlx::query_as(
+            r#"
+            SELECT id, org_id, url, signing_secret, event_types, description,
+                   status, failure_count, disabled_at, created_at, updated_at
+            FROM portal.webhook_endpoints
+            WHERE org_id = $1
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(org_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(rows.into_iter().map(WebhookEndpoint::from).collect())
+    }
+
+    async fn update_endpoint(
+        &self,
+        id: Uuid,
+        org_id: Uuid,
+        url: Option<String>,
+        event_types: Option<Vec<String>>,
+        description: Option<String>,
+        status: Option<String>,
+    ) -> Result<Option<WebhookEndpoint>, RepoError> {
+        let event_types_json = event_types.map(|et| serde_json::to_value(&et).unwrap_or_default());
+        let row: Option<WebhookEndpointRow> = sqlx::query_as(
+            r#"
+            UPDATE portal.webhook_endpoints
+            SET url = COALESCE($3, url),
+                event_types = COALESCE($4, event_types),
+                description = COALESCE($5, description),
+                status = COALESCE($6, status),
+                failure_count = CASE WHEN $6 = 'active' THEN 0 ELSE failure_count END,
+                disabled_at = CASE WHEN $6 = 'active' THEN NULL ELSE disabled_at END,
+                updated_at = now()
+            WHERE id = $1 AND org_id = $2
+            RETURNING id, org_id, url, signing_secret, event_types, description,
+                      status, failure_count, disabled_at, created_at, updated_at
+            "#,
+        )
+        .bind(id)
+        .bind(org_id)
+        .bind(url.as_deref())
+        .bind(event_types_json)
+        .bind(description.as_deref())
+        .bind(status.as_deref())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(row.map(WebhookEndpoint::from))
+    }
+
+    async fn delete_endpoint(&self, id: Uuid, org_id: Uuid) -> Result<bool, RepoError> {
+        // Delete deliveries first (FK constraint), then endpoint
+        sqlx::query(r#"DELETE FROM portal.webhook_deliveries WHERE endpoint_id = $1"#)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        let result =
+            sqlx::query(r#"DELETE FROM portal.webhook_endpoints WHERE id = $1 AND org_id = $2"#)
+                .bind(id)
+                .bind(org_id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    // === Secret Rotation ===
+
+    async fn rotate_signing_secret(
+        &self,
+        id: Uuid,
+        org_id: Uuid,
+        new_secret: String,
+    ) -> Result<Option<WebhookEndpoint>, RepoError> {
+        let row: Option<WebhookEndpointRow> = sqlx::query_as(
+            r#"
+            UPDATE portal.webhook_endpoints
+            SET signing_secret = $3,
+                updated_at = now()
+            WHERE id = $1 AND org_id = $2
+            RETURNING id, org_id, url, signing_secret, event_types, description,
+                      status, failure_count, disabled_at, created_at, updated_at
+            "#,
+        )
+        .bind(id)
+        .bind(org_id)
+        .bind(&new_secret)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(row.map(WebhookEndpoint::from))
+    }
+
+    // === Circuit Breaker ===
+
+    async fn increment_failure_count(&self, id: Uuid) -> Result<i32, RepoError> {
+        let row: (i32,) = sqlx::query_as(
+            r#"
+            UPDATE portal.webhook_endpoints
+            SET failure_count = failure_count + 1, updated_at = now()
+            WHERE id = $1
+            RETURNING failure_count
+            "#,
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(row.0)
+    }
+
+    async fn reset_failure_count(&self, id: Uuid) -> Result<(), RepoError> {
+        sqlx::query(
+            r#"
+            UPDATE portal.webhook_endpoints
+            SET failure_count = 0, updated_at = now()
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn disable_endpoint(&self, id: Uuid) -> Result<(), RepoError> {
+        sqlx::query(
+            r#"
+            UPDATE portal.webhook_endpoints
+            SET status = 'disabled', disabled_at = now(), updated_at = now()
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    // === Fan-out Queries ===
+
+    async fn find_active_endpoints_for_tenant(
+        &self,
+        tenant_id: i32,
+        event_type: String,
+    ) -> Result<Vec<WebhookEndpoint>, RepoError> {
+        let rows: Vec<WebhookEndpointRow> = sqlx::query_as(
+            r#"
+            SELECT we.id, we.org_id, we.url, we.signing_secret, we.event_types, we.description,
+                   we.status, we.failure_count, we.disabled_at, we.created_at, we.updated_at
+            FROM portal.webhook_endpoints we
+            JOIN portal.organizations o ON o.id = we.org_id
+            WHERE o.tenant_id = $1
+              AND we.status = 'active'
+              AND we.event_types @> to_jsonb($2::text)
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(&event_type)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(rows.into_iter().map(WebhookEndpoint::from).collect())
+    }
+
+    // === Webhook Events (staging table) ===
+
+    async fn list_unprocessed_events(&self, limit: i64) -> Result<Vec<WebhookEvent>, RepoError> {
+        let rows: Vec<WebhookEventRow> = sqlx::query_as(
+            r#"
+            SELECT id, tenant_id, event_type, aggregate_type, aggregate_id,
+                   source_id, payload, processed, created_at
+            FROM portal.webhook_events
+            WHERE processed = false
+            ORDER BY id ASC
+            LIMIT $1
+            "#,
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(rows.into_iter().map(WebhookEvent::from).collect())
+    }
+
+    async fn mark_events_processed(&self, ids: Vec<i64>) -> Result<(), RepoError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        sqlx::query(
+            r#"
+            UPDATE portal.webhook_events
+            SET processed = true
+            WHERE id = ANY($1)
+            "#,
+        )
+        .bind(&ids)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    // === Deliveries ===
+
+    async fn create_delivery(
+        &self,
+        id: Uuid,
+        endpoint_id: Uuid,
+        event_type: String,
+        event_source_id: String,
+        payload: serde_json::Value,
+    ) -> Result<WebhookDelivery, RepoError> {
+        let row: WebhookDeliveryRow = sqlx::query_as(
+            r#"
+            INSERT INTO portal.webhook_deliveries
+                (id, endpoint_id, event_type, event_source_id, payload, status, attempt_number, next_retry_at)
+            VALUES ($1, $2, $3, $4, $5, 'pending', 1, now())
+            ON CONFLICT (endpoint_id, event_source_id) WHERE event_source_id != '' DO NOTHING
+            RETURNING id, endpoint_id, event_type, event_source_id, payload,
+                      http_status, attempt_number, status, response_body,
+                      latency_ms, next_retry_at, created_at
+            "#,
+        )
+        .bind(id)
+        .bind(endpoint_id)
+        .bind(&event_type)
+        .bind(&event_source_id)
+        .bind(&payload)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("duplicate key")
+                || e.to_string().contains("unique constraint")
+            {
+                RepoError::Conflict("Duplicate delivery for this event".to_string())
+            } else {
+                RepoError::Database(e.to_string())
+            }
+        })?;
+
+        Ok(row.into())
+    }
+
+    async fn list_pending_deliveries(&self, limit: i64) -> Result<Vec<PendingDelivery>, RepoError> {
+        let rows: Vec<PendingDeliveryRow> = sqlx::query_as(
+            r#"
+            SELECT d.id, d.endpoint_id, d.event_type, d.event_source_id, d.payload,
+                   d.http_status, d.attempt_number, d.status, d.response_body,
+                   d.latency_ms, d.next_retry_at, d.created_at,
+                   e.url AS endpoint_url, e.signing_secret,
+                   e.failure_count AS endpoint_failure_count
+            FROM portal.webhook_deliveries d
+            JOIN portal.webhook_endpoints e ON d.endpoint_id = e.id
+            WHERE d.status = 'pending'
+              AND d.next_retry_at <= now()
+              AND e.status = 'active'
+            ORDER BY d.next_retry_at ASC
+            LIMIT $1
+            "#,
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(rows.into_iter().map(PendingDelivery::from).collect())
+    }
+
+    async fn update_delivery_success(
+        &self,
+        id: Uuid,
+        http_status: i32,
+        latency_ms: i32,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            r#"
+            UPDATE portal.webhook_deliveries
+            SET status = 'success', http_status = $2, latency_ms = $3, next_retry_at = NULL
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .bind(http_status)
+        .bind(latency_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn update_delivery_failure(
+        &self,
+        id: Uuid,
+        http_status: Option<i32>,
+        latency_ms: Option<i32>,
+        response_body: Option<String>,
+        next_retry_at: Option<DateTime<Utc>>,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            r#"
+            UPDATE portal.webhook_deliveries
+            SET status = 'failed',
+                http_status = COALESCE($2, http_status),
+                latency_ms = COALESCE($3, latency_ms),
+                response_body = $4,
+                attempt_number = attempt_number + 1,
+                next_retry_at = $5
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .bind(http_status)
+        .bind(latency_ms)
+        .bind(response_body.as_deref())
+        .bind(next_retry_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn move_to_dead_letter(&self, id: Uuid) -> Result<(), RepoError> {
+        sqlx::query(
+            r#"
+            UPDATE portal.webhook_deliveries
+            SET status = 'dead_letter', next_retry_at = NULL
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn list_deliveries_by_endpoint(
+        &self,
+        endpoint_id: Uuid,
+        page: i64,
+        per_page: i64,
+        status_filter: Option<String>,
+    ) -> Result<(Vec<WebhookDelivery>, i64), RepoError> {
+        let offset = (page - 1) * per_page;
+
+        // Count total
+        let (total,): (i64,) = if status_filter.is_some() {
+            sqlx::query_as(
+                r#"
+                SELECT COUNT(*) FROM portal.webhook_deliveries
+                WHERE endpoint_id = $1 AND status = $2
+                "#,
+            )
+            .bind(endpoint_id)
+            .bind(status_filter.as_deref())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| RepoError::Database(e.to_string()))?
+        } else {
+            sqlx::query_as(
+                r#"
+                SELECT COUNT(*) FROM portal.webhook_deliveries
+                WHERE endpoint_id = $1
+                "#,
+            )
+            .bind(endpoint_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| RepoError::Database(e.to_string()))?
+        };
+
+        // Fetch page
+        let rows: Vec<WebhookDeliveryRow> = if status_filter.is_some() {
+            sqlx::query_as(
+                r#"
+                SELECT id, endpoint_id, event_type, event_source_id, payload,
+                       http_status, attempt_number, status, response_body,
+                       latency_ms, next_retry_at, created_at
+                FROM portal.webhook_deliveries
+                WHERE endpoint_id = $1 AND status = $2
+                ORDER BY created_at DESC
+                LIMIT $3 OFFSET $4
+                "#,
+            )
+            .bind(endpoint_id)
+            .bind(status_filter.as_deref())
+            .bind(per_page)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| RepoError::Database(e.to_string()))?
+        } else {
+            sqlx::query_as(
+                r#"
+                SELECT id, endpoint_id, event_type, event_source_id, payload,
+                       http_status, attempt_number, status, response_body,
+                       latency_ms, next_retry_at, created_at
+                FROM portal.webhook_deliveries
+                WHERE endpoint_id = $1
+                ORDER BY created_at DESC
+                LIMIT $2 OFFSET $3
+                "#,
+            )
+            .bind(endpoint_id)
+            .bind(per_page)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| RepoError::Database(e.to_string()))?
+        };
+
+        Ok((rows.into_iter().map(WebhookDelivery::from).collect(), total))
+    }
+
+    async fn find_delivery_by_id(
+        &self,
+        id: Uuid,
+        endpoint_id: Uuid,
+    ) -> Result<Option<WebhookDelivery>, RepoError> {
+        let row: Option<WebhookDeliveryRow> = sqlx::query_as(
+            r#"
+            SELECT id, endpoint_id, event_type, event_source_id, payload,
+                   http_status, attempt_number, status, response_body,
+                   latency_ms, next_retry_at, created_at
+            FROM portal.webhook_deliveries
+            WHERE id = $1 AND endpoint_id = $2
+            "#,
+        )
+        .bind(id)
+        .bind(endpoint_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(row.map(WebhookDelivery::from))
+    }
+
+    async fn reset_delivery_for_retry(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<WebhookDelivery>, RepoError> {
+        let row: Option<WebhookDeliveryRow> = sqlx::query_as(
+            r#"
+            UPDATE portal.webhook_deliveries
+            SET status = 'pending', attempt_number = 1, next_retry_at = now(),
+                http_status = NULL, response_body = NULL, latency_ms = NULL
+            WHERE id = $1 AND status = 'dead_letter'
+            RETURNING id, endpoint_id, event_type, event_source_id, payload,
+                      http_status, attempt_number, status, response_body,
+                      latency_ms, next_retry_at, created_at
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok(row.map(WebhookDelivery::from))
+    }
+
+    // === API Logs ===
+
+    async fn list_api_logs(
+        &self,
+        tenant_id: i32,
+        filters: crate::models::webhook::ApiLogFilters,
+        page: i64,
+        per_page: i64,
+    ) -> Result<(Vec<ApiLogEntry>, i64), RepoError> {
+        let offset = (page - 1) * per_page;
+
+        // Build dynamic WHERE clause parts
+        let (total,): (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*)
+            FROM portal.api_logs
+            WHERE tenant_id = $1
+              AND ($2::varchar IS NULL OR method = $2)
+              AND ($3::int IS NULL OR status_code = $3)
+              AND ($4::varchar IS NULL OR path LIKE '%' || $4 || '%')
+              AND ($5::timestamptz IS NULL OR created_at >= $5)
+              AND ($6::timestamptz IS NULL OR created_at <= $6)
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(filters.method.as_deref())
+        .bind(filters.status_code)
+        .bind(filters.path.as_deref())
+        .bind(filters.from)
+        .bind(filters.to)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        let rows: Vec<ApiLogRow> = sqlx::query_as(
+            r#"
+            SELECT id, api_key_id, tenant_id, method, path, status_code,
+                   latency_ms, client_ip, created_at
+            FROM portal.api_logs
+            WHERE tenant_id = $1
+              AND ($2::varchar IS NULL OR method = $2)
+              AND ($3::int IS NULL OR status_code = $3)
+              AND ($4::varchar IS NULL OR path LIKE '%' || $4 || '%')
+              AND ($5::timestamptz IS NULL OR created_at >= $5)
+              AND ($6::timestamptz IS NULL OR created_at <= $6)
+            ORDER BY created_at DESC
+            LIMIT $7 OFFSET $8
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(filters.method.as_deref())
+        .bind(filters.status_code)
+        .bind(filters.path.as_deref())
+        .bind(filters.from)
+        .bind(filters.to)
+        .bind(per_page)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok((rows.into_iter().map(ApiLogEntry::from).collect(), total))
     }
 }

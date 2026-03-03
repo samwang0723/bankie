@@ -146,6 +146,7 @@ mod tests {
     use crate::repo::dashboard::MockDashboardRepository;
     use crate::repo::member::MockMemberRepository;
     use crate::repo::org::MockOrgRepository;
+    use crate::repo::webhook::MockWebhookRepository;
     use chrono::{Duration, Utc};
 
     fn make_expired_key() -> ApiKey {
@@ -173,6 +174,7 @@ mod tests {
             member_repo: Arc::new(MockMemberRepository::new()),
             api_key_repo: Arc::new(api_key_repo),
             dashboard_repo: Arc::new(dashboard_repo),
+            webhook_repo: Arc::new(MockWebhookRepository::new()),
             jwt_secret: "test-secret".to_string(),
             redis_client: None,
         }
