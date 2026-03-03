@@ -161,6 +161,18 @@ export interface BankAccountView {
   updated_at?: string;
 }
 
+// House Accounts (matches HouseAccount from Core /v1/house_account)
+export interface HouseAccountView {
+  id: string;
+  status: string;
+  account_number: string;
+  account_name: string;
+  account_type: string;
+  ledger_id: string;
+  currency: string;
+  tenant_id: number;
+}
+
 // Transactions (matches TransactionWithMoney from Core)
 export interface Transaction {
   id: string;
