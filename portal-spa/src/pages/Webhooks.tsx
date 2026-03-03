@@ -63,7 +63,7 @@ function DeliveryTable({ endpointId }: { endpointId: string }) {
         });
         if (statusFilter) params.set("status", statusFilter);
         return await api.get<{ deliveries: WebhookDelivery[]; total: number }>(
-          `/webhook-endpoints/${endpointId}/deliveries?${params}`
+          `/webhooks/${endpointId}/deliveries?${params}`
         );
       } catch (err) {
         handleApiError(err);
@@ -179,7 +179,7 @@ export function Webhooks() {
     queryKey: ["webhook-endpoints"],
     queryFn: async () => {
       try {
-        return await api.get<WebhookEndpoint[]>("/webhook-endpoints");
+        return await api.get<WebhookEndpoint[]>("/webhooks");
       } catch (err) {
         handleApiError(err);
       }
@@ -188,14 +188,11 @@ export function Webhooks() {
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      return await api.post<CreateWebhookEndpointResponse>(
-        "/webhook-endpoints",
-        {
-          url: formUrl,
-          event_types: formEvents,
-          description: formDesc || undefined
-        }
-      );
+      return await api.post<CreateWebhookEndpointResponse>("/webhooks", {
+        url: formUrl,
+        event_types: formEvents,
+        description: formDesc || undefined
+      });
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["webhook-endpoints"] });
@@ -209,7 +206,7 @@ export function Webhooks() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      return await api.delete<void>(`/webhook-endpoints/${id}`);
+      return await api.delete<void>(`/webhooks/${id}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["webhook-endpoints"] });
