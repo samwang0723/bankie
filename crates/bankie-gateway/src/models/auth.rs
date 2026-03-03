@@ -27,6 +27,9 @@ pub struct SessionClaims {
     pub role: String,
     pub csrf: String,
     pub exp: usize,
+    /// JWT ID for server-side session invalidation via Redis blocklist.
+    #[serde(default)]
+    pub jti: String,
 }
 
 /// Auth response matching SPA's expected format:

@@ -126,6 +126,7 @@ mod tests {
             role: "owner".to_string(),
             csrf: "test-csrf".to_string(),
             exp: (chrono::Utc::now() + chrono::Duration::hours(24)).timestamp() as usize,
+            jti: String::new(),
         }
     }
 

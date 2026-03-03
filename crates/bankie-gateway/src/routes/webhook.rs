@@ -505,6 +505,7 @@ mod tests {
             role: "owner".to_string(),
             csrf: csrf.to_string(),
             exp: 9999999999,
+            jti: String::new(),
         }
     }
 
@@ -517,6 +518,7 @@ mod tests {
             role: "member".to_string(),
             csrf: csrf.to_string(),
             exp: 9999999999,
+            jti: String::new(),
         }
     }
 

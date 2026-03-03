@@ -44,6 +44,25 @@ pub async fn session_auth(
     .map_err(|_| AppError::Unauthorized("Invalid or expired session".to_string()))?
     .claims;
 
+    // L2: Check Redis blocklist for server-side session invalidation
+    if !claims.jti.is_empty() {
+        if let Some(ref client) = state.redis_client {
+            match crate::redis_ops::get_value(client, &format!("gw:blocklist:{}", claims.jti)).await
+            {
+                Ok(Some(_)) => {
+                    return Err(AppError::Unauthorized(
+                        "Session has been invalidated".to_string(),
+                    ));
+                }
+                Ok(None) => {} // Not blocklisted
+                Err(e) => {
+                    // Fail open for availability
+                    tracing::warn!("Redis error checking session blocklist: {}", e);
+                }
+            }
+        }
+    }
+
     // CSRF validation for mutating requests
     let method = request.method().clone();
     if matches!(
@@ -126,6 +145,7 @@ mod tests {
             role: "owner".to_string(),
             csrf: csrf.to_string(),
             exp: (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp() as usize,
+            jti: String::new(),
         }
     }
 

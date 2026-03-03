@@ -46,11 +46,7 @@ async fn signup(
     if req.email.trim().is_empty() || !req.email.contains('@') {
         return Err(AppError::BadRequest("Valid email is required".to_string()));
     }
-    if req.password.len() < 8 {
-        return Err(AppError::BadRequest(
-            "Password must be at least 8 characters".to_string(),
-        ));
-    }
+    validate_password_complexity(&req.password)?;
 
     // Check if email already exists
     let existing = state
@@ -215,6 +211,30 @@ async fn logout(
                 &jsonwebtoken::Validation::default(),
             ) {
                 let claims = token_data.claims;
+
+                // L2: Add session to Redis blocklist for server-side invalidation
+                if !claims.jti.is_empty() {
+                    if let Some(ref client) = state.redis_client {
+                        let blocklist_key = format!("gw:blocklist:{}", claims.jti);
+                        let remaining_secs = claims
+                            .exp
+                            .saturating_sub(chrono::Utc::now().timestamp() as usize)
+                            as i64;
+                        if remaining_secs > 0 {
+                            if let Err(e) = crate::redis_ops::set_ex(
+                                client,
+                                &blocklist_key,
+                                "1",
+                                remaining_secs,
+                            )
+                            .await
+                            {
+                                tracing::warn!("Failed to add session to blocklist: {}", e);
+                            }
+                        }
+                    }
+                }
+
                 if let Ok(org_id) = claims.org_id.parse::<uuid::Uuid>() {
                     audit_log(
                         &state.dashboard_repo,
@@ -261,6 +281,7 @@ fn build_session_response(
         .collect();
 
     let exp = (chrono::Utc::now() + chrono::Duration::hours(24)).timestamp() as usize;
+    let jti = uuid::Uuid::new_v4().to_string();
 
     let claims = SessionClaims {
         sub: member.id.to_string(),
@@ -273,6 +294,7 @@ fn build_session_response(
             .unwrap_or_else(|| "member".to_string()),
         csrf: csrf_token.clone(),
         exp,
+        jti,
     };
 
     let jwt = encode(
@@ -412,11 +434,7 @@ async fn accept_invite(
     State(state): State<Arc<PortalState>>,
     Json(req): Json<AcceptInviteRequest>,
 ) -> Result<Response, AppError> {
-    if req.password.len() < 8 {
-        return Err(AppError::BadRequest(
-            "Password must be at least 8 characters".to_string(),
-        ));
-    }
+    validate_password_complexity(&req.password)?;
 
     let token_hash = hash_invite_token(&req.token);
 
@@ -460,6 +478,31 @@ async fn accept_invite(
         .ok_or_else(|| AppError::internal("Organization not found for member"))?;
 
     build_session_response(&state, &activated, &org)
+}
+
+/// Validate password complexity: min 8 chars, at least 1 uppercase, 1 lowercase, 1 digit.
+fn validate_password_complexity(password: &str) -> Result<(), AppError> {
+    if password.len() < 8 {
+        return Err(AppError::BadRequest(
+            "Password must be at least 8 characters".to_string(),
+        ));
+    }
+    if !password.chars().any(|c| c.is_uppercase()) {
+        return Err(AppError::BadRequest(
+            "Password must contain at least one uppercase letter".to_string(),
+        ));
+    }
+    if !password.chars().any(|c| c.is_lowercase()) {
+        return Err(AppError::BadRequest(
+            "Password must contain at least one lowercase letter".to_string(),
+        ));
+    }
+    if !password.chars().any(|c| c.is_ascii_digit()) {
+        return Err(AppError::BadRequest(
+            "Password must contain at least one digit".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Best-effort audit log insertion. Failures are logged but not propagated.
@@ -582,7 +625,7 @@ mod tests {
             org_id,
             name: "Test User".to_string(),
             email: "test@example.com".to_string(),
-            password_hash: hash_password("password123").unwrap(),
+            password_hash: hash_password("Password123").unwrap(),
             role: MemberRole::Owner,
             status: MemberStatus::Active,
             invite_token_hash: None,
@@ -643,7 +686,7 @@ mod tests {
             "org_name": "Test Org",
             "name": "Test User",
             "email": "new@example.com",
-            "password": "password123"
+            "password": "Password123"
         });
 
         let response = app
@@ -680,7 +723,7 @@ mod tests {
             "org_name": "",
             "name": "Test User",
             "email": "test@example.com",
-            "password": "password123"
+            "password": "Password123"
         });
 
         let response = app
@@ -707,7 +750,7 @@ mod tests {
             "org_name": "Test",
             "name": "Test User",
             "email": "not-an-email",
-            "password": "password123"
+            "password": "Password123"
         });
 
         let response = app
@@ -767,7 +810,7 @@ mod tests {
             "org_name": "Test",
             "name": "Test User",
             "email": "test@example.com",
-            "password": "password123"
+            "password": "Password123"
         });
 
         let response = app
@@ -807,7 +850,7 @@ mod tests {
 
         let body = serde_json::json!({
             "email": "test@example.com",
-            "password": "password123"
+            "password": "Password123"
         });
 
         let response = app
@@ -883,7 +926,7 @@ mod tests {
 
         let body = serde_json::json!({
             "email": "nonexistent@example.com",
-            "password": "password123"
+            "password": "Password123"
         });
 
         let response = app
@@ -915,7 +958,7 @@ mod tests {
 
         let body = serde_json::json!({
             "email": "test@example.com",
-            "password": "password123"
+            "password": "Password123"
         });
 
         let response = app
@@ -975,6 +1018,7 @@ mod tests {
             role: "owner".to_string(),
             csrf: "csrf123".to_string(),
             exp: (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp() as usize,
+            jti: String::new(),
         };
         let jwt = encode(
             &Header::default(),
@@ -1025,6 +1069,39 @@ mod tests {
     fn test_verify_wrong_password_fails() {
         let hash = hash_password("correct_password").unwrap();
         assert!(verify_password("wrong_password", &hash).is_err());
+    }
+
+    // --- Password complexity ---
+
+    #[test]
+    fn test_validate_password_complexity_valid() {
+        assert!(validate_password_complexity("Password1").is_ok());
+        assert!(validate_password_complexity("Str0ngP@ss").is_ok());
+        assert!(validate_password_complexity("MyP4ssw0rd!").is_ok());
+    }
+
+    #[test]
+    fn test_validate_password_complexity_too_short() {
+        let err = validate_password_complexity("Pass1").unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_validate_password_complexity_no_uppercase() {
+        let err = validate_password_complexity("password1").unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_validate_password_complexity_no_lowercase() {
+        let err = validate_password_complexity("PASSWORD1").unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_validate_password_complexity_no_digit() {
+        let err = validate_password_complexity("Password").unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
     }
 
     // --- Validate Invite Tests ---
@@ -1206,7 +1283,7 @@ mod tests {
 
         let body = serde_json::json!({
             "token": raw_token,
-            "password": "strongpassword123"
+            "password": "Strongpassword123"
         });
 
         let response = app
@@ -1271,7 +1348,7 @@ mod tests {
 
         let body = serde_json::json!({
             "token": "nonexistent_token",
-            "password": "strongpassword123"
+            "password": "Strongpassword123"
         });
 
         let response = app

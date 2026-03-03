@@ -7,7 +7,7 @@ services:
     volumes:
       - postgresql_data:/bitnami/postgresql
     environment:
-      - ALLOW_EMPTY_PASSWORD=yes
+      - POSTGRESQL_POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-localpostgres}
       - POSTGRESQL_SHARED_BUFFERS=128MB
       - POSTGRESQL_WORK_MEM=32MB
       - POSTGRESQL_MAINTENANCE_WORK_MEM=64MB
@@ -33,13 +33,13 @@ services:
     container_name: bankie-redis
     image: bitnami/redis:latest
     environment:
-      - ALLOW_EMPTY_PASSWORD=yes
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-localredispass}
     ports:
       - '${REDIS_PORT:-6379}:6379'
     volumes:
       - redis_data:/bitnami/redis/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a $REDIS_PASSWORD --no-auth-warning ping"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -53,6 +53,7 @@ services:
       dockerfile: Dockerfile
       target: migrations
     environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-localpostgres}
       - DB_USER=bankie_app
       - DB_PASSWD=${DB_PASSWD:-localpass}
       - DB_HOST=bankie-postgres
@@ -68,17 +69,17 @@ services:
         echo "[migrations] Initializing database user and schema..."
 
         # Create user if not exists
-        PGPASSWORD= psql -h bankie-postgres -p 5432 -U postgres -tc \
+        PGPASSWORD=$${POSTGRES_PASSWORD:-localpostgres} psql -h bankie-postgres -p 5432 -U postgres -tc \
           "SELECT 1 FROM pg_roles WHERE rolname='bankie_app'" | grep -q 1 || \
-          PGPASSWORD= psql -h bankie-postgres -p 5432 -U postgres -c \
+          PGPASSWORD=$${POSTGRES_PASSWORD:-localpostgres} psql -h bankie-postgres -p 5432 -U postgres -c \
           "CREATE USER bankie_app WITH ENCRYPTED PASSWORD '$${DB_PASSWD}'; ALTER ROLE bankie_app WITH CREATEDB;"
 
         # Create database if not exists (each statement separate — CREATE DATABASE cannot run in a transaction)
-        PGPASSWORD= psql -h bankie-postgres -p 5432 -U postgres -tc \
+        PGPASSWORD=$${POSTGRES_PASSWORD:-localpostgres} psql -h bankie-postgres -p 5432 -U postgres -tc \
           "SELECT 1 FROM pg_database WHERE datname='bankie_main'" | grep -q 1 || \
-          { PGPASSWORD= psql -h bankie-postgres -p 5432 -U postgres -c "CREATE DATABASE bankie_main;" && \
-            PGPASSWORD= psql -h bankie-postgres -p 5432 -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE bankie_main TO bankie_app;" && \
-            PGPASSWORD= psql -h bankie-postgres -p 5432 -U postgres -c "ALTER DATABASE bankie_main OWNER TO bankie_app;"; }
+          { PGPASSWORD=$${POSTGRES_PASSWORD:-localpostgres} psql -h bankie-postgres -p 5432 -U postgres -c "CREATE DATABASE bankie_main;" && \
+            PGPASSWORD=$${POSTGRES_PASSWORD:-localpostgres} psql -h bankie-postgres -p 5432 -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE bankie_main TO bankie_app;" && \
+            PGPASSWORD=$${POSTGRES_PASSWORD:-localpostgres} psql -h bankie-postgres -p 5432 -U postgres -c "ALTER DATABASE bankie_main OWNER TO bankie_app;"; }
 
         echo "[migrations] Running migrations..."
         DATABASE_URL="postgres://bankie_app:$${DB_PASSWD}@bankie-postgres:5432/bankie_main" /app/migrations
@@ -99,6 +100,7 @@ services:
       - ENV=docker
       - DB_PASSWD=${DB_PASSWD:-localpass}
       - JWT_SECRET=${JWT_SECRET:-LocalDevSecretKey1234567890abcdefghijklmnop}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-localredispass}
       - RUST_LOG=${RUST_LOG:-info}
       - SQLX_OFFLINE=true
     depends_on:
@@ -128,6 +130,7 @@ services:
       - DB_PASSWD=${DB_PASSWD:-localpass}
       - JWT_SECRET=${JWT_SECRET:-LocalDevSecretKey1234567890abcdefghijklmnop}
       - CORE_URL=http://bankie:3030
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-localredispass}
       - RUST_LOG=${RUST_LOG:-info}
     depends_on:
       postgresql:

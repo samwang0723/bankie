@@ -30,6 +30,8 @@ pub struct DatabaseSettings {
 pub struct RedisSettings {
     pub host: String,
     pub port: String,
+    #[serde(default)]
+    pub password: String,
 }
 
 fn default_core_url() -> String {
@@ -102,6 +104,9 @@ impl GatewaySettings {
         if let Ok(secret) = std::env::var("JWT_SECRET") {
             cfg.jwt_secret = secret;
         }
+        if let Ok(redis_password) = std::env::var("REDIS_PASSWORD") {
+            cfg.redis.password = redis_password;
+        }
     }
 }
 
@@ -122,7 +127,11 @@ impl DatabaseSettings {
 
 impl RedisSettings {
     pub fn connection_string(&self) -> String {
-        format!("redis://{}:{}", self.host, self.port)
+        if self.password.is_empty() {
+            format!("redis://{}:{}", self.host, self.port)
+        } else {
+            format!("redis://:{}@{}:{}", self.password, self.host, self.port)
+        }
     }
 }
 
@@ -150,8 +159,22 @@ mod tests {
         let redis = RedisSettings {
             host: "localhost".to_string(),
             port: "6379".to_string(),
+            password: String::new(),
         };
         assert_eq!(redis.connection_string(), "redis://localhost:6379");
+    }
+
+    #[test]
+    fn test_redis_connection_string_with_password() {
+        let redis = RedisSettings {
+            host: "redis-host".to_string(),
+            port: "6379".to_string(),
+            password: "secret123".to_string(),
+        };
+        assert_eq!(
+            redis.connection_string(),
+            "redis://:secret123@redis-host:6379"
+        );
     }
 
     #[test]
