@@ -3,6 +3,7 @@ members = [
     "crates/bankie-core",
     "crates/bankie-common",
     "crates/bankie-gateway",
+    "crates/healthcheck",
 ]
 resolver = "2"
 
