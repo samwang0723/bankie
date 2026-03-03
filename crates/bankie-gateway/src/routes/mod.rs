@@ -2,6 +2,7 @@ pub mod api_key;
 pub mod auth;
 pub mod dashboard;
 pub mod data_proxy;
+pub mod logs;
 pub mod member;
 pub mod org;
 pub mod webhook;
@@ -28,6 +29,7 @@ pub fn portal_router(state: Arc<PortalState>) -> Router {
         .merge(data_proxy::data_proxy_routes())
         .merge(member::member_routes())
         .merge(webhook::webhook_routes())
+        .merge(logs::logs_routes())
         .route_layer(axum_mw::from_fn_with_state(
             Arc::clone(&state),
             session_auth,
