@@ -881,7 +881,7 @@ action_switch_tenant() {
       AUTH="Authorization: Bearer ${TOKEN_VALUE}"
       echo "$new_token" > .docker-jwt-token
       decode_tenant
-      success "Switched to tenant: ${CURRENT_TENANT} (tenant_id: ${CURRENT_TENANT_ID})"
+      echo -e "  ${GREEN}Switched to tenant: ${CURRENT_TENANT} (tenant_id: ${CURRENT_TENANT_ID})${NC}"
       echo -e "  ${DIM}Token saved to .docker-jwt-token${NC}"
     else
       echo -e "  ${RED}Failed to generate JWT. Check Docker container logs.${NC}"
@@ -907,7 +907,7 @@ action_switch_tenant() {
         AUTH="Authorization: Bearer ${TOKEN_VALUE}"
         echo "$new_token" > .local-jwt-token
         decode_tenant
-        success "Switched to tenant: ${CURRENT_TENANT} (tenant_id: ${CURRENT_TENANT_ID})"
+        echo -e "  ${GREEN}Switched to tenant: ${CURRENT_TENANT} (tenant_id: ${CURRENT_TENANT_ID})${NC}"
       else
         echo -e "  ${RED}Failed to generate JWT.${NC}"
       fi
@@ -977,7 +977,7 @@ action_portal_login() {
   if [[ "$HTTP_STATUS" =~ ^2 ]]; then
     PORTAL_LOGGED_IN="yes"
     PORTAL_EMAIL="$email"
-    success "Logged in as ${email}"
+    echo -e "  ${GREEN}Logged in as ${email}${NC}"
     pretty_json "$HTTP_BODY"
   else
     echo -e "  ${RED}Login failed.${NC}"
@@ -1013,7 +1013,7 @@ action_portal_signup() {
   if [[ "$HTTP_STATUS" =~ ^2 ]]; then
     PORTAL_LOGGED_IN="yes"
     PORTAL_EMAIL="$email"
-    success "Signed up and logged in as ${email}"
+    echo -e "  ${GREEN}Signed up and logged in as ${email}${NC}"
     pretty_json "$HTTP_BODY"
   else
     echo -e "  ${RED}Signup failed.${NC}"
@@ -1090,7 +1090,7 @@ action_portal_create_key() {
   print_status
 
   if [[ "$HTTP_STATUS" =~ ^2 ]]; then
-    success "API key created. Save the raw_key — it won't be shown again!"
+    echo -e "  ${GREEN}API key created. Save the raw_key — it won't be shown again!${NC}"
     pretty_json "$HTTP_BODY"
   else
     echo -e "  ${RED}Failed to create API key.${NC}"
@@ -1114,7 +1114,7 @@ action_portal_rotate_key() {
   print_status
 
   if [[ "$HTTP_STATUS" =~ ^2 ]]; then
-    success "Key rotated. Save the new raw_key — it won't be shown again!"
+    echo -e "  ${GREEN}Key rotated. Save the new raw_key — it won't be shown again!${NC}"
     pretty_json "$HTTP_BODY"
   else
     echo -e "  ${RED}Failed to rotate key.${NC}"
@@ -1172,7 +1172,7 @@ action_portal_invite_member() {
   print_status
 
   if [[ "$HTTP_STATUS" =~ ^2 ]]; then
-    success "Invite sent. Share the invite_link with the new member."
+    echo -e "  ${GREEN}Invite sent. Share the invite_link with the new member.${NC}"
     pretty_json "$HTTP_BODY"
   else
     echo -e "  ${RED}Failed to invite member.${NC}"
@@ -1212,7 +1212,7 @@ action_portal_create_webhook() {
   print_status
 
   if [[ "$HTTP_STATUS" =~ ^2 ]]; then
-    success "Webhook created. Save the signing_secret — it won't be shown again!"
+    echo -e "  ${GREEN}Webhook created. Save the signing_secret — it won't be shown again!${NC}"
     pretty_json "$HTTP_BODY"
   else
     echo -e "  ${RED}Failed to create webhook.${NC}"
