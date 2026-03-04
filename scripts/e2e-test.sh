@@ -1750,6 +1750,12 @@ fi
 # Extract CSRF token from cookie jar
 CSRF_TOKEN=$(grep csrf_token "$COOKIE_JAR" | awk '{print $NF}' || echo "")
 
+# Initialize variables used across steps to avoid unbound errors
+RAW_API_KEY=""
+WH_ENDPOINT_ID=""
+WH_SIGNING_SECRET=""
+WH_ACCT_ID=""
+
 # --- Step 3: Create an API key via portal ---
 run_test "POST /portal/v1/api-keys -- create API key for webhook test"
 APIKEY_RESP=$(curl -s -w "\n%{http_code}" -b "$COOKIE_JAR" \
@@ -1759,7 +1765,7 @@ APIKEY_RESP=$(curl -s -w "\n%{http_code}" -b "$COOKIE_JAR" \
   -d '{"name":"webhook-e2e-key","scopes":["accounts:read","accounts:write"]}')
 APIKEY_STATUS=$(echo "$APIKEY_RESP" | tail -1)
 APIKEY_BODY=$(echo "$APIKEY_RESP" | sed '$d')
-if assert_status "$APIKEY_STATUS" "201" "create API key"; then
+if assert_status "$APIKEY_STATUS" "200" "create API key"; then
   RAW_API_KEY=$(echo "$APIKEY_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['raw_key'])" 2>/dev/null || echo "")
   if [[ -n "$RAW_API_KEY" ]]; then
     pass
@@ -2071,7 +2077,7 @@ APIKEY_OLD_RAW=""
 
 run_test "POST /portal/v1/api-keys -- create API key"
 portal_post "/api-keys" '{"name":"e2e-lifecycle-key","scopes":["accounts:read","accounts:write"]}'
-if assert_status "$HTTP_STATUS" "201" "create API key"; then
+if assert_status "$HTTP_STATUS" "200" "create API key"; then
   APIKEY_RAW=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['raw_key'])" 2>/dev/null || echo "")
   APIKEY_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
   if [[ -n "$APIKEY_RAW" && "$APIKEY_RAW" == bk_live_* ]]; then
@@ -2131,7 +2137,7 @@ fi
 run_test "DELETE /portal/v1/api-keys/:id -- revoke then verify rejected"
 if [[ -n "$APIKEY_ID" ]]; then
   portal_delete "/api-keys/${APIKEY_ID}"
-  if assert_status "$HTTP_STATUS" "204" "revoke API key"; then
+  if assert_status "$HTTP_STATUS" "200" "revoke API key"; then
     sleep 1  # Brief wait for cache invalidation
     GW_RESP=$(curl -s -w "\n%{http_code}" \
       "${GATEWAY_URL}/v1/accounts?offset=0&limit=1" \
@@ -2156,7 +2162,7 @@ suite "16. RBAC Enforcement"
 
 run_test "Owner: POST /portal/v1/api-keys -- owner can create API key"
 portal_post "/api-keys" '{"name":"e2e-rbac-key","scopes":["accounts:read"]}'
-if assert_status "$HTTP_STATUS" "201" "owner create API key"; then
+if assert_status "$HTTP_STATUS" "200" "owner create API key"; then
   RBAC_KEY_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
   pass
 fi

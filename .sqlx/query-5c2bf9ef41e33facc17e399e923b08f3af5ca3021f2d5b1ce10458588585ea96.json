@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT setval('tenants_id_seq', GREATEST(nextval('tenants_id_seq'), (SELECT COALESCE(MAX(id), 0) + 1 FROM tenants)))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "setval",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "5c2bf9ef41e33facc17e399e923b08f3af5ca3021f2d5b1ce10458588585ea96"
+}
