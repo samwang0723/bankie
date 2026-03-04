@@ -43,6 +43,24 @@ LAST_ACCOUNT_NUMBER=""
 LAST_CURRENCY="USD"
 PORTAL_LOGGED_IN=""
 PORTAL_EMAIL=""
+CURRENT_TENANT=""
+CURRENT_TENANT_ID=""
+
+# Decode tenant info from current JWT
+decode_tenant() {
+  CURRENT_TENANT=$(echo "$TOKEN_VALUE" | awk -F. '{print $2}' | python3 -c "
+import sys, base64, json
+p = sys.stdin.read().strip()
+p += '=' * (4 - len(p) % 4)
+print(json.loads(base64.urlsafe_b64decode(p)).get('sub', ''))
+" 2>/dev/null || echo "")
+  CURRENT_TENANT_ID=$(echo "$TOKEN_VALUE" | awk -F. '{print $2}' | python3 -c "
+import sys, base64, json
+p = sys.stdin.read().strip()
+p += '=' * (4 - len(p) % 4)
+print(json.loads(base64.urlsafe_b64decode(p)).get('tenant_id', ''))
+" 2>/dev/null || echo "")
+}
 
 # ---------------------------------------------------------------------------
 # JWT Token Resolution
@@ -840,29 +858,11 @@ action_switch_tenant() {
   echo -e "\n${CYAN}Switch Tenant (Generate/Reuse JWT)${NC}"
   separator
 
-  # Show current tenant info
-  local current_sub current_tid
-  current_sub=$(echo "$TOKEN_VALUE" | awk -F. '{print $2}' | python3 -c "
-import sys, base64, json
-payload = sys.stdin.read().strip()
-# Add padding
-payload += '=' * (4 - len(payload) % 4)
-data = json.loads(base64.urlsafe_b64decode(payload))
-print(data.get('sub', '?'))
-" 2>/dev/null || echo "?")
-  current_tid=$(echo "$TOKEN_VALUE" | awk -F. '{print $2}' | python3 -c "
-import sys, base64, json
-payload = sys.stdin.read().strip()
-payload += '=' * (4 - len(payload) % 4)
-data = json.loads(base64.urlsafe_b64decode(payload))
-print(data.get('tenant_id', '?'))
-" 2>/dev/null || echo "?")
-
-  echo -e "  Current tenant: ${BOLD}${current_sub}${NC} (tenant_id: ${current_tid})"
+  echo -e "  Current tenant: ${BOLD}${CURRENT_TENANT}${NC} (tenant_id: ${CURRENT_TENANT_ID})"
   echo ""
 
   local service_name
-  service_name=$(prompt "Service name (new name = new tenant)" "$current_sub")
+  service_name=$(prompt "Service name (new name = new tenant)" "$CURRENT_TENANT")
 
   if [[ -z "$service_name" ]]; then
     echo -e "  ${RED}Service name is required.${NC}"
@@ -880,25 +880,8 @@ print(data.get('tenant_id', '?'))
       TOKEN_VALUE="$new_token"
       AUTH="Authorization: Bearer ${TOKEN_VALUE}"
       echo "$new_token" > .docker-jwt-token
-
-      # Decode and show new tenant info
-      local new_sub new_tid
-      new_sub=$(echo "$TOKEN_VALUE" | awk -F. '{print $2}' | python3 -c "
-import sys, base64, json
-payload = sys.stdin.read().strip()
-payload += '=' * (4 - len(payload) % 4)
-data = json.loads(base64.urlsafe_b64decode(payload))
-print(data.get('sub', '?'))
-" 2>/dev/null || echo "?")
-      new_tid=$(echo "$TOKEN_VALUE" | awk -F. '{print $2}' | python3 -c "
-import sys, base64, json
-payload = sys.stdin.read().strip()
-payload += '=' * (4 - len(payload) % 4)
-data = json.loads(base64.urlsafe_b64decode(payload))
-print(data.get('tenant_id', '?'))
-" 2>/dev/null || echo "?")
-
-      success "Switched to tenant: ${new_sub} (tenant_id: ${new_tid})"
+      decode_tenant
+      success "Switched to tenant: ${CURRENT_TENANT} (tenant_id: ${CURRENT_TENANT_ID})"
       echo -e "  ${DIM}Token saved to .docker-jwt-token${NC}"
     else
       echo -e "  ${RED}Failed to generate JWT. Check Docker container logs.${NC}"
@@ -923,7 +906,8 @@ print(data.get('tenant_id', '?'))
         TOKEN_VALUE="$new_token"
         AUTH="Authorization: Bearer ${TOKEN_VALUE}"
         echo "$new_token" > .local-jwt-token
-        success "Switched to tenant: ${service_name}"
+        decode_tenant
+        success "Switched to tenant: ${CURRENT_TENANT} (tenant_id: ${CURRENT_TENANT_ID})"
       else
         echo -e "  ${RED}Failed to generate JWT.${NC}"
       fi
@@ -1282,6 +1266,7 @@ print_menu() {
   echo -e "${BOLD}╔══════════════════════════════════════════════════════╗${NC}"
   echo -e "${BOLD}║            ${BLUE}Bankie Interactive Console${NC}${BOLD}                ║${NC}"
   echo -e "${BOLD}╚══════════════════════════════════════════════════════╝${NC}"
+  echo -e "  ${DIM}Tenant: ${CURRENT_TENANT} (id: ${CURRENT_TENANT_ID})${NC}"
   echo ""
   echo -e "  ${BOLD}Account Lifecycle${NC}"
   echo -e "    ${GREEN} 1${NC}) Open new account"
@@ -1355,8 +1340,10 @@ print_menu() {
 # ---------------------------------------------------------------------------
 # Main Loop
 # ---------------------------------------------------------------------------
+decode_tenant
 echo -e "\n${GREEN}Connected to ${BASE_URL}${NC}"
 echo -e "${GREEN}Portal at ${PORTAL_URL}${NC}"
+echo -e "${BOLD}Tenant: ${CURRENT_TENANT} (id: ${CURRENT_TENANT_ID})${NC}"
 echo -e "${DIM}Token: ${TOKEN_VALUE:0:20}...${NC}"
 
 while true; do
