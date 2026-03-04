@@ -125,7 +125,7 @@ OPEN_RESULT=$(curl -s -X POST "${BASE_URL}/v1/bank_account" \
       \"account_type\": \"Retail\",
       \"kind\": \"Checking\",
       \"currency\": \"USD\",
-      \"user_id\": \"${USER_ID}\"
+      \"external_reference_id\": \"${USER_ID}\"
     }
   }")
 

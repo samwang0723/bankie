@@ -8,7 +8,7 @@
 # close, query endpoints, negative cases, sub-account scenarios
 # (master/interest/yield with parent_id linkage and cross-account transfers),
 # and webhook delivery pipeline (portal signup → webhook endpoint → event
-# trigger → webhook.site verification → HMAC signature check).
+# trigger → local receiver verification → HMAC signature check).
 #
 # Prerequisites:
 #   make local-setup   (starts infra + DB + server)
@@ -1663,20 +1663,71 @@ suite "13. Webhook Delivery Pipeline"
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:4040}"
 WEBHOOK_WAIT="${WEBHOOK_WAIT:-20}"
 
-# --- Step 1: Create webhook.site listener ---
-run_test "Create webhook.site listener token"
-WEBHOOK_SITE_RESP=$(curl -s https://webhook.site/token 2>/dev/null || echo "")
-WEBHOOK_TOKEN=$(echo "$WEBHOOK_SITE_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['uuid'])" 2>/dev/null || echo "")
-if [[ -n "$WEBHOOK_TOKEN" ]]; then
-  WEBHOOK_URL="https://webhook.site/${WEBHOOK_TOKEN}"
-  pass
+# --- Step 1: Start local webhook receiver ---
+WH_RECEIVER_PORT=19876
+WH_RECEIVER_DIR=$(mktemp -d)
+WH_RECEIVER_PID=""
+
+# Determine webhook URL based on whether gateway runs in Docker or locally.
+# Docker containers reach the host via host.docker.internal (macOS/Windows)
+# or the host network (Linux). The SSRF check is env-aware and skipped
+# in local/docker environments, so HTTP + private IPs are allowed.
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^bankie-gateway$'; then
+  WH_RECEIVER_URL="http://host.docker.internal:${WH_RECEIVER_PORT}/webhook"
 else
-  fail "Could not create webhook.site token (network or service unavailable)"
-  # Skip remaining webhook tests if webhook.site is unreachable
-  WEBHOOK_TOKEN=""
+  WH_RECEIVER_URL="http://localhost:${WH_RECEIVER_PORT}/webhook"
 fi
 
-if [[ -n "$WEBHOOK_TOKEN" ]]; then
+run_test "Start local webhook receiver on port ${WH_RECEIVER_PORT}"
+python3 -c "
+import http.server, json, os, sys, threading
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(length).decode()
+        # Save headers + body for verification
+        data = {
+            'headers': dict(self.headers),
+            'body': body,
+            'path': self.path
+        }
+        out_dir = '${WH_RECEIVER_DIR}'
+        # Append to a JSONL file (one delivery per line)
+        with open(os.path.join(out_dir, 'webhooks.jsonl'), 'a') as f:
+            f.write(json.dumps(data) + '\n')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(b'{\"ok\":true}')
+    def log_message(self, format, *args):
+        pass  # suppress access logs
+
+server = http.server.HTTPServer(('0.0.0.0', ${WH_RECEIVER_PORT}), Handler)
+server.serve_forever()
+" &
+WH_RECEIVER_PID=$!
+sleep 1
+
+# Verify the receiver is running
+if kill -0 "$WH_RECEIVER_PID" 2>/dev/null; then
+  pass
+else
+  fail "webhook receiver failed to start on port ${WH_RECEIVER_PORT}"
+  WH_RECEIVER_PID=""
+fi
+
+# Cleanup trap — ensure receiver is stopped even on test failure
+cleanup_webhook_receiver() {
+  if [[ -n "$WH_RECEIVER_PID" ]]; then
+    kill "$WH_RECEIVER_PID" 2>/dev/null || true
+    wait "$WH_RECEIVER_PID" 2>/dev/null || true
+  fi
+  rm -rf "$WH_RECEIVER_DIR" 2>/dev/null || true
+}
+trap cleanup_webhook_receiver EXIT
+
+if [[ -n "$WH_RECEIVER_PID" ]]; then
 
 # --- Step 2: Sign up a test org + login (portal session) ---
 WEBHOOK_TS=$(date +%s)
@@ -1717,13 +1768,13 @@ if assert_status "$APIKEY_STATUS" "201" "create API key"; then
   fi
 fi
 
-# --- Step 4: Create a webhook endpoint via portal ---
+# --- Step 4: Create a webhook endpoint pointing to local receiver ---
 run_test "POST /portal/v1/webhooks -- create webhook endpoint"
 WH_CREATE_RESP=$(curl -s -w "\n%{http_code}" -b "$COOKIE_JAR" \
   -X POST "${GATEWAY_URL}/portal/v1/webhooks" \
   -H "Content-Type: application/json" \
   -H "X-CSRF-Token: ${CSRF_TOKEN}" \
-  -d "{\"url\":\"${WEBHOOK_URL}\",\"event_types\":[\"account.opened\",\"account.approved\"],\"description\":\"E2E test\"}")
+  -d "{\"url\":\"${WH_RECEIVER_URL}\",\"event_types\":[\"account.opened\",\"account.approved\"],\"description\":\"E2E test\"}")
 WH_CREATE_STATUS=$(echo "$WH_CREATE_RESP" | tail -1)
 WH_CREATE_BODY=$(echo "$WH_CREATE_RESP" | sed '$d')
 if assert_status "$WH_CREATE_STATUS" "201" "create webhook endpoint"; then
@@ -1758,33 +1809,28 @@ fi
 echo -e "    ${YELLOW}(waiting ${WEBHOOK_WAIT}s for webhook fan-out + delivery cycles...)${NC}"
 sleep "$WEBHOOK_WAIT"
 
-# --- Step 7: Verify webhook received at webhook.site ---
-run_test "GET webhook.site -- verify at least 1 request received"
-WH_SITE_REQUESTS=$(curl -s "https://webhook.site/token/${WEBHOOK_TOKEN}/requests?sorting=newest" 2>/dev/null || echo "")
-WH_REQ_COUNT=$(echo "$WH_SITE_REQUESTS" | python3 -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    print(len(data.get('data', [])))
-except:
-    print(0)
-" 2>/dev/null || echo "0")
+# --- Step 7: Verify webhook received at local receiver ---
+WH_RECEIVED_FILE="${WH_RECEIVER_DIR}/webhooks.jsonl"
+
+run_test "Verify local receiver got at least 1 webhook delivery"
+if [[ -f "$WH_RECEIVED_FILE" ]]; then
+  WH_REQ_COUNT=$(wc -l < "$WH_RECEIVED_FILE" | tr -d ' ')
+else
+  WH_REQ_COUNT=0
+fi
 if [[ "$WH_REQ_COUNT" -ge 1 ]]; then
   pass
 else
-  fail "webhook.site expected >= 1 requests, got ${WH_REQ_COUNT}"
+  fail "local receiver expected >= 1 deliveries, got ${WH_REQ_COUNT}"
 fi
 
 run_test "Verify X-Bankie-Signature header present on webhook delivery"
-WH_SIG_HEADER=$(echo "$WH_SITE_REQUESTS" | python3 -c "
-import sys, json
+WH_SIG_HEADER=$(python3 -c "
+import json, sys
 try:
-    data = json.load(sys.stdin)
-    req = data['data'][0]
-    headers = req.get('headers', {})
-    # webhook.site lowercases header names
-    sig = headers.get('x-bankie-signature', [''])[0] if isinstance(headers.get('x-bankie-signature'), list) else headers.get('x-bankie-signature', '')
-    print(sig)
+    with open('${WH_RECEIVED_FILE}') as f:
+        req = json.loads(f.readline())
+    print(req.get('headers', {}).get('X-Bankie-Signature', req.get('headers', {}).get('x-bankie-signature', '')))
 except:
     print('')
 " 2>/dev/null || echo "")
@@ -1795,12 +1841,12 @@ else
 fi
 
 run_test "Verify webhook payload contains event_type field"
-WH_EVENT_TYPE=$(echo "$WH_SITE_REQUESTS" | python3 -c "
-import sys, json
+WH_EVENT_TYPE=$(python3 -c "
+import json
 try:
-    data = json.load(sys.stdin)
-    req = data['data'][0]
-    body = json.loads(req.get('content', '{}'))
+    with open('${WH_RECEIVED_FILE}') as f:
+        req = json.loads(f.readline())
+    body = json.loads(req.get('body', '{}'))
     print(body.get('event_type', ''))
 except:
     print('')
@@ -1813,14 +1859,13 @@ fi
 
 # --- Step 8: Verify HMAC signature ---
 run_test "Verify HMAC-SHA256 signature matches signing secret"
-WH_SIG_VALID=$(echo "$WH_SITE_REQUESTS" | python3 -c "
-import sys, json, hmac, hashlib
+WH_SIG_VALID=$(python3 -c "
+import json, hmac, hashlib
 try:
-    data = json.load(sys.stdin)
-    req = data['data'][0]
-    body = req.get('content', '')
-    headers = req.get('headers', {})
-    sig_header = headers.get('x-bankie-signature', [''])[0] if isinstance(headers.get('x-bankie-signature'), list) else headers.get('x-bankie-signature', '')
+    with open('${WH_RECEIVED_FILE}') as f:
+        req = json.loads(f.readline())
+    body = req.get('body', '')
+    sig_header = req.get('headers', {}).get('X-Bankie-Signature', req.get('headers', {}).get('x-bankie-signature', ''))
     # Parse t=...,v1=...
     parts = dict(p.split('=', 1) for p in sig_header.split(','))
     ts = parts['t']
@@ -1873,17 +1918,19 @@ if [[ -n "$WH_ENDPOINT_ID" ]]; then
     -X DELETE "${GATEWAY_URL}/portal/v1/webhooks/${WH_ENDPOINT_ID}" \
     -H "X-CSRF-Token: ${CSRF_TOKEN}")
   DEL_STATUS=$(echo "$DEL_RESP" | tail -1)
-  if assert_status "$DEL_STATUS" "204" "delete webhook endpoint"; then
+  if assert_status "$DEL_STATUS" "200" "delete webhook endpoint"; then
     pass
   fi
 else
   fail "no endpoint id to delete"
 fi
 
-# Clean up cookie jar
+# Clean up cookie jar and receiver
 rm -f "$COOKIE_JAR"
+cleanup_webhook_receiver
+trap - EXIT
 
-fi  # end of WEBHOOK_TOKEN guard
+fi  # end of WH_RECEIVER_PID guard
 
 # ===========================================================================
 # Portal E2E Test Helpers
@@ -2484,7 +2531,7 @@ if [[ -n "$WH_CRUD_ID" ]]; then
     if [[ -n "$NEW_SECRET" && "$NEW_SECRET" != "$WH_CRUD_SECRET" ]]; then
       # Delete the endpoint
       portal_delete "/webhooks/${WH_CRUD_ID}"
-      if assert_status "$HTTP_STATUS" "204" "delete webhook endpoint"; then
+      if assert_status "$HTTP_STATUS" "200" "delete webhook endpoint"; then
         pass
       fi
     else

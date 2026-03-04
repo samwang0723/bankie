@@ -23,6 +23,8 @@ pub struct DatabaseSettings {
 pub struct RedisSettings {
     pub host: String,
     pub port: String,
+    #[serde(default)]
+    pub password: String,
 }
 
 lazy_static! {
@@ -71,6 +73,9 @@ impl Settings {
         if let Ok(db_password) = std::env::var("DB_PASSWD") {
             cfg.database.dbpasswd = db_password;
         }
+        if let Ok(redis_password) = std::env::var("REDIS_PASSWORD") {
+            cfg.redis.password = redis_password;
+        }
     }
 }
 
@@ -91,7 +96,11 @@ impl DatabaseSettings {
 
 impl RedisSettings {
     pub fn connection_string(&self) -> String {
-        format!("redis://{}:{}", self.host, self.port)
+        if self.password.is_empty() {
+            format!("redis://{}:{}", self.host, self.port)
+        } else {
+            format!("redis://:{}@{}:{}", self.password, self.host, self.port)
+        }
     }
 }
 
@@ -141,9 +150,18 @@ mod tests {
         let redis_settings = RedisSettings {
             host: "localhost".to_string(),
             port: "6379".to_string(),
+            password: String::new(),
         };
+        assert_eq!(redis_settings.connection_string(), "redis://localhost:6379");
 
-        let connection_string = redis_settings.connection_string();
-        assert_eq!(connection_string, "redis://localhost:6379");
+        let redis_settings_auth = RedisSettings {
+            host: "localhost".to_string(),
+            port: "6379".to_string(),
+            password: "secret".to_string(),
+        };
+        assert_eq!(
+            redis_settings_auth.connection_string(),
+            "redis://:secret@localhost:6379"
+        );
     }
 }

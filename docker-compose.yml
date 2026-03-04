@@ -1,12 +1,13 @@
 services:
   postgresql:
     container_name: bankie-postgres
-    image: docker.io/bitnami/postgresql:16
+    image: docker.io/bitnami/postgresql:latest
     ports:
       - '${DB_PORT:-5432}:5432'
     volumes:
       - postgresql_data:/bitnami/postgresql
     environment:
+      - POSTGRESQL_PASSWORD=${POSTGRES_PASSWORD:-localpostgres}
       - POSTGRESQL_POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-localpostgres}
       - POSTGRESQL_SHARED_BUFFERS=128MB
       - POSTGRESQL_WORK_MEM=32MB
@@ -31,7 +32,7 @@ services:
 
   redis:
     container_name: bankie-redis
-    image: bitnami/redis:7.2
+    image: bitnami/redis:latest
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-localredispass}
     ports:
@@ -213,7 +214,7 @@ services:
         reservations:
           memory: 64M
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/portal-health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
