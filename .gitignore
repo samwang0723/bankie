@@ -8,6 +8,9 @@ config.stg.yaml
 config.dev.yaml
 .local-jwt-token
 .docker-jwt-token
+.api-key
+.docker-api-key
+.local-api-key
 *.csv
 .claude/
 .worktrees/

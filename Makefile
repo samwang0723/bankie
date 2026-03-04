@@ -1,6 +1,6 @@
-.PHONY: help test lint changelog-gen changelog-commit docker-build \
-       local-setup local-infra local-init-db local-migrate local-build local-start local-gateway local-portal local-stop local-jwt local-demo local-e2e local-interactive \
-       docker-up docker-down docker-logs docker-clean docker-jwt docker-e2e docker-interactive
+.PHONY: help test test-coverage lint ci changelog-gen changelog-commit docker-build \
+       local-setup local-infra local-init-db local-migrate local-build local-start local-gateway local-portal local-stop local-jwt local-demo local-e2e local-interactive local-core-test \
+       docker-up docker-down docker-logs docker-clean docker-jwt docker-e2e docker-interactive docker-core-test
 
 help: ## show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {sub("\\\\n",sprintf("\n%22c"," "), $$2);printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -44,8 +44,11 @@ local-setup: local-infra local-init-db local-migrate local-build local-jwt-gen l
 	@echo "Quick test:"
 	@echo "  curl -s http://localhost:3030/health"
 	@echo ""
-	@echo "Full demo:"
-	@echo "  make local-demo"
+	@echo "Full demo (via Gateway):"
+	@echo "  make local-gateway && make local-demo"
+	@echo ""
+	@echo "Core API test (direct):"
+	@echo "  make local-core-test"
 	@echo ""
 	@echo "Stop everything:"
 	@echo "  make local-stop"
@@ -137,12 +140,15 @@ local-stop: ## stop server + gateway + tear down infra
 	@docker compose -f docker-compose.local.yml down
 	@echo "[local] Stopped."
 
-local-demo: ## run the full demo scenario (requires running server + JWT)
+local-demo: ## run the full demo scenario via Gateway (auto-creates portal org + API key)
+	@./scripts/demo.sh
+
+local-core-test: ## run Core API tests directly (requires running server + JWT)
 	@if [ ! -f .local-jwt-token ] || [ ! -s .local-jwt-token ]; then \
 		echo "ERROR: No JWT token found. Run 'make local-setup' first."; \
 		exit 1; \
 	fi
-	@./scripts/demo.sh "$$(cat .local-jwt-token)"
+	@./scripts/core-test.sh "$$(cat .local-jwt-token)"
 
 local-e2e: ## run E2E test suite (requires running server + JWT)
 	@if [ ! -f .local-jwt-token ] || [ ! -s .local-jwt-token ]; then \
@@ -151,8 +157,8 @@ local-e2e: ## run E2E test suite (requires running server + JWT)
 	fi
 	@./scripts/e2e-test.sh "$$(cat .local-jwt-token)"
 
-local-interactive: ## interactive console for manual API testing
-	@./scripts/interactive.sh "$$(cat .local-jwt-token 2>/dev/null)"
+local-interactive: ## interactive console for manual API testing (via Gateway)
+	@./scripts/interactive.sh
 
 ######################
 # docker full stack  #
@@ -207,8 +213,15 @@ docker-e2e: docker-jwt ## run E2E tests against Docker stack
 	fi
 	@./scripts/e2e-test.sh "$$(cat .docker-jwt-token)"
 
-docker-interactive: ## interactive console against Docker stack
-	@./scripts/interactive.sh "$$(cat .docker-jwt-token 2>/dev/null)"
+docker-interactive: ## interactive console against Docker stack (via Gateway)
+	@./scripts/interactive.sh
+
+docker-core-test: docker-jwt ## run Core API tests directly against Docker stack
+	@if [ ! -f .docker-jwt-token ] || [ ! -s .docker-jwt-token ]; then \
+		echo "ERROR: No JWT token found. Run 'make docker-up' first."; \
+		exit 1; \
+	fi
+	@BASE_URL=http://localhost:3030 ./scripts/core-test.sh "$$(cat .docker-jwt-token)"
 
 docker-clean: ## stop containers and remove volumes (full reset)
 	@echo "[docker] Stopping containers and removing volumes..."
@@ -221,8 +234,10 @@ docker-clean: ## stop containers and remove volumes (full reset)
 # cargo install cargo-nextest --locked
 # cargo install cargo-llvm-cov
 
-test:
-	cargo test -- --nocapture
+test: ## run tests (matches CI: single-threaded)
+	SQLX_OFFLINE=true cargo test -- --test-threads=1 --nocapture
+
+test-coverage: ## run tests with coverage report
 	cargo llvm-cov nextest
 
 ##################
@@ -238,10 +253,13 @@ over-withdrawn-test:
 # lint #
 ########
 
-lint: ## lints the entire codebase
-	cargo clippy
-	cargo fmt -- --check
-	cargo check
+lint: ## lints the entire codebase (matches CI exactly)
+	SQLX_OFFLINE=true cargo fmt -- --check
+	SQLX_OFFLINE=true cargo check --all
+	SQLX_OFFLINE=true cargo clippy --all-targets --no-default-features --tests --benches -- -D warnings
+
+ci: lint test ## run full CI pipeline locally (fmt + check + clippy + test + doc)
+	SQLX_OFFLINE=true cargo doc --no-default-features --no-deps
 
 ###########
 # migrate #

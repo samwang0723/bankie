@@ -445,12 +445,9 @@ impl DatabaseClient for PgPool {
 
     async fn create_tenant_profile(&self, name: &str, scope: &str) -> Result<i32, Error> {
         // Return existing tenant id if one with the same name already exists
-        let existing = sqlx::query_scalar!(
-            r#"SELECT id FROM tenants WHERE name = $1"#,
-            name
-        )
-        .fetch_optional(self)
-        .await?;
+        let existing = sqlx::query_scalar!(r#"SELECT id FROM tenants WHERE name = $1"#, name)
+            .fetch_optional(self)
+            .await?;
 
         if let Some(id) = existing {
             return Ok(id);
