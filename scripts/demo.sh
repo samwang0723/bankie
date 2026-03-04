@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # Bankie Demo Script
-# Walks through: house account creation, account opening, KYC approval,
-# deposit, withdrawal, and reporting queries.
+# Walks through the full Core API lifecycle: house accounts, account opening,
+# KYC approval, deposit, withdrawal, transfer, sub-accounts, account number
+# lookup, filtered transactions, settlement report, and balance history.
 #
 # Prerequisites:
 #   make local-setup   (starts infra + DB + server)
@@ -131,12 +132,14 @@ OPEN_RESULT=$(curl -s -X POST "${BASE_URL}/v1/bank_account" \
 
 echo "$OPEN_RESULT" | python3 -m json.tool 2>/dev/null || echo "$OPEN_RESULT"
 ACCOUNT_ID=$(echo "$OPEN_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+ACCOUNT_NUMBER=$(echo "$OPEN_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('account_number',''))" 2>/dev/null || echo "")
 
 if [[ -z "$ACCOUNT_ID" ]]; then
   echo -e "${RED}Failed to open account. Exiting.${NC}"
   exit 1
 fi
 success "Bank Account opened: $ACCOUNT_ID"
+[[ -n "$ACCOUNT_NUMBER" ]] && success "Account Number: $ACCOUNT_NUMBER"
 
 pause 2
 
@@ -267,6 +270,174 @@ curl -s "${BASE_URL}/v1/user/${USER_ID}" \
   -H "$AUTH" | python3 -m json.tool 2>/dev/null
 
 # ------------------------------------------------------------------
+# STEP 13: Open a Second Account (for Transfer)
+# ------------------------------------------------------------------
+step "13. Open Second Account (USD, Retail/Checking) + Approve + Deposit"
+
+OPEN2_RESULT=$(curl -s -X POST "${BASE_URL}/v1/bank_account" \
+  -H "$AUTH" -H "$CT" \
+  -d "{
+    \"OpenAccount\": {
+      \"account_type\": \"Retail\",
+      \"kind\": \"Checking\",
+      \"currency\": \"USD\",
+      \"external_reference_id\": \"${USER_ID}\"
+    }
+  }")
+
+ACCOUNT2_ID=$(echo "$OPEN2_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+if [[ -z "$ACCOUNT2_ID" ]]; then
+  echo -e "${RED}Failed to open 2nd account. Skipping transfer demo.${NC}"
+else
+  success "2nd Account opened: $ACCOUNT2_ID"
+  pause 2
+
+  info "Approving 2nd account..."
+  curl -s -X POST "${BASE_URL}/v1/bank_account" \
+    -H "$AUTH" -H "$CT" \
+    -d "{\"ApproveAccount\":{\"id\":\"${ACCOUNT2_ID}\"}}" | python3 -m json.tool 2>/dev/null
+
+  ACCOUNT2_VIEW=$(curl -s "${BASE_URL}/v1/bank_account/${ACCOUNT2_ID}" -H "$AUTH")
+  LEDGER2_ID=$(echo "$ACCOUNT2_VIEW" | python3 -c "import sys,json; print(json.load(sys.stdin)['ledger_id'])" 2>/dev/null || echo "")
+  pause 2
+
+  info "Depositing 500 USD into 2nd account..."
+  curl -s -X POST "${BASE_URL}/v1/bank_account" \
+    -H "$AUTH" -H "$CT" \
+    -d "{
+      \"Deposit\": {
+        \"id\": \"${ACCOUNT2_ID}\",
+        \"amount\": {\"amount\": \"500\", \"currency\": \"USD\"}
+      }
+    }" | python3 -m json.tool 2>/dev/null
+
+  info "Waiting for outbox (${OUTBOX_WAIT:-15}s)..."
+  pause "${OUTBOX_WAIT:-15}"
+fi
+
+# ------------------------------------------------------------------
+# STEP 14: Transfer Between Accounts
+# ------------------------------------------------------------------
+step "14. Transfer 200 USD (Account 1 → Account 2)"
+
+if [[ -n "$ACCOUNT2_ID" ]]; then
+  TRANSFER_RESULT=$(curl -s -X POST "${BASE_URL}/v1/bank_account" \
+    -H "$AUTH" -H "$CT" \
+    -d "{
+      \"Transfer\": {
+        \"id\": \"${ACCOUNT_ID}\",
+        \"to_account_id\": \"${ACCOUNT2_ID}\",
+        \"amount\": {\"amount\": \"200\", \"currency\": \"USD\"}
+      }
+    }")
+
+  echo "$TRANSFER_RESULT" | python3 -m json.tool 2>/dev/null || echo "$TRANSFER_RESULT"
+  success "Transfer submitted."
+
+  info "Waiting for outbox (${OUTBOX_WAIT:-15}s)..."
+  pause "${OUTBOX_WAIT:-15}"
+
+  info "Ledger 1 (should show 550 available: 1000 - 250 - 200):"
+  curl -s "${BASE_URL}/v1/ledger/${LEDGER_ID}" -H "$AUTH" | python3 -m json.tool 2>/dev/null
+
+  if [[ -n "$LEDGER2_ID" ]]; then
+    info "Ledger 2 (should show 700 available: 500 + 200):"
+    curl -s "${BASE_URL}/v1/ledger/${LEDGER2_ID}" -H "$AUTH" | python3 -m json.tool 2>/dev/null
+  fi
+else
+  info "Skipped — 2nd account not created."
+fi
+
+# ------------------------------------------------------------------
+# STEP 15: Open Sub-Account (Interest)
+# ------------------------------------------------------------------
+step "15. Open Interest Sub-Account (linked to Account 1)"
+
+SUB_RESULT=$(curl -s -X POST "${BASE_URL}/v1/bank_account" \
+  -H "$AUTH" -H "$CT" \
+  -d "{
+    \"OpenAccount\": {
+      \"account_type\": \"Retail\",
+      \"kind\": \"Interest\",
+      \"currency\": \"USD\",
+      \"external_reference_id\": \"${USER_ID}\",
+      \"parent_id\": \"${ACCOUNT_ID}\"
+    }
+  }")
+
+echo "$SUB_RESULT" | python3 -m json.tool 2>/dev/null || echo "$SUB_RESULT"
+SUB_ACCOUNT_ID=$(echo "$SUB_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+
+if [[ -n "$SUB_ACCOUNT_ID" ]]; then
+  success "Sub-account created: $SUB_ACCOUNT_ID"
+  pause 2
+
+  info "Approving sub-account..."
+  curl -s -X POST "${BASE_URL}/v1/bank_account" \
+    -H "$AUTH" -H "$CT" \
+    -d "{\"ApproveAccount\":{\"id\":\"${SUB_ACCOUNT_ID}\"}}" | python3 -m json.tool 2>/dev/null
+else
+  echo -e "${RED}Failed to create sub-account.${NC}"
+fi
+
+# ------------------------------------------------------------------
+# STEP 16: Query Sub-Accounts
+# ------------------------------------------------------------------
+step "16. List Sub-Accounts for Account 1"
+
+curl -s "${BASE_URL}/v1/bank_account/${ACCOUNT_ID}/sub-accounts" \
+  -H "$AUTH" | python3 -m json.tool 2>/dev/null
+
+# ------------------------------------------------------------------
+# STEP 17: Lookup by Account Number
+# ------------------------------------------------------------------
+step "17. Lookup Account by Number"
+
+if [[ -n "$ACCOUNT_NUMBER" ]]; then
+  info "Looking up account number: $ACCOUNT_NUMBER"
+  curl -s "${BASE_URL}/v1/bank_account/by-number/${ACCOUNT_NUMBER}" \
+    -H "$AUTH" | python3 -m json.tool 2>/dev/null
+else
+  info "No account number captured, skipping."
+fi
+
+# ------------------------------------------------------------------
+# STEP 18: Filtered Transactions (deposits only)
+# ------------------------------------------------------------------
+step "18. List Transactions (filtered: deposits only)"
+
+curl -s "${BASE_URL}/v1/transaction?bank_account_id=${ACCOUNT_ID}&offset=0&limit=10&transaction_type=deposit" \
+  -H "$AUTH" | python3 -m json.tool 2>/dev/null
+
+# ------------------------------------------------------------------
+# STEP 19: Paginated Accounts List
+# ------------------------------------------------------------------
+step "19. List All Accounts (paginated)"
+
+curl -s "${BASE_URL}/v1/accounts?offset=0&limit=5" \
+  -H "$AUTH" | python3 -m json.tool 2>/dev/null
+
+# ------------------------------------------------------------------
+# STEP 20: Settlement Report (CSV)
+# ------------------------------------------------------------------
+step "20. Settlement Report (CSV)"
+
+TODAY=$(date -u +%Y-%m-%d)
+info "Date range: ${TODAY} to ${TODAY}"
+curl -s "${BASE_URL}/v1/report/settlement?start_date=${TODAY}&end_date=${TODAY}&currency=USD" \
+  -H "$AUTH"
+echo ""
+
+# ------------------------------------------------------------------
+# STEP 21: Balance History
+# ------------------------------------------------------------------
+step "21. Balance History (from daily snapshots)"
+
+info "Note: Snapshots are created by the midnight UTC cron job."
+curl -s "${BASE_URL}/v1/bank_account/${ACCOUNT_ID}/balance-history?start_date=2026-01-01&end_date=2026-12-31" \
+  -H "$AUTH" | python3 -m json.tool 2>/dev/null
+
+# ------------------------------------------------------------------
 # DONE
 # ------------------------------------------------------------------
 echo ""
@@ -277,7 +448,10 @@ echo ""
 echo "Summary of IDs:"
 echo "  User ID:          $USER_ID"
 echo "  Bank Account ID:  $ACCOUNT_ID"
+echo "  Account Number:   ${ACCOUNT_NUMBER:-N/A}"
 echo "  Ledger ID:        ${LEDGER_ID:-N/A}"
+echo "  2nd Account ID:   ${ACCOUNT2_ID:-N/A}"
+echo "  Sub-Account ID:   ${SUB_ACCOUNT_ID:-N/A}"
 echo "  House Acct (USD): ${HOUSE_USD_ID:-N/A}"
 echo ""
 echo "Cleanup: make local-stop"

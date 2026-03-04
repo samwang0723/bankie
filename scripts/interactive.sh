@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 #
 # Bankie Interactive Console
-# Menu-driven tool for testing all Bankie API endpoints.
+# Menu-driven tool for testing all Bankie Core API and Gateway Portal API endpoints.
 #
 # Auto-detects JWT from Docker container, .docker-jwt-token, or .local-jwt-token.
 # Remembers last-used IDs across menu actions for convenience.
+# Portal operations (21-35) use cookie-based session auth on the Gateway (:4040).
 #
 # Usage:
 #   ./scripts/interactive.sh                  # auto-detect token
@@ -17,6 +18,7 @@ set -uo pipefail
 # Configuration
 # ---------------------------------------------------------------------------
 BASE_URL="${BASE_URL:-http://localhost:3030}"
+PORTAL_URL="${PORTAL_URL:-http://localhost:4040}"
 OUTBOX_WAIT="${OUTBOX_WAIT:-15}"
 
 # ---------------------------------------------------------------------------
@@ -39,6 +41,8 @@ LAST_LEDGER_ID=""
 LAST_USER_ID=""
 LAST_ACCOUNT_NUMBER=""
 LAST_CURRENCY="USD"
+PORTAL_LOGGED_IN=""
+PORTAL_EMAIL=""
 
 # ---------------------------------------------------------------------------
 # JWT Token Resolution
@@ -152,7 +156,74 @@ separator() {
 }
 
 # ---------------------------------------------------------------------------
-# Menu Actions
+# Portal Session Helpers (cookie-based auth for Gateway API)
+# ---------------------------------------------------------------------------
+COOKIE_JAR="/tmp/bankie_portal_cookies.txt"
+
+portal_get_csrf() {
+  # Extract csrf_token value from cookie jar
+  grep 'csrf_token' "$COOKIE_JAR" 2>/dev/null | awk '{print $NF}' | tail -1
+}
+
+portal_check_session() {
+  if [[ -z "$PORTAL_LOGGED_IN" ]]; then
+    echo -e "  ${RED}Not logged in to portal. Use option 21 first.${NC}"
+    return 1
+  fi
+  return 0
+}
+
+portal_get() {
+  local url="$1"
+  local response
+  response=$(curl -s -w "\n%{http_code}" -b "$COOKIE_JAR" "$url")
+  HTTP_STATUS=$(echo "$response" | tail -1)
+  HTTP_BODY=$(echo "$response" | sed '$d')
+}
+
+portal_post() {
+  local url="$1"
+  local body="${2:-{}}"
+  local csrf
+  csrf=$(portal_get_csrf)
+  local response
+  response=$(curl -s -w "\n%{http_code}" -X POST \
+    -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+    -H "$CT" -H "X-CSRF-Token: ${csrf}" \
+    -d "$body" "$url")
+  HTTP_STATUS=$(echo "$response" | tail -1)
+  HTTP_BODY=$(echo "$response" | sed '$d')
+}
+
+portal_put() {
+  local url="$1"
+  local body="${2:-{}}"
+  local csrf
+  csrf=$(portal_get_csrf)
+  local response
+  response=$(curl -s -w "\n%{http_code}" -X PUT \
+    -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+    -H "$CT" -H "X-CSRF-Token: ${csrf}" \
+    -d "$body" "$url")
+  HTTP_STATUS=$(echo "$response" | tail -1)
+  HTTP_BODY=$(echo "$response" | sed '$d')
+}
+
+portal_delete() {
+  local url="$1"
+  local csrf
+  csrf=$(portal_get_csrf)
+  local response
+  response=$(curl -s -w "\n%{http_code}" -X DELETE \
+    -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+    -H "X-CSRF-Token: ${csrf}" \
+    "$url")
+  HTTP_STATUS=$(echo "$response" | tail -1)
+  HTTP_BODY=$(echo "$response" | sed '$d')
+}
+
+# ---------------------------------------------------------------------------
+# Menu Actions — Core API (1-20)
 # ---------------------------------------------------------------------------
 
 action_health() {
@@ -762,6 +833,311 @@ else:
 }
 
 # ---------------------------------------------------------------------------
+# Menu Actions — Portal API (21-35)
+# ---------------------------------------------------------------------------
+
+action_portal_login() {
+  echo -e "\n${CYAN}Portal Login${NC}"
+  separator
+  local email password
+  email=$(prompt "Email" "$PORTAL_EMAIL")
+  read -rsp "  Password: " password
+  echo ""
+
+  local response
+  response=$(curl -s -w "\n%{http_code}" -X POST \
+    -c "$COOKIE_JAR" \
+    -H "$CT" \
+    -d "{\"email\":\"${email}\",\"password\":\"${password}\"}" \
+    "${PORTAL_URL}/portal/v1/auth/login")
+  HTTP_STATUS=$(echo "$response" | tail -1)
+  HTTP_BODY=$(echo "$response" | sed '$d')
+  print_status
+
+  if [[ "$HTTP_STATUS" =~ ^2 ]]; then
+    PORTAL_LOGGED_IN="yes"
+    PORTAL_EMAIL="$email"
+    success "Logged in as ${email}"
+    pretty_json "$HTTP_BODY"
+  else
+    echo -e "  ${RED}Login failed.${NC}"
+    pretty_json "$HTTP_BODY"
+  fi
+}
+
+action_portal_signup() {
+  echo -e "\n${CYAN}Portal Signup (Create Org + Owner)${NC}"
+  separator
+  local org_name name email password
+  org_name=$(prompt "Organization name" "")
+  name=$(prompt "Your name" "")
+  email=$(prompt "Email" "")
+  read -rsp "  Password: " password
+  echo ""
+
+  if [[ -z "$org_name" || -z "$email" || -z "$password" ]]; then
+    echo -e "  ${RED}All fields are required.${NC}"
+    return
+  fi
+
+  local response
+  response=$(curl -s -w "\n%{http_code}" -X POST \
+    -c "$COOKIE_JAR" \
+    -H "$CT" \
+    -d "{\"org_name\":\"${org_name}\",\"name\":\"${name}\",\"email\":\"${email}\",\"password\":\"${password}\"}" \
+    "${PORTAL_URL}/portal/v1/auth/signup")
+  HTTP_STATUS=$(echo "$response" | tail -1)
+  HTTP_BODY=$(echo "$response" | sed '$d')
+  print_status
+
+  if [[ "$HTTP_STATUS" =~ ^2 ]]; then
+    PORTAL_LOGGED_IN="yes"
+    PORTAL_EMAIL="$email"
+    success "Signed up and logged in as ${email}"
+    pretty_json "$HTTP_BODY"
+  else
+    echo -e "  ${RED}Signup failed.${NC}"
+    pretty_json "$HTTP_BODY"
+  fi
+}
+
+action_portal_dashboard() {
+  echo -e "\n${CYAN}Portal Dashboard Stats${NC}"
+  separator
+  portal_check_session || return
+
+  portal_get "${PORTAL_URL}/portal/v1/dashboard/stats"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_portal_activity() {
+  echo -e "\n${CYAN}Portal Activity Feed${NC}"
+  separator
+  portal_check_session || return
+
+  portal_get "${PORTAL_URL}/portal/v1/dashboard/activity"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_portal_org() {
+  echo -e "\n${CYAN}Portal Organization Details${NC}"
+  separator
+  portal_check_session || return
+
+  echo "  1) Get org details"
+  echo "  2) List rate limits"
+  read -rp "  Choice [1]: " choice
+  choice="${choice:-1}"
+
+  if [[ "$choice" == "2" ]]; then
+    portal_get "${PORTAL_URL}/portal/v1/dashboard/rate-limits"
+  else
+    # Get org_id from dashboard stats first
+    portal_get "${PORTAL_URL}/portal/v1/dashboard/stats"
+    pretty_json "$HTTP_BODY"
+  fi
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_portal_list_keys() {
+  echo -e "\n${CYAN}Portal: List API Keys${NC}"
+  separator
+  portal_check_session || return
+
+  portal_get "${PORTAL_URL}/portal/v1/api-keys"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_portal_create_key() {
+  echo -e "\n${CYAN}Portal: Create API Key${NC}"
+  separator
+  portal_check_session || return
+
+  local name scopes
+  name=$(prompt "Key name" "my-api-key")
+  scopes=$(prompt "Scopes (comma-separated)" "accounts:read,accounts:write,ledgers:read,transactions:read")
+
+  # Convert comma-separated to JSON array
+  local scopes_json
+  scopes_json=$(echo "$scopes" | python3 -c "import sys; print('[' + ','.join(['\"'+s.strip()+'\"' for s in sys.stdin.read().strip().split(',')]) + ']')")
+
+  portal_post "${PORTAL_URL}/portal/v1/api-keys" \
+    "{\"name\":\"${name}\",\"scopes\":${scopes_json}}"
+  print_status
+
+  if [[ "$HTTP_STATUS" =~ ^2 ]]; then
+    success "API key created. Save the raw_key — it won't be shown again!"
+    pretty_json "$HTTP_BODY"
+  else
+    echo -e "  ${RED}Failed to create API key.${NC}"
+    pretty_json "$HTTP_BODY"
+  fi
+}
+
+action_portal_rotate_key() {
+  echo -e "\n${CYAN}Portal: Rotate API Key${NC}"
+  separator
+  portal_check_session || return
+
+  local key_id
+  key_id=$(prompt "API Key ID (UUID)" "")
+  if [[ -z "$key_id" ]]; then
+    echo -e "  ${RED}Key ID is required.${NC}"
+    return
+  fi
+
+  portal_post "${PORTAL_URL}/portal/v1/api-keys/${key_id}/rotate" "{}"
+  print_status
+
+  if [[ "$HTTP_STATUS" =~ ^2 ]]; then
+    success "Key rotated. Save the new raw_key — it won't be shown again!"
+    pretty_json "$HTTP_BODY"
+  else
+    echo -e "  ${RED}Failed to rotate key.${NC}"
+    pretty_json "$HTTP_BODY"
+  fi
+}
+
+action_portal_revoke_key() {
+  echo -e "\n${CYAN}Portal: Revoke API Key${NC}"
+  separator
+  portal_check_session || return
+
+  local key_id
+  key_id=$(prompt "API Key ID (UUID)" "")
+  if [[ -z "$key_id" ]]; then
+    echo -e "  ${RED}Key ID is required.${NC}"
+    return
+  fi
+
+  portal_delete "${PORTAL_URL}/portal/v1/api-keys/${key_id}"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_portal_list_members() {
+  echo -e "\n${CYAN}Portal: List Members${NC}"
+  separator
+  portal_check_session || return
+
+  portal_get "${PORTAL_URL}/portal/v1/members"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_portal_invite_member() {
+  echo -e "\n${CYAN}Portal: Invite Member${NC}"
+  separator
+  portal_check_session || return
+
+  local email role name
+  email=$(prompt "Invite email" "")
+  role=$(prompt "Role (admin/member)" "member")
+  name=$(prompt "Name (optional)" "")
+
+  if [[ -z "$email" ]]; then
+    echo -e "  ${RED}Email is required.${NC}"
+    return
+  fi
+
+  local body="{\"email\":\"${email}\",\"role\":\"${role}\""
+  [[ -n "$name" ]] && body="${body},\"name\":\"${name}\""
+  body="${body}}"
+
+  portal_post "${PORTAL_URL}/portal/v1/members/invite" "$body"
+  print_status
+
+  if [[ "$HTTP_STATUS" =~ ^2 ]]; then
+    success "Invite sent. Share the invite_link with the new member."
+    pretty_json "$HTTP_BODY"
+  else
+    echo -e "  ${RED}Failed to invite member.${NC}"
+    pretty_json "$HTTP_BODY"
+  fi
+}
+
+action_portal_list_webhooks() {
+  echo -e "\n${CYAN}Portal: List Webhook Endpoints${NC}"
+  separator
+  portal_check_session || return
+
+  portal_get "${PORTAL_URL}/portal/v1/webhooks"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_portal_create_webhook() {
+  echo -e "\n${CYAN}Portal: Create Webhook Endpoint${NC}"
+  separator
+  portal_check_session || return
+
+  local url events desc
+  url=$(prompt "Endpoint URL" "https://example.com/webhooks")
+  events=$(prompt "Event types (comma-separated)" "account.opened,account.approved,transaction.completed")
+  desc=$(prompt "Description (optional)" "")
+
+  # Convert to JSON array
+  local events_json
+  events_json=$(echo "$events" | python3 -c "import sys; print('[' + ','.join(['\"'+s.strip()+'\"' for s in sys.stdin.read().strip().split(',')]) + ']')")
+
+  local body="{\"url\":\"${url}\",\"event_types\":${events_json}"
+  [[ -n "$desc" ]] && body="${body},\"description\":\"${desc}\""
+  body="${body}}"
+
+  portal_post "${PORTAL_URL}/portal/v1/webhooks" "$body"
+  print_status
+
+  if [[ "$HTTP_STATUS" =~ ^2 ]]; then
+    success "Webhook created. Save the signing_secret — it won't be shown again!"
+    pretty_json "$HTTP_BODY"
+  else
+    echo -e "  ${RED}Failed to create webhook.${NC}"
+    pretty_json "$HTTP_BODY"
+  fi
+}
+
+action_portal_api_logs() {
+  echo -e "\n${CYAN}Portal: API Logs${NC}"
+  separator
+  portal_check_session || return
+
+  local page per_page method status_code
+  page=$(prompt "Page" "1")
+  per_page=$(prompt "Per page" "20")
+  method=$(prompt "Method filter (GET/POST/etc, blank to skip)" "")
+  status_code=$(prompt "Status code filter (200/404/etc, blank to skip)" "")
+
+  local url="${PORTAL_URL}/portal/v1/logs?page=${page}&per_page=${per_page}"
+  [[ -n "$method" ]] && url="${url}&method=${method}"
+  [[ -n "$status_code" ]] && url="${url}&status_code=${status_code}"
+
+  portal_get "$url"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_portal_audit_logs() {
+  echo -e "\n${CYAN}Portal: Audit Logs${NC}"
+  separator
+  portal_check_session || return
+
+  local action_filter limit
+  action_filter=$(prompt "Action filter (e.g. auth.login_success, blank for all)" "")
+  limit=$(prompt "Limit" "20")
+
+  local url="${PORTAL_URL}/portal/v1/audit-logs?limit=${limit}&offset=0"
+  [[ -n "$action_filter" ]] && url="${url}&action=${action_filter}"
+
+  portal_get "$url"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+# ---------------------------------------------------------------------------
 # Main Menu
 # ---------------------------------------------------------------------------
 
@@ -803,14 +1179,32 @@ print_menu() {
   echo -e "    ${GREEN}19${NC}) List all accounts"
   echo -e "    ${GREEN}20${NC}) Health check"
   echo ""
+  echo -e "  ${BOLD}Portal Operations${NC}  ${DIM}(Gateway :4040)${NC}"
+  echo -e "    ${GREEN}21${NC}) Portal login"
+  echo -e "    ${GREEN}22${NC}) Portal signup (new org)"
+  echo -e "    ${GREEN}23${NC}) Dashboard stats"
+  echo -e "    ${GREEN}24${NC}) Activity feed"
+  echo -e "    ${GREEN}25${NC}) Organization / rate limits"
+  echo -e "    ${GREEN}26${NC}) List API keys"
+  echo -e "    ${GREEN}27${NC}) Create API key"
+  echo -e "    ${GREEN}28${NC}) Rotate API key"
+  echo -e "    ${GREEN}29${NC}) Revoke API key"
+  echo -e "    ${GREEN}30${NC}) List members"
+  echo -e "    ${GREEN}31${NC}) Invite member"
+  echo -e "    ${GREEN}32${NC}) List webhooks"
+  echo -e "    ${GREEN}33${NC}) Create webhook"
+  echo -e "    ${GREEN}34${NC}) API logs"
+  echo -e "    ${GREEN}35${NC}) Audit logs"
+  echo ""
 
   # Show remembered state
-  if [[ -n "$LAST_ACCOUNT_ID" || -n "$LAST_LEDGER_ID" || -n "$LAST_USER_ID" ]]; then
+  if [[ -n "$LAST_ACCOUNT_ID" || -n "$LAST_LEDGER_ID" || -n "$LAST_USER_ID" || -n "$PORTAL_LOGGED_IN" ]]; then
     echo -e "  ${DIM}Remembered:${NC}"
     [[ -n "$LAST_ACCOUNT_ID" ]] && echo -e "    ${DIM}Account:  ${LAST_ACCOUNT_ID}${NC}"
     [[ -n "$LAST_LEDGER_ID" ]] && echo -e "    ${DIM}Ledger:   ${LAST_LEDGER_ID}${NC}"
     [[ -n "$LAST_USER_ID" ]] && echo -e "    ${DIM}User:     ${LAST_USER_ID}${NC}"
     [[ -n "$LAST_ACCOUNT_NUMBER" ]] && echo -e "    ${DIM}Acct #:   ${LAST_ACCOUNT_NUMBER}${NC}"
+    [[ -n "$PORTAL_LOGGED_IN" ]] && echo -e "    ${DIM}Portal:   ${PORTAL_EMAIL} (logged in)${NC}"
     echo ""
   fi
 
@@ -822,11 +1216,12 @@ print_menu() {
 # Main Loop
 # ---------------------------------------------------------------------------
 echo -e "\n${GREEN}Connected to ${BASE_URL}${NC}"
+echo -e "${GREEN}Portal at ${PORTAL_URL}${NC}"
 echo -e "${DIM}Token: ${TOKEN_VALUE:0:20}...${NC}"
 
 while true; do
   print_menu
-  read -rp "  Choose [0-20]: " choice
+  read -rp "  Choose [0-35]: " choice
 
   case "$choice" in
     1)  action_open_account ;;
@@ -849,6 +1244,21 @@ while true; do
     18) action_quick_flow ;;
     19) action_list_accounts ;;
     20) action_health ;;
+    21) action_portal_login ;;
+    22) action_portal_signup ;;
+    23) action_portal_dashboard ;;
+    24) action_portal_activity ;;
+    25) action_portal_org ;;
+    26) action_portal_list_keys ;;
+    27) action_portal_create_key ;;
+    28) action_portal_rotate_key ;;
+    29) action_portal_revoke_key ;;
+    30) action_portal_list_members ;;
+    31) action_portal_invite_member ;;
+    32) action_portal_list_webhooks ;;
+    33) action_portal_create_webhook ;;
+    34) action_portal_api_logs ;;
+    35) action_portal_audit_logs ;;
     0|q|Q|exit)
       echo -e "\n${GREEN}Bye!${NC}\n"
       exit 0
