@@ -833,6 +833,142 @@ else:
 }
 
 # ---------------------------------------------------------------------------
+# Menu Actions — Tenant Management (36-37)
+# ---------------------------------------------------------------------------
+
+action_switch_tenant() {
+  echo -e "\n${CYAN}Switch Tenant (Generate/Reuse JWT)${NC}"
+  separator
+
+  # Show current tenant info
+  local current_sub current_tid
+  current_sub=$(echo "$TOKEN_VALUE" | awk -F. '{print $2}' | python3 -c "
+import sys, base64, json
+payload = sys.stdin.read().strip()
+# Add padding
+payload += '=' * (4 - len(payload) % 4)
+data = json.loads(base64.urlsafe_b64decode(payload))
+print(data.get('sub', '?'))
+" 2>/dev/null || echo "?")
+  current_tid=$(echo "$TOKEN_VALUE" | awk -F. '{print $2}' | python3 -c "
+import sys, base64, json
+payload = sys.stdin.read().strip()
+payload += '=' * (4 - len(payload) % 4)
+data = json.loads(base64.urlsafe_b64decode(payload))
+print(data.get('tenant_id', '?'))
+" 2>/dev/null || echo "?")
+
+  echo -e "  Current tenant: ${BOLD}${current_sub}${NC} (tenant_id: ${current_tid})"
+  echo ""
+
+  local service_name
+  service_name=$(prompt "Service name (new name = new tenant)" "$current_sub")
+
+  if [[ -z "$service_name" ]]; then
+    echo -e "  ${RED}Service name is required.${NC}"
+    return
+  fi
+
+  # Try Docker container first
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^bankie$'; then
+    echo -e "  ${DIM}Generating JWT for '${service_name}' via Docker...${NC}"
+    local new_token
+    new_token=$(docker exec bankie /app/bankie --mode jwt --service "$service_name" 2>&1 | \
+      grep -oE 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | head -1)
+
+    if [[ -n "$new_token" ]]; then
+      TOKEN_VALUE="$new_token"
+      AUTH="Authorization: Bearer ${TOKEN_VALUE}"
+      echo "$new_token" > .docker-jwt-token
+
+      # Decode and show new tenant info
+      local new_sub new_tid
+      new_sub=$(echo "$TOKEN_VALUE" | awk -F. '{print $2}' | python3 -c "
+import sys, base64, json
+payload = sys.stdin.read().strip()
+payload += '=' * (4 - len(payload) % 4)
+data = json.loads(base64.urlsafe_b64decode(payload))
+print(data.get('sub', '?'))
+" 2>/dev/null || echo "?")
+      new_tid=$(echo "$TOKEN_VALUE" | awk -F. '{print $2}' | python3 -c "
+import sys, base64, json
+payload = sys.stdin.read().strip()
+payload += '=' * (4 - len(payload) % 4)
+data = json.loads(base64.urlsafe_b64decode(payload))
+print(data.get('tenant_id', '?'))
+" 2>/dev/null || echo "?")
+
+      success "Switched to tenant: ${new_sub} (tenant_id: ${new_tid})"
+      echo -e "  ${DIM}Token saved to .docker-jwt-token${NC}"
+    else
+      echo -e "  ${RED}Failed to generate JWT. Check Docker container logs.${NC}"
+    fi
+  else
+    # Try local binary
+    local bankie_bin=""
+    for candidate in ./target/release/bankie ./target/debug/bankie; do
+      if [[ -x "$candidate" ]]; then
+        bankie_bin="$candidate"
+        break
+      fi
+    done
+
+    if [[ -n "$bankie_bin" ]]; then
+      echo -e "  ${DIM}Generating JWT for '${service_name}' via local binary...${NC}"
+      local new_token
+      new_token=$($bankie_bin --mode jwt --service "$service_name" 2>&1 | \
+        grep -oE 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | head -1)
+
+      if [[ -n "$new_token" ]]; then
+        TOKEN_VALUE="$new_token"
+        AUTH="Authorization: Bearer ${TOKEN_VALUE}"
+        echo "$new_token" > .local-jwt-token
+        success "Switched to tenant: ${service_name}"
+      else
+        echo -e "  ${RED}Failed to generate JWT.${NC}"
+      fi
+    else
+      echo -e "  ${RED}No bankie binary found (Docker or local). Cannot generate JWT.${NC}"
+      echo -e "  ${YELLOW}Tip: Start Docker (make docker-up) or build locally (cargo build --release).${NC}"
+    fi
+  fi
+}
+
+action_show_tenant() {
+  echo -e "\n${CYAN}Current Tenant Info (JWT Decode)${NC}"
+  separator
+
+  echo "$TOKEN_VALUE" | awk -F. '{print $2}' | python3 -c "
+import sys, base64, json
+from datetime import datetime, timezone
+
+payload = sys.stdin.read().strip()
+payload += '=' * (4 - len(payload) % 4)
+data = json.loads(base64.urlsafe_b64decode(payload))
+
+print(f'  Service (sub):  {data.get(\"sub\", \"?\")}')
+print(f'  Tenant ID:      {data.get(\"tenant_id\", \"?\")}')
+print(f'  Issuer:         {data.get(\"iss\", \"?\")}')
+print(f'  Audience:       {data.get(\"aud\", \"?\")}')
+scopes = data.get('scopes', [])
+print(f'  Scopes:         {\", \".join(scopes) if scopes else \"(none)\"}')
+exp = data.get('exp')
+if exp:
+    exp_dt = datetime.fromtimestamp(exp, tz=timezone.utc)
+    remaining = exp_dt - datetime.now(tz=timezone.utc)
+    days = remaining.days
+    print(f'  Expires:        {exp_dt.strftime(\"%Y-%m-%d %H:%M UTC\")} ({days}d remaining)')
+iat = data.get('iat')
+if iat:
+    iat_dt = datetime.fromtimestamp(iat, tz=timezone.utc)
+    print(f'  Issued:         {iat_dt.strftime(\"%Y-%m-%d %H:%M UTC\")}')
+" 2>/dev/null || echo -e "  ${RED}Failed to decode JWT.${NC}"
+
+  echo ""
+  echo -e "  ${DIM}Token: ${TOKEN_VALUE:0:30}...${NC}"
+}
+
+# ---------------------------------------------------------------------------
 # Menu Actions — Portal API (21-35)
 # ---------------------------------------------------------------------------
 
@@ -1179,6 +1315,10 @@ print_menu() {
   echo -e "    ${GREEN}19${NC}) List all accounts"
   echo -e "    ${GREEN}20${NC}) Health check"
   echo ""
+  echo -e "  ${BOLD}Tenant${NC}"
+  echo -e "    ${GREEN}36${NC}) Switch tenant (generate JWT)"
+  echo -e "    ${GREEN}37${NC}) Show current tenant info"
+  echo ""
   echo -e "  ${BOLD}Portal Operations${NC}  ${DIM}(Gateway :4040)${NC}"
   echo -e "    ${GREEN}21${NC}) Portal login"
   echo -e "    ${GREEN}22${NC}) Portal signup (new org)"
@@ -1221,7 +1361,7 @@ echo -e "${DIM}Token: ${TOKEN_VALUE:0:20}...${NC}"
 
 while true; do
   print_menu
-  read -rp "  Choose [0-35]: " choice
+  read -rp "  Choose [0-37]: " choice
 
   case "$choice" in
     1)  action_open_account ;;
@@ -1259,6 +1399,8 @@ while true; do
     33) action_portal_create_webhook ;;
     34) action_portal_api_logs ;;
     35) action_portal_audit_logs ;;
+    36) action_switch_tenant ;;
+    37) action_show_tenant ;;
     0|q|Q|exit)
       echo -e "\n${GREEN}Bye!${NC}\n"
       exit 0
