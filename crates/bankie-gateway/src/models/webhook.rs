@@ -1,10 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 // === Endpoint Status ===
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EndpointStatus {
     Active,
@@ -34,7 +35,7 @@ impl std::str::FromStr for EndpointStatus {
 
 // === Delivery Status ===
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DeliveryStatus {
     Pending,
@@ -95,12 +96,13 @@ pub fn validate_event_types(event_types: &[String]) -> Result<(), Vec<String>> {
 
 // === Domain Models ===
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct WebhookEndpoint {
     pub id: Uuid,
     pub org_id: Uuid,
     pub url: String,
     #[serde(skip_serializing)]
+    #[schema(ignore)]
     pub signing_secret: String,
     pub event_types: Vec<String>,
     pub description: Option<String>,
@@ -111,7 +113,7 @@ pub struct WebhookEndpoint {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct WebhookDelivery {
     pub id: Uuid,
     pub endpoint_id: Uuid,
@@ -143,14 +145,14 @@ pub struct WebhookEvent {
 
 // === Request DTOs ===
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateEndpointRequest {
     pub url: String,
     pub event_types: Vec<String>,
     pub description: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateEndpointRequest {
     pub url: Option<String>,
     pub event_types: Option<Vec<String>>,
@@ -160,7 +162,7 @@ pub struct UpdateEndpointRequest {
 
 // === Response DTOs ===
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CreateEndpointResponse {
     pub id: Uuid,
     pub url: String,
@@ -171,7 +173,7 @@ pub struct CreateEndpointResponse {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct EndpointListItem {
     pub id: Uuid,
     pub url: String,
@@ -184,7 +186,7 @@ pub struct EndpointListItem {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct DeliveryListItem {
     pub id: Uuid,
     pub event_type: String,
@@ -197,7 +199,7 @@ pub struct DeliveryListItem {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RotateSecretResponse {
     pub new_signing_secret: String,
     pub grace_expires_at: DateTime<Utc>,
@@ -225,7 +227,7 @@ pub struct WebhookPayload {
 
 // === API Log types (for viewer) ===
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ApiLogEntry {
     pub id: i64,
     pub api_key_id: Option<Uuid>,

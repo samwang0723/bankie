@@ -440,6 +440,7 @@ mod tests {
             role: role.to_string(),
             csrf: csrf.to_string(),
             exp: (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp() as usize,
+            jti: String::new(),
         }
     }
 
@@ -452,6 +453,7 @@ mod tests {
             role: role.to_string(),
             csrf: csrf.to_string(),
             exp: (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp() as usize,
+            jti: String::new(),
         }
     }
 

@@ -10,7 +10,9 @@ use bankie_common::error::AppError;
 
 use crate::middleware::rbac::require_org_management;
 use crate::models::auth::SessionClaims;
+use crate::models::dashboard::NewAuditLog;
 use crate::models::org::{slugify, CreateOrgRequest, Organization, UpdateOrgRequest};
+use crate::repo::dashboard::DashboardRepository;
 use crate::state::PortalState;
 
 /// Protected org management routes (session auth required).
@@ -114,12 +116,55 @@ async fn update_org(
 
     let org = state
         .org_repo
-        .update(id, req.name, req.status)
+        .update(id, req.name.clone(), req.status.clone())
         .await
         .map_err(AppError::internal)?
         .ok_or_else(|| AppError::NotFound("Organization not found".to_string()))?;
 
+    // Audit: org.updated
+    let changes = serde_json::json!({
+        "before": {"name": existing.name, "status": existing.status},
+        "after": {"name": org.name, "status": org.status},
+    });
+    audit_log(
+        &state.dashboard_repo,
+        org.id,
+        &claims.sub,
+        "org.updated",
+        "organization",
+        Some(org.id.to_string()),
+        Some(changes),
+    )
+    .await;
+
     Ok(Json(org))
+}
+
+/// Best-effort audit log insertion. Failures are logged but not propagated.
+async fn audit_log(
+    dashboard_repo: &Arc<dyn DashboardRepository>,
+    org_id: uuid::Uuid,
+    actor_id: &str,
+    action: &str,
+    resource_type: &str,
+    resource_id: Option<String>,
+    changes: Option<serde_json::Value>,
+) {
+    let actor_uuid = actor_id.parse().unwrap_or_default();
+    if let Err(e) = dashboard_repo
+        .insert_audit_log(NewAuditLog {
+            org_id,
+            actor_id: actor_uuid,
+            action: action.to_string(),
+            resource_type: resource_type.to_string(),
+            resource_id,
+            changes,
+            client_ip: None,
+        })
+        .await
+    {
+        tracing::warn!("Failed to insert audit log: {}", e);
+    }
 }
 
 #[cfg(test)]
@@ -143,15 +188,28 @@ mod tests {
     use crate::repo::webhook::MockWebhookRepository;
 
     fn make_state(org_repo: MockOrgRepository) -> Arc<PortalState> {
+        make_state_with_dashboard(org_repo, MockDashboardRepository::new())
+    }
+
+    fn make_state_with_dashboard(
+        org_repo: MockOrgRepository,
+        dashboard_repo: MockDashboardRepository,
+    ) -> Arc<PortalState> {
         Arc::new(PortalState {
             org_repo: Arc::new(org_repo),
             member_repo: Arc::new(MockMemberRepository::new()),
             api_key_repo: Arc::new(MockApiKeyRepository::new()),
-            dashboard_repo: Arc::new(MockDashboardRepository::new()),
+            dashboard_repo: Arc::new(dashboard_repo),
             webhook_repo: Arc::new(MockWebhookRepository::new()),
             jwt_secret: "test-secret-key-at-least-32-chars-long!!".to_string(),
             redis_client: None,
         })
+    }
+
+    fn mock_dashboard_with_audit() -> MockDashboardRepository {
+        let mut mock = MockDashboardRepository::new();
+        mock.expect_insert_audit_log().returning(|_| Ok(()));
+        mock
     }
 
     fn make_jwt(secret: &str, claims: &SessionClaims) -> String {
@@ -172,6 +230,7 @@ mod tests {
             role: "owner".to_string(),
             csrf: csrf.to_string(),
             exp: (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp() as usize,
+            jti: String::new(),
         }
     }
 
@@ -184,6 +243,7 @@ mod tests {
             role: "member".to_string(),
             csrf: csrf.to_string(),
             exp: (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp() as usize,
+            jti: String::new(),
         }
     }
 
@@ -424,7 +484,7 @@ mod tests {
                 Ok(Some(updated))
             });
 
-        let state = make_state(org_repo);
+        let state = make_state_with_dashboard(org_repo, mock_dashboard_with_audit());
         let csrf = "csrf123";
         let claims = owner_claims(&org_id.to_string(), csrf);
         let jwt = make_jwt(&state.jwt_secret, &claims);

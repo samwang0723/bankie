@@ -444,6 +444,23 @@ impl DatabaseClient for PgPool {
     }
 
     async fn create_tenant_profile(&self, name: &str, scope: &str) -> Result<i32, Error> {
+        // Return existing tenant id if one with the same name already exists
+        let existing = sqlx::query_scalar!(r#"SELECT id FROM tenants WHERE name = $1"#, name)
+            .fetch_optional(self)
+            .await?;
+
+        if let Some(id) = existing {
+            return Ok(id);
+        }
+
+        // Ensure the SERIAL sequence is ahead of any existing rows to avoid
+        // duplicate-key errors after data from other sources (e.g. portal org sync).
+        sqlx::query!(
+            r#"SELECT setval('tenants_id_seq', GREATEST(nextval('tenants_id_seq'), (SELECT COALESCE(MAX(id), 0) + 1 FROM tenants)))"#
+        )
+        .fetch_one(self)
+        .await?;
+
         let rec = sqlx::query!(
             r#"
             INSERT INTO tenants (name, status, jwt, scope)

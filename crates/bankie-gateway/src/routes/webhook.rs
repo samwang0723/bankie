@@ -46,11 +46,17 @@ fn parse_org_id(claims: &SessionClaims) -> Result<uuid::Uuid, AppError> {
 }
 
 /// Validate that a URL uses HTTPS (required for webhook endpoints in production).
+/// In local/docker environments, HTTP is allowed for development testing.
 fn validate_https_url(url: &str) -> Result<(), AppError> {
+    let env = std::env::var("ENV").unwrap_or_else(|_| "local".to_string());
+    validate_https_url_for_env(url, &env)
+}
+
+fn validate_https_url_for_env(url: &str, env: &str) -> Result<(), AppError> {
     if url.is_empty() {
         return Err(AppError::BadRequest("url is required".to_string()));
     }
-    if !url.starts_with("https://") {
+    if !url.starts_with("https://") && env != "local" && env != "docker" {
         return Err(AppError::BadRequest(
             "Webhook URL must use HTTPS".to_string(),
         ));
@@ -71,7 +77,10 @@ async fn create_endpoint(
     require_api_key_management(&claims)?;
 
     validate_https_url(&req.url)?;
-    validate_url_hostname(&req.url).map_err(AppError::BadRequest)?;
+    let env = std::env::var("ENV").unwrap_or_else(|_| "local".to_string());
+    if env != "local" && env != "docker" {
+        validate_url_hostname(&req.url).map_err(AppError::BadRequest)?;
+    }
 
     if req.event_types.is_empty() {
         return Err(AppError::BadRequest(
@@ -209,7 +218,10 @@ async fn update_endpoint(
     // Validate URL if provided
     if let Some(ref url) = req.url {
         validate_https_url(url)?;
-        validate_url_hostname(url).map_err(AppError::BadRequest)?;
+        let env = std::env::var("ENV").unwrap_or_else(|_| "local".to_string());
+        if env != "local" && env != "docker" {
+            validate_url_hostname(url).map_err(AppError::BadRequest)?;
+        }
     }
 
     // Validate event types if provided
@@ -505,6 +517,7 @@ mod tests {
             role: "owner".to_string(),
             csrf: csrf.to_string(),
             exp: 9999999999,
+            jti: String::new(),
         }
     }
 
@@ -517,6 +530,7 @@ mod tests {
             role: "member".to_string(),
             csrf: csrf.to_string(),
             exp: 9999999999,
+            jti: String::new(),
         }
     }
 
@@ -642,9 +656,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_endpoint_invalid_url_http() {
-        let mock = MockWebhookRepository::new();
+    async fn test_create_endpoint_http_allowed_in_local_env() {
+        // In local env (default), HTTP URLs are allowed for dev testing
+        let mut mock = MockWebhookRepository::new();
         let org_id = uuid::Uuid::new_v4();
+
+        mock.expect_create_endpoint()
+            .returning(move |id, oid, url, secret, event_types, desc| {
+                Ok(WebhookEndpoint {
+                    id,
+                    org_id: oid,
+                    url,
+                    signing_secret: secret,
+                    event_types,
+                    description: desc,
+                    status: EndpointStatus::Active,
+                    failure_count: 0,
+                    disabled_at: None,
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                })
+            });
 
         let state = make_state(mock);
         let csrf = "test-csrf";
@@ -675,7 +707,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        // HTTP is allowed in local env (ENV not set or "local")
+        assert_eq!(resp.status(), StatusCode::CREATED);
     }
 
     #[tokio::test]
@@ -1031,16 +1064,26 @@ mod tests {
 
     #[test]
     fn test_validate_https_url_valid() {
-        assert!(validate_https_url("https://example.com/hook").is_ok());
+        assert!(validate_https_url_for_env("https://example.com/hook", "production").is_ok());
     }
 
     #[test]
-    fn test_validate_https_url_http_rejected() {
-        assert!(validate_https_url("http://example.com/hook").is_err());
+    fn test_validate_https_url_http_rejected_in_production() {
+        assert!(validate_https_url_for_env("http://example.com/hook", "production").is_err());
+    }
+
+    #[test]
+    fn test_validate_https_url_http_allowed_in_local() {
+        assert!(validate_https_url_for_env("http://example.com/hook", "local").is_ok());
+    }
+
+    #[test]
+    fn test_validate_https_url_http_allowed_in_docker() {
+        assert!(validate_https_url_for_env("http://example.com/hook", "docker").is_ok());
     }
 
     #[test]
     fn test_validate_https_url_empty_rejected() {
-        assert!(validate_https_url("").is_err());
+        assert!(validate_https_url_for_env("", "production").is_err());
     }
 }

@@ -8,6 +8,7 @@ COPY Cargo.toml Cargo.lock .
 COPY crates/bankie-common/Cargo.toml crates/bankie-common/Cargo.toml
 COPY crates/bankie-core/Cargo.toml crates/bankie-core/Cargo.toml
 COPY crates/bankie-gateway/Cargo.toml crates/bankie-gateway/Cargo.toml
+COPY crates/healthcheck/Cargo.toml crates/healthcheck/Cargo.toml
 
 # Create dummy source files for dependency pre-build
 RUN mkdir -p crates/bankie-common/src && \
@@ -18,8 +19,10 @@ RUN mkdir -p crates/bankie-common/src && \
     echo "fn main() {}" > crates/bankie-core/src/repository/migrate.rs && \
     mkdir -p crates/bankie-gateway/src && \
     echo "fn main() {}" > crates/bankie-gateway/src/main.rs && \
-    echo "" > crates/bankie-gateway/src/lib.rs
-RUN cargo build --release --bin bankie --bin migrations --bin bankie-gateway || true
+    echo "" > crates/bankie-gateway/src/lib.rs && \
+    mkdir -p crates/healthcheck/src && \
+    echo "fn main() {}" > crates/healthcheck/src/main.rs
+RUN cargo build --release --bin bankie --bin migrations --bin bankie-gateway --bin healthcheck || true
 
 # Copy real source code
 COPY crates crates
@@ -29,9 +32,9 @@ COPY crates/bankie-core/.sqlx crates/bankie-core/.sqlx
 ENV SQLX_OFFLINE=true
 
 RUN touch crates/bankie-common/src/lib.rs crates/bankie-core/src/main.rs crates/bankie-core/src/repository/migrate.rs crates/bankie-gateway/src/main.rs crates/bankie-gateway/src/lib.rs
-RUN cargo build --release --bin bankie --bin migrations --bin bankie-gateway
+RUN cargo build --release --bin bankie --bin migrations --bin bankie-gateway --bin healthcheck
 
-RUN strip target/release/bankie target/release/migrations target/release/bankie-gateway
+RUN strip target/release/bankie target/release/migrations target/release/bankie-gateway target/release/healthcheck
 
 # Stage 2: Migrations runner (needs full OS for DB tools)
 FROM debian:bookworm-slim AS migrations
@@ -51,6 +54,7 @@ FROM gcr.io/distroless/cc-debian12 AS release
 WORKDIR /app
 
 COPY --from=builder /app/target/release/bankie /app/bankie
+COPY --from=builder /app/target/release/healthcheck /app/healthcheck
 COPY --from=builder /app/config.*.yaml /app/
 
 # This container exposes ports to the outside world
@@ -64,6 +68,7 @@ FROM gcr.io/distroless/cc-debian12 AS gateway
 WORKDIR /app
 
 COPY --from=builder /app/target/release/bankie-gateway /app/bankie-gateway
+COPY --from=builder /app/target/release/healthcheck /app/healthcheck
 COPY --from=builder /app/config.*.yaml /app/
 
 EXPOSE 4040

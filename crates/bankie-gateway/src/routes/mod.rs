@@ -1,4 +1,5 @@
 pub mod api_key;
+pub mod audit_log;
 pub mod auth;
 pub mod dashboard;
 pub mod data_proxy;
@@ -30,6 +31,7 @@ pub fn portal_router(state: Arc<PortalState>) -> Router {
         .merge(member::member_routes())
         .merge(webhook::webhook_routes())
         .merge(logs::logs_routes())
+        .merge(audit_log::audit_log_routes())
         .route_layer(axum_mw::from_fn_with_state(
             Arc::clone(&state),
             session_auth,

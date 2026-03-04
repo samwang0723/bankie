@@ -58,11 +58,19 @@ make local-stop                          # Stop server + gateway + tear down inf
 cd portal-spa && npm install && npm run dev   # Vite dev server on :5173 (proxies /api to :4040)
 cd portal-spa && npm run build                # Production build to dist/
 
-# Interactive testing console (menu-driven, all API operations)
+# Demo (via Gateway, auto-creates portal org + API key)
+make docker-up && ./scripts/demo.sh     # Docker full-stack
+make local-setup && make local-gateway && make local-demo  # Local dev
+
+# Core API tests (direct to :3030 with JWT, no Gateway)
+make docker-core-test                    # Against Docker stack
+make local-core-test                     # Against local dev
+
+# Interactive testing console (menu-driven, all API operations via Gateway)
 make docker-interactive                  # Against Docker stack
 make local-interactive                   # Against local dev
 
-# Generate JWT
+# Generate JWT (for core-test.sh and e2e-test.sh)
 cargo run --bin bankie -- --mode secret_key              # Generate secret
 cargo run --bin bankie -- --mode jwt --service {name}    # Generate tenant JWT
 
@@ -379,8 +387,10 @@ React 19 + Vite + TailwindCSS 4 + TanStack Query. Source at `portal-spa/src/`.
 - Gateway uses `mockall` on `OrgRepository`, `MemberRepository`, `ApiKeyRepository`, `WebhookRepository` traits
 - Gateway middleware tests (session, JWT minter, scope enforcer) use mock repos + tower's `oneshot`
 - Webhook tests: 20 model unit tests, 17 repo trait tests, 14 signing tests, 16 route tests, 5 dispatcher tests, 8 deliverer tests, 15 PII redaction tests, 9 logs route tests
-- E2E tests (`scripts/e2e-test.sh`) cover full banking lifecycle
-- Interactive testing console (`scripts/interactive.sh`) for manual API testing
+- E2E tests (`scripts/e2e-test.sh`) cover full banking lifecycle (direct Core API with JWT)
+- Core API tests (`scripts/core-test.sh`) — automated direct Core API testing with JWT auth
+- Demo script (`scripts/demo.sh`) — full lifecycle via Gateway with API key auth (auto-creates portal org)
+- Interactive console (`scripts/interactive.sh`) — menu-driven, routes Core API calls through Gateway with API key auth
 
 ## SQLx Offline Mode
 

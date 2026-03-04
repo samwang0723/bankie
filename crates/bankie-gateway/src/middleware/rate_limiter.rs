@@ -1,8 +1,11 @@
+use std::num::NonZeroU32;
+
 use axum::{
     body::Body,
     http::{Request, Response, StatusCode},
     middleware::Next,
 };
+use governor::{Quota, RateLimiter};
 use tracing::{error, warn};
 
 use crate::redis_ops;
@@ -14,6 +17,12 @@ pub const DEFAULT_BURST_CAP: i64 = 100;
 /// Default sustained rate (requests per minute).
 pub const DEFAULT_SUSTAINED_CAP: i64 = 1000;
 
+/// In-memory fallback burst capacity (per instance, lower than Redis).
+const FALLBACK_BURST: u32 = 50;
+
+/// In-memory fallback sustained rate (requests per minute, per instance).
+const FALLBACK_SUSTAINED_PER_MIN: u32 = 500;
+
 /// Redis key prefix for rate limiting.
 const RATE_LIMIT_PREFIX: &str = "gw:rate:";
 
@@ -22,6 +31,19 @@ pub const THROTTLED_PREFIX: &str = "gw:throttled:";
 
 /// TTL for throttled counters (24 hours).
 const THROTTLED_TTL_SECS: i64 = 86400;
+
+lazy_static::lazy_static! {
+    /// In-memory keyed rate limiter using governor, used as fallback when Redis is unavailable.
+    static ref FALLBACK_LIMITER: RateLimiter<
+        String,
+        governor::state::keyed::DashMapStateStore<String>,
+        governor::clock::DefaultClock,
+    > = {
+        let quota = Quota::per_minute(NonZeroU32::new(FALLBACK_SUSTAINED_PER_MIN).unwrap())
+            .allow_burst(NonZeroU32::new(FALLBACK_BURST).unwrap());
+        RateLimiter::dashmap(quota)
+    };
+}
 
 /// Rate limiter middleware using Redis token bucket algorithm.
 ///
@@ -100,8 +122,28 @@ pub async fn rate_limiter(req: Request<Body>, next: Next) -> Result<Response<Bod
             set_rate_limit_headers(&mut response, DEFAULT_BURST_CAP, rl.remaining, rl.reset_at);
             Ok(response)
         }
-        // Fail open: no rate limit info available
-        None => Ok(next.run(req).await),
+        // Fallback: in-memory governor rate limiter when Redis is unavailable
+        None => {
+            let key = resolved.api_key_id.to_string();
+            match FALLBACK_LIMITER.check_key(&key) {
+                Ok(_) => Ok(next.run(req).await),
+                Err(_) => {
+                    warn!(
+                        api_key_id = %resolved.api_key_id,
+                        "Rate limit exceeded (in-memory fallback)"
+                    );
+                    let mut response = Response::new(Body::from(
+                        serde_json::json!({
+                            "code": 429,
+                            "message": "Rate limit exceeded"
+                        })
+                        .to_string(),
+                    ));
+                    *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
+                    Ok(response)
+                }
+            }
+        }
     }
 }
 
@@ -150,5 +192,29 @@ mod tests {
     fn test_default_burst_and_sustained() {
         assert_eq!(DEFAULT_BURST_CAP, 100);
         assert_eq!(DEFAULT_SUSTAINED_CAP, 1000);
+    }
+
+    #[test]
+    fn test_fallback_limiter_constants() {
+        assert_eq!(FALLBACK_BURST, 50);
+        assert_eq!(FALLBACK_SUSTAINED_PER_MIN, 500);
+    }
+
+    #[test]
+    fn test_fallback_limiter_allows_request() {
+        let key = uuid::Uuid::new_v4().to_string();
+        // First request should always be allowed
+        assert!(FALLBACK_LIMITER.check_key(&key).is_ok());
+    }
+
+    #[test]
+    fn test_fallback_limiter_rejects_after_burst() {
+        let key = format!("burst-test-{}", uuid::Uuid::new_v4());
+        // Exhaust the burst capacity
+        for _ in 0..FALLBACK_BURST {
+            let _ = FALLBACK_LIMITER.check_key(&key);
+        }
+        // Next request should be rejected
+        assert!(FALLBACK_LIMITER.check_key(&key).is_err());
     }
 }

@@ -13,10 +13,12 @@ use bankie_common::error::AppError;
 use crate::models::auth::{
     AuthOrganization, AuthResponse, AuthUser, LoginRequest, SessionClaims, SignupRequest,
 };
+use crate::models::dashboard::NewAuditLog;
 use crate::models::member::{
     hash_invite_token, AcceptInviteRequest, InviteInfo, MemberStatus, OrgMember,
 };
 use crate::models::org::{slugify, Organization};
+use crate::repo::dashboard::DashboardRepository;
 use crate::state::PortalState;
 
 /// Public auth routes (no session required).
@@ -44,11 +46,7 @@ async fn signup(
     if req.email.trim().is_empty() || !req.email.contains('@') {
         return Err(AppError::BadRequest("Valid email is required".to_string()));
     }
-    if req.password.len() < 8 {
-        return Err(AppError::BadRequest(
-            "Password must be at least 8 characters".to_string(),
-        ));
-    }
+    validate_password_complexity(&req.password)?;
 
     // Check if email already exists
     let existing = state
@@ -87,6 +85,18 @@ async fn signup(
         .await
         .map_err(AppError::internal)?;
 
+    // Audit: org.created
+    audit_log(
+        &state.dashboard_repo,
+        org.id,
+        &member.id.to_string(),
+        "org.created",
+        "organization",
+        Some(org.id.to_string()),
+        Some(serde_json::json!({"org_name": req.org_name, "email": req.email})),
+    )
+    .await;
+
     // Generate session
     build_session_response(&state, &member, &org)
 }
@@ -117,6 +127,17 @@ async fn login(
         Some(m) => m,
         None => {
             record_failed_login(&state, &req.email).await;
+            // Audit: login failed (unknown email)
+            audit_log(
+                &state.dashboard_repo,
+                uuid::Uuid::nil(),
+                &uuid::Uuid::nil().to_string(),
+                "auth.login_failed",
+                "member",
+                None,
+                Some(serde_json::json!({"email": req.email, "reason": "email_not_found"})),
+            )
+            .await;
             return Err(AppError::Unauthorized(
                 "Invalid email or password".to_string(),
             ));
@@ -129,6 +150,17 @@ async fn login(
 
     if verify_password(&req.password, &member.password_hash).is_err() {
         record_failed_login(&state, &req.email).await;
+        // Audit: login failed (wrong password)
+        audit_log(
+            &state.dashboard_repo,
+            member.org_id,
+            &member.id.to_string(),
+            "auth.login_failed",
+            "member",
+            Some(member.id.to_string()),
+            Some(serde_json::json!({"email": req.email, "reason": "invalid_password"})),
+        )
+        .await;
         return Err(AppError::Unauthorized(
             "Invalid email or password".to_string(),
         ));
@@ -142,13 +174,83 @@ async fn login(
         .map_err(AppError::internal)?
         .ok_or_else(|| AppError::internal("Organization not found for member"))?;
 
+    // Audit: login success
+    audit_log(
+        &state.dashboard_repo,
+        org.id,
+        &member.id.to_string(),
+        "auth.login_success",
+        "member",
+        Some(member.id.to_string()),
+        Some(serde_json::json!({"email": member.email})),
+    )
+    .await;
+
     build_session_response(&state, &member, &org)
 }
 
 /// POST /portal/v1/auth/logout
 ///
-/// Clears session and CSRF cookies.
-async fn logout() -> Response {
+/// Clears session and CSRF cookies. Best-effort audit log if session is valid.
+async fn logout(
+    State(state): State<Arc<PortalState>>,
+    req_headers: axum::http::HeaderMap,
+) -> Response {
+    // Best-effort audit: try to extract session info from cookie
+    if let Some(cookie_header) = req_headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+    {
+        if let Some(token) = cookie_header.split(';').find_map(|pair| {
+            let pair = pair.trim();
+            pair.strip_prefix("portal_session=")
+        }) {
+            if let Ok(token_data) = jsonwebtoken::decode::<SessionClaims>(
+                token,
+                &jsonwebtoken::DecodingKey::from_secret(state.jwt_secret.as_bytes()),
+                &jsonwebtoken::Validation::default(),
+            ) {
+                let claims = token_data.claims;
+
+                // L2: Add session to Redis blocklist for server-side invalidation
+                if !claims.jti.is_empty() {
+                    if let Some(ref client) = state.redis_client {
+                        let blocklist_key = format!("gw:blocklist:{}", claims.jti);
+                        let remaining_secs = claims
+                            .exp
+                            .saturating_sub(chrono::Utc::now().timestamp() as usize)
+                            as i64;
+                        if remaining_secs > 0 {
+                            if let Err(e) = crate::redis_ops::set_ex(
+                                client,
+                                &blocklist_key,
+                                "1",
+                                remaining_secs,
+                            )
+                            .await
+                            {
+                                tracing::warn!("Failed to add session to blocklist: {}", e);
+                            }
+                        }
+                    }
+                }
+
+                if let Ok(org_id) = claims.org_id.parse::<uuid::Uuid>() {
+                    audit_log(
+                        &state.dashboard_repo,
+                        org_id,
+                        &claims.sub,
+                        "auth.logout",
+                        "member",
+                        Some(claims.sub.clone()),
+                        None,
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+
     let secure_flag = if is_secure_env() { "; Secure" } else { "" };
     let clear_session =
         format!("portal_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure_flag}");
@@ -179,6 +281,7 @@ fn build_session_response(
         .collect();
 
     let exp = (chrono::Utc::now() + chrono::Duration::hours(24)).timestamp() as usize;
+    let jti = uuid::Uuid::new_v4().to_string();
 
     let claims = SessionClaims {
         sub: member.id.to_string(),
@@ -191,6 +294,7 @@ fn build_session_response(
             .unwrap_or_else(|| "member".to_string()),
         csrf: csrf_token.clone(),
         exp,
+        jti,
     };
 
     let jwt = encode(
@@ -330,11 +434,7 @@ async fn accept_invite(
     State(state): State<Arc<PortalState>>,
     Json(req): Json<AcceptInviteRequest>,
 ) -> Result<Response, AppError> {
-    if req.password.len() < 8 {
-        return Err(AppError::BadRequest(
-            "Password must be at least 8 characters".to_string(),
-        ));
-    }
+    validate_password_complexity(&req.password)?;
 
     let token_hash = hash_invite_token(&req.token);
 
@@ -378,6 +478,58 @@ async fn accept_invite(
         .ok_or_else(|| AppError::internal("Organization not found for member"))?;
 
     build_session_response(&state, &activated, &org)
+}
+
+/// Validate password complexity: min 8 chars, at least 1 uppercase, 1 lowercase, 1 digit.
+fn validate_password_complexity(password: &str) -> Result<(), AppError> {
+    if password.len() < 8 {
+        return Err(AppError::BadRequest(
+            "Password must be at least 8 characters".to_string(),
+        ));
+    }
+    if !password.chars().any(|c| c.is_uppercase()) {
+        return Err(AppError::BadRequest(
+            "Password must contain at least one uppercase letter".to_string(),
+        ));
+    }
+    if !password.chars().any(|c| c.is_lowercase()) {
+        return Err(AppError::BadRequest(
+            "Password must contain at least one lowercase letter".to_string(),
+        ));
+    }
+    if !password.chars().any(|c| c.is_ascii_digit()) {
+        return Err(AppError::BadRequest(
+            "Password must contain at least one digit".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Best-effort audit log insertion. Failures are logged but not propagated.
+async fn audit_log(
+    dashboard_repo: &Arc<dyn DashboardRepository>,
+    org_id: uuid::Uuid,
+    actor_id: &str,
+    action: &str,
+    resource_type: &str,
+    resource_id: Option<String>,
+    changes: Option<serde_json::Value>,
+) {
+    let actor_uuid = actor_id.parse().unwrap_or_default();
+    if let Err(e) = dashboard_repo
+        .insert_audit_log(NewAuditLog {
+            org_id,
+            actor_id: actor_uuid,
+            action: action.to_string(),
+            resource_type: resource_type.to_string(),
+            resource_id,
+            changes,
+            client_ip: None,
+        })
+        .await
+    {
+        tracing::warn!("Failed to insert audit log: {}", e);
+    }
 }
 
 /// Returns true when the deployment environment should use HTTPS (i.e. not local dev).
@@ -430,15 +582,29 @@ mod tests {
         org_repo: MockOrgRepository,
         member_repo: MockMemberRepository,
     ) -> Arc<PortalState> {
+        test_state_with_dashboard(org_repo, member_repo, MockDashboardRepository::new())
+    }
+
+    fn test_state_with_dashboard(
+        org_repo: MockOrgRepository,
+        member_repo: MockMemberRepository,
+        dashboard_repo: MockDashboardRepository,
+    ) -> Arc<PortalState> {
         Arc::new(PortalState {
             org_repo: Arc::new(org_repo),
             member_repo: Arc::new(member_repo),
             api_key_repo: Arc::new(MockApiKeyRepository::new()),
-            dashboard_repo: Arc::new(MockDashboardRepository::new()),
+            dashboard_repo: Arc::new(dashboard_repo),
             webhook_repo: Arc::new(MockWebhookRepository::new()),
             jwt_secret: "test-secret-key-at-least-32-chars-long!!".to_string(),
             redis_client: None,
         })
+    }
+
+    fn mock_dashboard_with_audit() -> MockDashboardRepository {
+        let mut mock = MockDashboardRepository::new();
+        mock.expect_insert_audit_log().returning(|_| Ok(()));
+        mock
     }
 
     fn test_org(id: uuid::Uuid, tenant_id: i32) -> Organization {
@@ -459,7 +625,7 @@ mod tests {
             org_id,
             name: "Test User".to_string(),
             email: "test@example.com".to_string(),
-            password_hash: hash_password("password123").unwrap(),
+            password_hash: hash_password("Password123").unwrap(),
             role: MemberRole::Owner,
             status: MemberStatus::Active,
             invite_token_hash: None,
@@ -513,14 +679,14 @@ mod tests {
             },
         );
 
-        let state = test_state_with(org_repo, member_repo);
+        let state = test_state_with_dashboard(org_repo, member_repo, mock_dashboard_with_audit());
         let app = signup_app(state);
 
         let body = serde_json::json!({
             "org_name": "Test Org",
             "name": "Test User",
             "email": "new@example.com",
-            "password": "password123"
+            "password": "Password123"
         });
 
         let response = app
@@ -557,7 +723,7 @@ mod tests {
             "org_name": "",
             "name": "Test User",
             "email": "test@example.com",
-            "password": "password123"
+            "password": "Password123"
         });
 
         let response = app
@@ -584,7 +750,7 @@ mod tests {
             "org_name": "Test",
             "name": "Test User",
             "email": "not-an-email",
-            "password": "password123"
+            "password": "Password123"
         });
 
         let response = app
@@ -644,7 +810,7 @@ mod tests {
             "org_name": "Test",
             "name": "Test User",
             "email": "test@example.com",
-            "password": "password123"
+            "password": "Password123"
         });
 
         let response = app
@@ -679,12 +845,12 @@ mod tests {
             .expect_find_by_email()
             .returning(move |_| Ok(Some(member.clone())));
 
-        let state = test_state_with(org_repo, member_repo);
+        let state = test_state_with_dashboard(org_repo, member_repo, mock_dashboard_with_audit());
         let app = signup_app(state);
 
         let body = serde_json::json!({
             "email": "test@example.com",
-            "password": "password123"
+            "password": "Password123"
         });
 
         let response = app
@@ -719,7 +885,11 @@ mod tests {
             .expect_find_by_email()
             .returning(move |_| Ok(Some(member.clone())));
 
-        let state = test_state_with(MockOrgRepository::new(), member_repo);
+        let state = test_state_with_dashboard(
+            MockOrgRepository::new(),
+            member_repo,
+            mock_dashboard_with_audit(),
+        );
         let app = signup_app(state);
 
         let body = serde_json::json!({
@@ -747,12 +917,16 @@ mod tests {
         let mut member_repo = MockMemberRepository::new();
         member_repo.expect_find_by_email().returning(|_| Ok(None));
 
-        let state = test_state_with(MockOrgRepository::new(), member_repo);
+        let state = test_state_with_dashboard(
+            MockOrgRepository::new(),
+            member_repo,
+            mock_dashboard_with_audit(),
+        );
         let app = signup_app(state);
 
         let body = serde_json::json!({
             "email": "nonexistent@example.com",
-            "password": "password123"
+            "password": "Password123"
         });
 
         let response = app
@@ -784,7 +958,7 @@ mod tests {
 
         let body = serde_json::json!({
             "email": "test@example.com",
-            "password": "password123"
+            "password": "Password123"
         });
 
         let response = app
@@ -831,6 +1005,58 @@ mod tests {
         assert!(cookies.iter().any(|c| c.contains("Max-Age=0")));
     }
 
+    #[tokio::test]
+    async fn test_logout_with_valid_session_logs_audit() {
+        use jsonwebtoken::{encode, EncodingKey, Header};
+
+        let jwt_secret = "test-secret-key-at-least-32-chars-long!!";
+        let claims = SessionClaims {
+            sub: uuid::Uuid::new_v4().to_string(),
+            name: "Test User".to_string(),
+            org_id: uuid::Uuid::new_v4().to_string(),
+            tenant_id: 1,
+            role: "owner".to_string(),
+            csrf: "csrf123".to_string(),
+            exp: (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp() as usize,
+            jti: String::new(),
+        };
+        let jwt = encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(jwt_secret.as_bytes()),
+        )
+        .unwrap();
+
+        let state = test_state_with_dashboard(
+            MockOrgRepository::new(),
+            MockMemberRepository::new(),
+            mock_dashboard_with_audit(),
+        );
+        let app = signup_app(state);
+
+        let response = app
+            .oneshot(
+                HttpRequest::builder()
+                    .method("POST")
+                    .uri("/auth/logout")
+                    .header("Cookie", format!("portal_session={jwt}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let cookies: Vec<_> = response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect();
+        assert!(cookies.iter().any(|c| c.contains("Max-Age=0")));
+    }
+
     // --- Password hashing ---
 
     #[test]
@@ -843,6 +1069,39 @@ mod tests {
     fn test_verify_wrong_password_fails() {
         let hash = hash_password("correct_password").unwrap();
         assert!(verify_password("wrong_password", &hash).is_err());
+    }
+
+    // --- Password complexity ---
+
+    #[test]
+    fn test_validate_password_complexity_valid() {
+        assert!(validate_password_complexity("Password1").is_ok());
+        assert!(validate_password_complexity("Str0ngP@ss").is_ok());
+        assert!(validate_password_complexity("MyP4ssw0rd!").is_ok());
+    }
+
+    #[test]
+    fn test_validate_password_complexity_too_short() {
+        let err = validate_password_complexity("Pass1").unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_validate_password_complexity_no_uppercase() {
+        let err = validate_password_complexity("password1").unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_validate_password_complexity_no_lowercase() {
+        let err = validate_password_complexity("PASSWORD1").unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_validate_password_complexity_no_digit() {
+        let err = validate_password_complexity("Password").unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
     }
 
     // --- Validate Invite Tests ---
@@ -1024,7 +1283,7 @@ mod tests {
 
         let body = serde_json::json!({
             "token": raw_token,
-            "password": "strongpassword123"
+            "password": "Strongpassword123"
         });
 
         let response = app
@@ -1089,7 +1348,7 @@ mod tests {
 
         let body = serde_json::json!({
             "token": "nonexistent_token",
-            "password": "strongpassword123"
+            "password": "Strongpassword123"
         });
 
         let response = app

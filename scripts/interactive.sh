@@ -3,21 +3,22 @@
 # Bankie Interactive Console
 # Menu-driven tool for testing all Bankie API endpoints.
 #
-# Auto-detects JWT from Docker container, .docker-jwt-token, or .local-jwt-token.
-# Remembers last-used IDs across menu actions for convenience.
+# Core API operations (1-20) route through the Gateway (:4040) using API key auth,
+# ensuring all calls appear in portal API logs.
+# Portal operations (21-35) use cookie-based session auth on the Gateway.
 #
 # Usage:
-#   ./scripts/interactive.sh                  # auto-detect token
-#   ./scripts/interactive.sh <JWT_TOKEN>      # explicit token
-#   TOKEN=eyJ... ./scripts/interactive.sh     # via env var
+#   ./scripts/interactive.sh                        # interactive setup
+#   API_KEY=bk_live_... ./scripts/interactive.sh    # use existing key
 #
 set -uo pipefail
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-BASE_URL="${BASE_URL:-http://localhost:3030}"
+GATEWAY_URL="${GATEWAY_URL:-http://localhost:4040}"
 OUTBOX_WAIT="${OUTBOX_WAIT:-15}"
+API_KEY="${API_KEY:-}"
 
 # ---------------------------------------------------------------------------
 # Colors
@@ -39,63 +40,44 @@ LAST_LEDGER_ID=""
 LAST_USER_ID=""
 LAST_ACCOUNT_NUMBER=""
 LAST_CURRENCY="USD"
+PORTAL_LOGGED_IN=""
+PORTAL_EMAIL=""
 
 # ---------------------------------------------------------------------------
-# JWT Token Resolution
+# API Key Resolution
 # ---------------------------------------------------------------------------
-resolve_token() {
-  local token="${1:-${TOKEN:-}}"
-
-  # 1. Explicit argument or env var
-  if [[ -n "$token" ]]; then
-    echo "$token"
-    return
-  fi
-
-  # 2. Read from existing token files first (preserves tenant context)
-  for f in .docker-jwt-token .local-jwt-token; do
+if [[ -z "$API_KEY" ]]; then
+  # Try .api-key file
+  for f in .api-key .docker-api-key .local-api-key; do
     if [[ -f "$f" && -s "$f" ]]; then
-      echo -e "${DIM}  Using token from ${f}${NC}" >&2
-      cat "$f"
-      return
+      API_KEY=$(cat "$f")
+      echo -e "${DIM}  Using API key from ${f}${NC}"
+      break
     fi
   done
-
-  # 3. Generate from Docker container as last resort
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^bankie$'; then
-    echo -e "${DIM}  Generating JWT from Docker container...${NC}" >&2
-    token=$(docker exec bankie /app/bankie --mode jwt --service demo-service 2>&1 | \
-      grep -oE 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | head -1)
-    if [[ -n "$token" ]]; then
-      echo "$token" > .docker-jwt-token
-      echo -e "${DIM}  JWT saved to .docker-jwt-token${NC}" >&2
-      echo "$token"
-      return
-    fi
-  fi
-
-  echo ""
-}
-
-TOKEN_VALUE=$(resolve_token "${1:-}")
-if [[ -z "$TOKEN_VALUE" ]]; then
-  echo -e "${RED}ERROR: No JWT token found.${NC}"
-  echo ""
-  echo "Options:"
-  echo "  1. Start Docker stack:  make docker-up"
-  echo "  2. Generate token:      make docker-jwt"
-  echo "  3. Pass explicitly:     ./scripts/interactive.sh <JWT_TOKEN>"
-  exit 1
 fi
 
-AUTH="Authorization: Bearer ${TOKEN_VALUE}"
+# Core API auth header (set when API_KEY is available)
+AUTH=""
 CT="Content-Type: application/json"
+if [[ -n "$API_KEY" ]]; then
+  AUTH="Authorization: Bearer ${API_KEY}"
+fi
 
 # ---------------------------------------------------------------------------
-# HTTP Helpers
+# HTTP Helpers (Core API via Gateway — API key auth)
 # ---------------------------------------------------------------------------
 HTTP_BODY=""
 HTTP_STATUS=""
+
+api_key_check() {
+  if [[ -z "$API_KEY" ]]; then
+    echo -e "  ${RED}No API key set. Use option 21 (login) + 27 (create key) first,${NC}"
+    echo -e "  ${RED}or set API_KEY env var.${NC}"
+    return 1
+  fi
+  return 0
+}
 
 http_get() {
   local url="$1"
@@ -152,7 +134,73 @@ separator() {
 }
 
 # ---------------------------------------------------------------------------
-# Menu Actions
+# Portal Session Helpers (cookie-based auth for Gateway Portal API)
+# ---------------------------------------------------------------------------
+COOKIE_JAR="/tmp/bankie_portal_cookies.txt"
+
+portal_get_csrf() {
+  grep 'csrf_token' "$COOKIE_JAR" 2>/dev/null | awk '{print $NF}' | tail -1
+}
+
+portal_check_session() {
+  if [[ -z "$PORTAL_LOGGED_IN" ]]; then
+    echo -e "  ${RED}Not logged in to portal. Use option 21 first.${NC}"
+    return 1
+  fi
+  return 0
+}
+
+portal_get() {
+  local url="$1"
+  local response
+  response=$(curl -s -w "\n%{http_code}" -b "$COOKIE_JAR" "$url")
+  HTTP_STATUS=$(echo "$response" | tail -1)
+  HTTP_BODY=$(echo "$response" | sed '$d')
+}
+
+portal_post() {
+  local url="$1"
+  local body="${2:-{}}"
+  local csrf
+  csrf=$(portal_get_csrf)
+  local response
+  response=$(curl -s -w "\n%{http_code}" -X POST \
+    -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+    -H "$CT" -H "X-CSRF-Token: ${csrf}" \
+    -d "$body" "$url")
+  HTTP_STATUS=$(echo "$response" | tail -1)
+  HTTP_BODY=$(echo "$response" | sed '$d')
+}
+
+portal_put() {
+  local url="$1"
+  local body="${2:-{}}"
+  local csrf
+  csrf=$(portal_get_csrf)
+  local response
+  response=$(curl -s -w "\n%{http_code}" -X PUT \
+    -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+    -H "$CT" -H "X-CSRF-Token: ${csrf}" \
+    -d "$body" "$url")
+  HTTP_STATUS=$(echo "$response" | tail -1)
+  HTTP_BODY=$(echo "$response" | sed '$d')
+}
+
+portal_delete() {
+  local url="$1"
+  local csrf
+  csrf=$(portal_get_csrf)
+  local response
+  response=$(curl -s -w "\n%{http_code}" -X DELETE \
+    -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+    -H "X-CSRF-Token: ${csrf}" \
+    "$url")
+  HTTP_STATUS=$(echo "$response" | tail -1)
+  HTTP_BODY=$(echo "$response" | sed '$d')
+}
+
+# ---------------------------------------------------------------------------
+# Menu Actions — Core API (1-20) — via Gateway with API key
 # ---------------------------------------------------------------------------
 
 action_health() {
@@ -161,7 +209,7 @@ action_health() {
 
   echo -e "  ${DIM}/health${NC}"
   local r
-  r=$(curl -s -w "\n%{http_code}" "${BASE_URL}/health")
+  r=$(curl -s -w "\n%{http_code}" "${GATEWAY_URL}/health")
   local status=$(echo "$r" | tail -1)
   local body=$(echo "$r" | sed '$d')
   if [[ "$status" == "200" ]]; then
@@ -171,7 +219,7 @@ action_health() {
   fi
 
   echo -e "  ${DIM}/ready${NC}"
-  r=$(curl -s -w "\n%{http_code}" "${BASE_URL}/ready")
+  r=$(curl -s -w "\n%{http_code}" "${GATEWAY_URL}/ready")
   status=$(echo "$r" | tail -1)
   body=$(echo "$r" | sed '$d')
   if [[ "$status" == "200" ]]; then
@@ -184,11 +232,12 @@ action_health() {
 action_list_house_accounts() {
   echo -e "\n${CYAN}List House Accounts${NC}"
   separator
+  api_key_check || return
   local currency
   currency=$(prompt "Currency (USD/TWD/BTC/ETH/USDT or blank for all)" "")
   [[ -n "$currency" ]] && LAST_CURRENCY="$currency"
 
-  local url="${BASE_URL}/v1/house_account"
+  local url="${GATEWAY_URL}/v1/house_account"
   [[ -n "$currency" ]] && url="${url}?currency=${currency}"
 
   http_get "$url"
@@ -199,6 +248,7 @@ action_list_house_accounts() {
 action_create_house_account() {
   echo -e "\n${CYAN}Create House Account${NC}"
   separator
+  api_key_check || return
   local currency name acct_type
   currency=$(prompt "Currency" "$LAST_CURRENCY")
   name=$(prompt "Account name" "Master ${currency} Settlement")
@@ -215,7 +265,7 @@ action_create_house_account() {
 ENDJSON
   )
 
-  http_post "${BASE_URL}/v1/house_account" "$body"
+  http_post "${GATEWAY_URL}/v1/house_account" "$body"
   print_status
   pretty_json "$HTTP_BODY"
   LAST_CURRENCY="$currency"
@@ -224,6 +274,7 @@ ENDJSON
 action_open_account() {
   echo -e "\n${CYAN}Open Bank Account${NC}"
   separator
+  api_key_check || return
   local acct_type kind currency ext_ref
   acct_type=$(prompt "Account type (Retail/Institution/Tax)" "Retail")
   kind=$(prompt "Kind (Checking/Interest/Yield)" "Checking")
@@ -243,7 +294,7 @@ action_open_account() {
 ENDJSON
   )
 
-  http_post "${BASE_URL}/v1/bank_account" "$body"
+  http_post "${GATEWAY_URL}/v1/bank_account" "$body"
   print_status
   pretty_json "$HTTP_BODY"
 
@@ -261,12 +312,13 @@ ENDJSON
 action_approve_account() {
   echo -e "\n${CYAN}Approve Account (KYC)${NC}"
   separator
+  api_key_check || return
   local id
   id=$(prompt "Account ID" "$LAST_ACCOUNT_ID")
 
   local body="{\"ApproveAccount\":{\"id\":\"${id}\"}}"
 
-  http_post "${BASE_URL}/v1/bank_account" "$body"
+  http_post "${GATEWAY_URL}/v1/bank_account" "$body"
   print_status
   pretty_json "$HTTP_BODY"
   LAST_ACCOUNT_ID="$id"
@@ -275,6 +327,7 @@ action_approve_account() {
 action_deposit() {
   echo -e "\n${CYAN}Deposit${NC}"
   separator
+  api_key_check || return
   local id amount currency
   id=$(prompt "Account ID" "$LAST_ACCOUNT_ID")
   amount=$(prompt "Amount" "1000")
@@ -294,7 +347,7 @@ action_deposit() {
 ENDJSON
   )
 
-  http_post "${BASE_URL}/v1/bank_account" "$body"
+  http_post "${GATEWAY_URL}/v1/bank_account" "$body"
   print_status
   pretty_json "$HTTP_BODY"
   LAST_ACCOUNT_ID="$id"
@@ -306,6 +359,7 @@ ENDJSON
 action_withdraw() {
   echo -e "\n${CYAN}Withdrawal${NC}"
   separator
+  api_key_check || return
   local id amount currency
   id=$(prompt "Account ID" "$LAST_ACCOUNT_ID")
   amount=$(prompt "Amount" "100")
@@ -325,7 +379,7 @@ action_withdraw() {
 ENDJSON
   )
 
-  http_post "${BASE_URL}/v1/bank_account" "$body"
+  http_post "${GATEWAY_URL}/v1/bank_account" "$body"
   print_status
   pretty_json "$HTTP_BODY"
   LAST_ACCOUNT_ID="$id"
@@ -337,6 +391,7 @@ ENDJSON
 action_transfer() {
   echo -e "\n${CYAN}Transfer${NC}"
   separator
+  api_key_check || return
   local from_id to_id amount currency
   from_id=$(prompt "From account ID" "$LAST_ACCOUNT_ID")
   to_id=$(prompt "To account ID" "")
@@ -363,7 +418,7 @@ action_transfer() {
 ENDJSON
   )
 
-  http_post "${BASE_URL}/v1/bank_account" "$body"
+  http_post "${GATEWAY_URL}/v1/bank_account" "$body"
   print_status
   pretty_json "$HTTP_BODY"
   LAST_ACCOUNT_ID="$from_id"
@@ -375,6 +430,7 @@ ENDJSON
 action_freeze_unfreeze() {
   echo -e "\n${CYAN}Freeze / Unfreeze Account${NC}"
   separator
+  api_key_check || return
   local id choice
   id=$(prompt "Account ID" "$LAST_ACCOUNT_ID")
 
@@ -391,7 +447,7 @@ action_freeze_unfreeze() {
   fi
 
   local body="{\"${cmd}\":{\"id\":\"${id}\"}}"
-  http_post "${BASE_URL}/v1/bank_account" "$body"
+  http_post "${GATEWAY_URL}/v1/bank_account" "$body"
   print_status
   pretty_json "$HTTP_BODY"
   LAST_ACCOUNT_ID="$id"
@@ -400,11 +456,12 @@ action_freeze_unfreeze() {
 action_close_account() {
   echo -e "\n${CYAN}Close Account${NC}"
   separator
+  api_key_check || return
   local id
   id=$(prompt "Account ID" "$LAST_ACCOUNT_ID")
 
   local body="{\"CloseAccount\":{\"id\":\"${id}\"}}"
-  http_post "${BASE_URL}/v1/bank_account" "$body"
+  http_post "${GATEWAY_URL}/v1/bank_account" "$body"
   print_status
   pretty_json "$HTTP_BODY"
   LAST_ACCOUNT_ID="$id"
@@ -413,10 +470,11 @@ action_close_account() {
 action_view_account() {
   echo -e "\n${CYAN}View Account Details${NC}"
   separator
+  api_key_check || return
   local id
   id=$(prompt "Account ID" "$LAST_ACCOUNT_ID")
 
-  http_get "${BASE_URL}/v1/bank_account/${id}"
+  http_get "${GATEWAY_URL}/v1/bank_account/${id}"
   print_status
   pretty_json "$HTTP_BODY"
   LAST_ACCOUNT_ID="$id"
@@ -430,6 +488,7 @@ action_view_account() {
 action_view_ledger() {
   echo -e "\n${CYAN}View Ledger Balance${NC}"
   separator
+  api_key_check || return
   local id
   id=$(prompt "Ledger ID" "$LAST_LEDGER_ID")
 
@@ -438,7 +497,7 @@ action_view_ledger() {
     return
   fi
 
-  http_get "${BASE_URL}/v1/ledger/${id}"
+  http_get "${GATEWAY_URL}/v1/ledger/${id}"
   print_status
   pretty_json "$HTTP_BODY"
   LAST_LEDGER_ID="$id"
@@ -447,6 +506,7 @@ action_view_ledger() {
 action_list_user_accounts() {
   echo -e "\n${CYAN}List User Accounts${NC}"
   separator
+  api_key_check || return
   local user_id
   user_id=$(prompt "User ID (external_reference_id)" "$LAST_USER_ID")
 
@@ -455,7 +515,7 @@ action_list_user_accounts() {
     return
   fi
 
-  http_get "${BASE_URL}/v1/user/${user_id}"
+  http_get "${GATEWAY_URL}/v1/user/${user_id}"
   print_status
   pretty_json "$HTTP_BODY"
   LAST_USER_ID="$user_id"
@@ -475,6 +535,7 @@ else: print('')
 action_lookup_by_number() {
   echo -e "\n${CYAN}Lookup Account by Number${NC}"
   separator
+  api_key_check || return
   local num
   num=$(prompt "Account number" "$LAST_ACCOUNT_NUMBER")
 
@@ -483,7 +544,7 @@ action_lookup_by_number() {
     return
   fi
 
-  http_get "${BASE_URL}/v1/bank_account/by-number/${num}"
+  http_get "${GATEWAY_URL}/v1/bank_account/by-number/${num}"
   print_status
   pretty_json "$HTTP_BODY"
   LAST_ACCOUNT_NUMBER="$num"
@@ -498,10 +559,11 @@ action_lookup_by_number() {
 action_sub_accounts() {
   echo -e "\n${CYAN}List Sub-Accounts${NC}"
   separator
+  api_key_check || return
   local id
   id=$(prompt "Master account ID" "$LAST_ACCOUNT_ID")
 
-  http_get "${BASE_URL}/v1/bank_account/${id}/sub-accounts"
+  http_get "${GATEWAY_URL}/v1/bank_account/${id}/sub-accounts"
   print_status
   pretty_json "$HTTP_BODY"
   LAST_ACCOUNT_ID="$id"
@@ -510,6 +572,7 @@ action_sub_accounts() {
 action_transactions() {
   echo -e "\n${CYAN}List Transactions${NC}"
   separator
+  api_key_check || return
   local id offset limit start_date end_date tx_type status
   id=$(prompt "Bank account ID" "$LAST_ACCOUNT_ID")
   offset=$(prompt "Offset" "0")
@@ -519,7 +582,7 @@ action_transactions() {
   tx_type=$(prompt "Type filter (deposit/withdrawal/transfer, blank to skip)" "")
   status=$(prompt "Status filter (blank to skip)" "")
 
-  local url="${BASE_URL}/v1/transaction?bank_account_id=${id}&offset=${offset}&limit=${limit}"
+  local url="${GATEWAY_URL}/v1/transaction?bank_account_id=${id}&offset=${offset}&limit=${limit}"
   [[ -n "$start_date" ]] && url="${url}&start_date=${start_date}"
   [[ -n "$end_date" ]] && url="${url}&end_date=${end_date}"
   [[ -n "$tx_type" ]] && url="${url}&transaction_type=${tx_type}"
@@ -534,12 +597,13 @@ action_transactions() {
 action_balance_history() {
   echo -e "\n${CYAN}Balance History${NC}"
   separator
+  api_key_check || return
   local id start_date end_date
   id=$(prompt "Bank account ID" "$LAST_ACCOUNT_ID")
   start_date=$(prompt "Start date (YYYY-MM-DD)" "2026-01-01")
   end_date=$(prompt "End date (YYYY-MM-DD)" "2026-12-31")
 
-  http_get "${BASE_URL}/v1/bank_account/${id}/balance-history?start_date=${start_date}&end_date=${end_date}"
+  http_get "${GATEWAY_URL}/v1/bank_account/${id}/balance-history?start_date=${start_date}&end_date=${end_date}"
   print_status
   pretty_json "$HTTP_BODY"
   LAST_ACCOUNT_ID="$id"
@@ -550,13 +614,14 @@ action_balance_history() {
 action_settlement_report() {
   echo -e "\n${CYAN}Settlement Report (CSV)${NC}"
   separator
+  api_key_check || return
   local id start_date end_date currency save
   id=$(prompt "Bank account ID (blank for all accounts)" "$LAST_ACCOUNT_ID")
   start_date=$(prompt "Start date (YYYY-MM-DD)" "2026-01-01")
   end_date=$(prompt "End date (YYYY-MM-DD)" "2026-12-31")
   currency=$(prompt "Currency (blank for auto)" "$LAST_CURRENCY")
 
-  local url="${BASE_URL}/v1/report/settlement?start_date=${start_date}&end_date=${end_date}"
+  local url="${GATEWAY_URL}/v1/report/settlement?start_date=${start_date}&end_date=${end_date}"
   [[ -n "$id" ]] && url="${url}&bank_account_id=${id}"
   [[ -n "$currency" ]] && url="${url}&currency=${currency}"
 
@@ -591,6 +656,7 @@ action_settlement_report() {
 action_quick_flow() {
   echo -e "\n${CYAN}Quick Flow: Open + Approve + Deposit${NC}"
   separator
+  api_key_check || return
   echo -e "  ${DIM}This runs a complete account setup in one go.${NC}"
   echo ""
   local currency ext_ref amount
@@ -613,7 +679,7 @@ action_quick_flow() {
 }
 ENDJSON
   )
-  http_post "${BASE_URL}/v1/bank_account" "$open_body"
+  http_post "${GATEWAY_URL}/v1/bank_account" "$open_body"
   print_status
 
   local acct_id acct_num
@@ -633,7 +699,7 @@ ENDJSON
 
   # 2. Approve
   echo -e "\n  ${BLUE}[2/3] Approving (KYC)...${NC}"
-  http_post "${BASE_URL}/v1/bank_account" "{\"ApproveAccount\":{\"id\":\"${acct_id}\"}}"
+  http_post "${GATEWAY_URL}/v1/bank_account" "{\"ApproveAccount\":{\"id\":\"${acct_id}\"}}"
   print_status
 
   if [[ ! "$HTTP_STATUS" =~ ^2 ]]; then
@@ -662,7 +728,7 @@ ENDJSON
 }
 ENDJSON
   )
-  http_post "${BASE_URL}/v1/bank_account" "$dep_body"
+  http_post "${GATEWAY_URL}/v1/bank_account" "$dep_body"
   print_status
 
   echo -e "\n  ${GREEN}Done! Account is ready.${NC}"
@@ -675,8 +741,9 @@ ENDJSON
 action_list_accounts() {
   echo -e "\n${CYAN}List All Accounts${NC}"
   separator
+  api_key_check || return
 
-  http_get "${BASE_URL}/v1/accounts?offset=0&limit=50"
+  http_get "${GATEWAY_URL}/v1/accounts?offset=0&limit=50"
   print_status
 
   if [[ ! "$HTTP_STATUS" =~ ^2 ]]; then
@@ -762,6 +829,421 @@ else:
 }
 
 # ---------------------------------------------------------------------------
+# Menu Actions — API Key Management (36-37)
+# ---------------------------------------------------------------------------
+
+action_switch_api_key() {
+  echo -e "\n${CYAN}Switch API Key${NC}"
+  separator
+
+  if [[ -n "$API_KEY" ]]; then
+    echo -e "  Current key: ${BOLD}${API_KEY:0:20}...${NC}"
+  else
+    echo -e "  Current key: ${RED}(none)${NC}"
+  fi
+  echo ""
+
+  echo "  1) Enter API key manually"
+  echo "  2) Create new key via portal (requires login)"
+  read -rp "  Choice [1]: " choice
+  choice="${choice:-1}"
+
+  if [[ "$choice" == "2" ]]; then
+    portal_check_session || return
+
+    local name scopes
+    name=$(prompt "Key name" "interactive-key")
+    scopes="accounts:read,accounts:write,ledgers:read,transactions:read,house_accounts:read,house_accounts:write"
+
+    local scopes_json
+    scopes_json=$(echo "$scopes" | python3 -c "import sys; print('[' + ','.join(['\"'+s.strip()+'\"' for s in sys.stdin.read().strip().split(',')]) + ']')")
+
+    portal_post "${GATEWAY_URL}/portal/v1/api-keys" \
+      "{\"name\":\"${name}\",\"scopes\":${scopes_json}}"
+    print_status
+
+    if [[ "$HTTP_STATUS" =~ ^2 ]]; then
+      local new_key
+      new_key=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['raw_key'])" 2>/dev/null || echo "")
+      if [[ -n "$new_key" ]]; then
+        API_KEY="$new_key"
+        AUTH="Authorization: Bearer ${API_KEY}"
+        echo "$API_KEY" > .api-key
+        echo -e "  ${GREEN}API key set: ${API_KEY:0:20}...${NC}"
+        echo -e "  ${DIM}Saved to .api-key${NC}"
+      else
+        echo -e "  ${RED}Could not extract raw_key from response.${NC}"
+        pretty_json "$HTTP_BODY"
+      fi
+    else
+      echo -e "  ${RED}Failed to create key.${NC}"
+      pretty_json "$HTTP_BODY"
+    fi
+  else
+    local new_key
+    read -rp "  API key (bk_live_...): " new_key
+    if [[ -n "$new_key" ]]; then
+      API_KEY="$new_key"
+      AUTH="Authorization: Bearer ${API_KEY}"
+      echo "$API_KEY" > .api-key
+      echo -e "  ${GREEN}API key set: ${API_KEY:0:20}...${NC}"
+    else
+      echo -e "  ${RED}No key entered.${NC}"
+    fi
+  fi
+}
+
+action_show_api_key() {
+  echo -e "\n${CYAN}Current API Key Info${NC}"
+  separator
+
+  if [[ -z "$API_KEY" ]]; then
+    echo -e "  ${RED}No API key set.${NC}"
+    echo -e "  ${YELLOW}Use option 36 to set one, or login (21) + create key (27).${NC}"
+    return
+  fi
+
+  echo -e "  Key:    ${BOLD}${API_KEY:0:20}...${NC}"
+  echo -e "  Prefix: ${API_KEY:0:8}"
+
+  # If portal session exists, try to fetch key details
+  if [[ -n "$PORTAL_LOGGED_IN" ]]; then
+    portal_get "${GATEWAY_URL}/portal/v1/api-keys"
+    if [[ "$HTTP_STATUS" =~ ^2 ]]; then
+      echo ""
+      echo "$HTTP_BODY" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+keys = data if isinstance(data, list) else data.get('entries', data.get('keys', []))
+for k in keys:
+    prefix = k.get('key_prefix', '')
+    if prefix:
+        print(f'  [{k.get(\"status\",\"?\")}] {k.get(\"name\",\"?\")} ({prefix}...) scopes: {\", \".join(k.get(\"scopes\",[]))}')
+" 2>/dev/null
+    fi
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Menu Actions — Portal API (21-35)
+# ---------------------------------------------------------------------------
+
+action_portal_login() {
+  echo -e "\n${CYAN}Portal Login${NC}"
+  separator
+  local email password
+  email=$(prompt "Email" "$PORTAL_EMAIL")
+  read -rsp "  Password: " password
+  echo ""
+
+  local response
+  response=$(curl -s -w "\n%{http_code}" -X POST \
+    -c "$COOKIE_JAR" \
+    -H "$CT" \
+    -d "{\"email\":\"${email}\",\"password\":\"${password}\"}" \
+    "${GATEWAY_URL}/portal/v1/auth/login")
+  HTTP_STATUS=$(echo "$response" | tail -1)
+  HTTP_BODY=$(echo "$response" | sed '$d')
+  print_status
+
+  if [[ "$HTTP_STATUS" =~ ^2 ]]; then
+    PORTAL_LOGGED_IN="yes"
+    PORTAL_EMAIL="$email"
+    echo -e "  ${GREEN}Logged in as ${email}${NC}"
+    pretty_json "$HTTP_BODY"
+  else
+    echo -e "  ${RED}Login failed.${NC}"
+    pretty_json "$HTTP_BODY"
+  fi
+}
+
+action_portal_signup() {
+  echo -e "\n${CYAN}Portal Signup (Create Org + Owner)${NC}"
+  separator
+  local org_name name email password
+  org_name=$(prompt "Organization name" "")
+  name=$(prompt "Your name" "")
+  email=$(prompt "Email" "")
+  read -rsp "  Password: " password
+  echo ""
+
+  if [[ -z "$org_name" || -z "$email" || -z "$password" ]]; then
+    echo -e "  ${RED}All fields are required.${NC}"
+    return
+  fi
+
+  local response
+  response=$(curl -s -w "\n%{http_code}" -X POST \
+    -c "$COOKIE_JAR" \
+    -H "$CT" \
+    -d "{\"org_name\":\"${org_name}\",\"name\":\"${name}\",\"email\":\"${email}\",\"password\":\"${password}\"}" \
+    "${GATEWAY_URL}/portal/v1/auth/signup")
+  HTTP_STATUS=$(echo "$response" | tail -1)
+  HTTP_BODY=$(echo "$response" | sed '$d')
+  print_status
+
+  if [[ "$HTTP_STATUS" =~ ^2 ]]; then
+    PORTAL_LOGGED_IN="yes"
+    PORTAL_EMAIL="$email"
+    echo -e "  ${GREEN}Signed up and logged in as ${email}${NC}"
+    pretty_json "$HTTP_BODY"
+  else
+    echo -e "  ${RED}Signup failed.${NC}"
+    pretty_json "$HTTP_BODY"
+  fi
+}
+
+action_portal_dashboard() {
+  echo -e "\n${CYAN}Portal Dashboard Stats${NC}"
+  separator
+  portal_check_session || return
+
+  portal_get "${GATEWAY_URL}/portal/v1/dashboard/stats"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_portal_activity() {
+  echo -e "\n${CYAN}Portal Activity Feed${NC}"
+  separator
+  portal_check_session || return
+
+  portal_get "${GATEWAY_URL}/portal/v1/dashboard/activity"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_portal_org() {
+  echo -e "\n${CYAN}Portal Organization Details${NC}"
+  separator
+  portal_check_session || return
+
+  echo "  1) Get org details"
+  echo "  2) List rate limits"
+  read -rp "  Choice [1]: " choice
+  choice="${choice:-1}"
+
+  if [[ "$choice" == "2" ]]; then
+    portal_get "${GATEWAY_URL}/portal/v1/dashboard/rate-limits"
+  else
+    # Get org_id from dashboard stats first
+    portal_get "${GATEWAY_URL}/portal/v1/dashboard/stats"
+    pretty_json "$HTTP_BODY"
+  fi
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_portal_list_keys() {
+  echo -e "\n${CYAN}Portal: List API Keys${NC}"
+  separator
+  portal_check_session || return
+
+  portal_get "${GATEWAY_URL}/portal/v1/api-keys"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_portal_create_key() {
+  echo -e "\n${CYAN}Portal: Create API Key${NC}"
+  separator
+  portal_check_session || return
+
+  local name scopes
+  name=$(prompt "Key name" "my-api-key")
+  scopes=$(prompt "Scopes (comma-separated)" "accounts:read,accounts:write,ledgers:read,transactions:read,house_accounts:read,house_accounts:write")
+
+  # Convert comma-separated to JSON array
+  local scopes_json
+  scopes_json=$(echo "$scopes" | python3 -c "import sys; print('[' + ','.join(['\"'+s.strip()+'\"' for s in sys.stdin.read().strip().split(',')]) + ']')")
+
+  portal_post "${GATEWAY_URL}/portal/v1/api-keys" \
+    "{\"name\":\"${name}\",\"scopes\":${scopes_json}}"
+  print_status
+
+  if [[ "$HTTP_STATUS" =~ ^2 ]]; then
+    echo -e "  ${GREEN}API key created. Save the raw_key — it won't be shown again!${NC}"
+    pretty_json "$HTTP_BODY"
+
+    # Offer to set as active key
+    local new_key
+    new_key=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('raw_key',''))" 2>/dev/null)
+    if [[ -n "$new_key" ]]; then
+      read -rp "  Set as active API key? (Y/n): " set_active
+      set_active="${set_active:-Y}"
+      if [[ "$set_active" == "Y" || "$set_active" == "y" ]]; then
+        API_KEY="$new_key"
+        AUTH="Authorization: Bearer ${API_KEY}"
+        echo "$API_KEY" > .api-key
+        echo -e "  ${GREEN}API key activated: ${API_KEY:0:20}...${NC}"
+      fi
+    fi
+  else
+    echo -e "  ${RED}Failed to create API key.${NC}"
+    pretty_json "$HTTP_BODY"
+  fi
+}
+
+action_portal_rotate_key() {
+  echo -e "\n${CYAN}Portal: Rotate API Key${NC}"
+  separator
+  portal_check_session || return
+
+  local key_id
+  key_id=$(prompt "API Key ID (UUID)" "")
+  if [[ -z "$key_id" ]]; then
+    echo -e "  ${RED}Key ID is required.${NC}"
+    return
+  fi
+
+  portal_post "${GATEWAY_URL}/portal/v1/api-keys/${key_id}/rotate" "{}"
+  print_status
+
+  if [[ "$HTTP_STATUS" =~ ^2 ]]; then
+    echo -e "  ${GREEN}Key rotated. Save the new raw_key — it won't be shown again!${NC}"
+    pretty_json "$HTTP_BODY"
+  else
+    echo -e "  ${RED}Failed to rotate key.${NC}"
+    pretty_json "$HTTP_BODY"
+  fi
+}
+
+action_portal_revoke_key() {
+  echo -e "\n${CYAN}Portal: Revoke API Key${NC}"
+  separator
+  portal_check_session || return
+
+  local key_id
+  key_id=$(prompt "API Key ID (UUID)" "")
+  if [[ -z "$key_id" ]]; then
+    echo -e "  ${RED}Key ID is required.${NC}"
+    return
+  fi
+
+  portal_delete "${GATEWAY_URL}/portal/v1/api-keys/${key_id}"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_portal_list_members() {
+  echo -e "\n${CYAN}Portal: List Members${NC}"
+  separator
+  portal_check_session || return
+
+  portal_get "${GATEWAY_URL}/portal/v1/members"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_portal_invite_member() {
+  echo -e "\n${CYAN}Portal: Invite Member${NC}"
+  separator
+  portal_check_session || return
+
+  local email role name
+  email=$(prompt "Invite email" "")
+  role=$(prompt "Role (admin/member)" "member")
+  name=$(prompt "Name (optional)" "")
+
+  if [[ -z "$email" ]]; then
+    echo -e "  ${RED}Email is required.${NC}"
+    return
+  fi
+
+  local body="{\"email\":\"${email}\",\"role\":\"${role}\""
+  [[ -n "$name" ]] && body="${body},\"name\":\"${name}\""
+  body="${body}}"
+
+  portal_post "${GATEWAY_URL}/portal/v1/members/invite" "$body"
+  print_status
+
+  if [[ "$HTTP_STATUS" =~ ^2 ]]; then
+    echo -e "  ${GREEN}Invite sent. Share the invite_link with the new member.${NC}"
+    pretty_json "$HTTP_BODY"
+  else
+    echo -e "  ${RED}Failed to invite member.${NC}"
+    pretty_json "$HTTP_BODY"
+  fi
+}
+
+action_portal_list_webhooks() {
+  echo -e "\n${CYAN}Portal: List Webhook Endpoints${NC}"
+  separator
+  portal_check_session || return
+
+  portal_get "${GATEWAY_URL}/portal/v1/webhooks"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_portal_create_webhook() {
+  echo -e "\n${CYAN}Portal: Create Webhook Endpoint${NC}"
+  separator
+  portal_check_session || return
+
+  local url events desc
+  url=$(prompt "Endpoint URL" "https://example.com/webhooks")
+  events=$(prompt "Event types (comma-separated)" "account.opened,account.approved,transaction.completed")
+  desc=$(prompt "Description (optional)" "")
+
+  # Convert to JSON array
+  local events_json
+  events_json=$(echo "$events" | python3 -c "import sys; print('[' + ','.join(['\"'+s.strip()+'\"' for s in sys.stdin.read().strip().split(',')]) + ']')")
+
+  local body="{\"url\":\"${url}\",\"event_types\":${events_json}"
+  [[ -n "$desc" ]] && body="${body},\"description\":\"${desc}\""
+  body="${body}}"
+
+  portal_post "${GATEWAY_URL}/portal/v1/webhooks" "$body"
+  print_status
+
+  if [[ "$HTTP_STATUS" =~ ^2 ]]; then
+    echo -e "  ${GREEN}Webhook created. Save the signing_secret — it won't be shown again!${NC}"
+    pretty_json "$HTTP_BODY"
+  else
+    echo -e "  ${RED}Failed to create webhook.${NC}"
+    pretty_json "$HTTP_BODY"
+  fi
+}
+
+action_portal_api_logs() {
+  echo -e "\n${CYAN}Portal: API Logs${NC}"
+  separator
+  portal_check_session || return
+
+  local page per_page method status_code
+  page=$(prompt "Page" "1")
+  per_page=$(prompt "Per page" "20")
+  method=$(prompt "Method filter (GET/POST/etc, blank to skip)" "")
+  status_code=$(prompt "Status code filter (200/404/etc, blank to skip)" "")
+
+  local url="${GATEWAY_URL}/portal/v1/logs?page=${page}&per_page=${per_page}"
+  [[ -n "$method" ]] && url="${url}&method=${method}"
+  [[ -n "$status_code" ]] && url="${url}&status_code=${status_code}"
+
+  portal_get "$url"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_portal_audit_logs() {
+  echo -e "\n${CYAN}Portal: Audit Logs${NC}"
+  separator
+  portal_check_session || return
+
+  local action_filter limit
+  action_filter=$(prompt "Action filter (e.g. auth.login_success, blank for all)" "")
+  limit=$(prompt "Limit" "20")
+
+  local url="${GATEWAY_URL}/portal/v1/audit-logs?limit=${limit}&offset=0"
+  [[ -n "$action_filter" ]] && url="${url}&action=${action_filter}"
+
+  portal_get "$url"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+# ---------------------------------------------------------------------------
 # Main Menu
 # ---------------------------------------------------------------------------
 
@@ -770,8 +1252,13 @@ print_menu() {
   echo -e "${BOLD}╔══════════════════════════════════════════════════════╗${NC}"
   echo -e "${BOLD}║            ${BLUE}Bankie Interactive Console${NC}${BOLD}                ║${NC}"
   echo -e "${BOLD}╚══════════════════════════════════════════════════════╝${NC}"
+  if [[ -n "$API_KEY" ]]; then
+    echo -e "  ${DIM}API Key: ${API_KEY:0:20}...${NC}"
+  else
+    echo -e "  ${DIM}API Key: ${RED}(none — use 21+27 or 36 to set)${NC}"
+  fi
   echo ""
-  echo -e "  ${BOLD}Account Lifecycle${NC}"
+  echo -e "  ${BOLD}Account Lifecycle${NC}  ${DIM}(via Gateway, API key auth)${NC}"
   echo -e "    ${GREEN} 1${NC}) Open new account"
   echo -e "    ${GREEN} 2${NC}) Approve account (KYC)"
   echo -e "    ${GREEN} 3${NC}) View account details"
@@ -803,14 +1290,36 @@ print_menu() {
   echo -e "    ${GREEN}19${NC}) List all accounts"
   echo -e "    ${GREEN}20${NC}) Health check"
   echo ""
+  echo -e "  ${BOLD}API Key${NC}"
+  echo -e "    ${GREEN}36${NC}) Switch / set API key"
+  echo -e "    ${GREEN}37${NC}) Show current API key info"
+  echo ""
+  echo -e "  ${BOLD}Portal Operations${NC}  ${DIM}(session auth)${NC}"
+  echo -e "    ${GREEN}21${NC}) Portal login"
+  echo -e "    ${GREEN}22${NC}) Portal signup (new org)"
+  echo -e "    ${GREEN}23${NC}) Dashboard stats"
+  echo -e "    ${GREEN}24${NC}) Activity feed"
+  echo -e "    ${GREEN}25${NC}) Organization / rate limits"
+  echo -e "    ${GREEN}26${NC}) List API keys"
+  echo -e "    ${GREEN}27${NC}) Create API key"
+  echo -e "    ${GREEN}28${NC}) Rotate API key"
+  echo -e "    ${GREEN}29${NC}) Revoke API key"
+  echo -e "    ${GREEN}30${NC}) List members"
+  echo -e "    ${GREEN}31${NC}) Invite member"
+  echo -e "    ${GREEN}32${NC}) List webhooks"
+  echo -e "    ${GREEN}33${NC}) Create webhook"
+  echo -e "    ${GREEN}34${NC}) API logs"
+  echo -e "    ${GREEN}35${NC}) Audit logs"
+  echo ""
 
   # Show remembered state
-  if [[ -n "$LAST_ACCOUNT_ID" || -n "$LAST_LEDGER_ID" || -n "$LAST_USER_ID" ]]; then
+  if [[ -n "$LAST_ACCOUNT_ID" || -n "$LAST_LEDGER_ID" || -n "$LAST_USER_ID" || -n "$PORTAL_LOGGED_IN" ]]; then
     echo -e "  ${DIM}Remembered:${NC}"
     [[ -n "$LAST_ACCOUNT_ID" ]] && echo -e "    ${DIM}Account:  ${LAST_ACCOUNT_ID}${NC}"
     [[ -n "$LAST_LEDGER_ID" ]] && echo -e "    ${DIM}Ledger:   ${LAST_LEDGER_ID}${NC}"
     [[ -n "$LAST_USER_ID" ]] && echo -e "    ${DIM}User:     ${LAST_USER_ID}${NC}"
     [[ -n "$LAST_ACCOUNT_NUMBER" ]] && echo -e "    ${DIM}Acct #:   ${LAST_ACCOUNT_NUMBER}${NC}"
+    [[ -n "$PORTAL_LOGGED_IN" ]] && echo -e "    ${DIM}Portal:   ${PORTAL_EMAIL} (logged in)${NC}"
     echo ""
   fi
 
@@ -821,12 +1330,16 @@ print_menu() {
 # ---------------------------------------------------------------------------
 # Main Loop
 # ---------------------------------------------------------------------------
-echo -e "\n${GREEN}Connected to ${BASE_URL}${NC}"
-echo -e "${DIM}Token: ${TOKEN_VALUE:0:20}...${NC}"
+echo -e "\n${GREEN}Gateway at ${GATEWAY_URL}${NC}"
+if [[ -n "$API_KEY" ]]; then
+  echo -e "${GREEN}API Key: ${API_KEY:0:20}...${NC}"
+else
+  echo -e "${YELLOW}No API key set. Use option 21 (login) + 27 (create key) to get started.${NC}"
+fi
 
 while true; do
   print_menu
-  read -rp "  Choose [0-20]: " choice
+  read -rp "  Choose [0-37]: " choice
 
   case "$choice" in
     1)  action_open_account ;;
@@ -849,6 +1362,23 @@ while true; do
     18) action_quick_flow ;;
     19) action_list_accounts ;;
     20) action_health ;;
+    21) action_portal_login ;;
+    22) action_portal_signup ;;
+    23) action_portal_dashboard ;;
+    24) action_portal_activity ;;
+    25) action_portal_org ;;
+    26) action_portal_list_keys ;;
+    27) action_portal_create_key ;;
+    28) action_portal_rotate_key ;;
+    29) action_portal_revoke_key ;;
+    30) action_portal_list_members ;;
+    31) action_portal_invite_member ;;
+    32) action_portal_list_webhooks ;;
+    33) action_portal_create_webhook ;;
+    34) action_portal_api_logs ;;
+    35) action_portal_audit_logs ;;
+    36) action_switch_api_key ;;
+    37) action_show_api_key ;;
     0|q|Q|exit)
       echo -e "\n${GREEN}Bye!${NC}\n"
       exit 0

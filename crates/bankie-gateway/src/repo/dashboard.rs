@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use super::RepoError;
-use crate::models::dashboard::{AuditLogEntry, NewAuditLog};
+use crate::models::dashboard::{AuditLogEntry, AuditLogFilters, NewAuditLog};
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -33,4 +33,13 @@ pub trait DashboardRepository: Send + Sync {
 
     /// Insert a new audit log entry.
     async fn insert_audit_log(&self, entry: NewAuditLog) -> Result<(), RepoError>;
+
+    /// List paginated audit logs with optional filters.
+    async fn list_audit_logs(
+        &self,
+        org_id: Uuid,
+        filters: AuditLogFilters,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<AuditLogEntry>, i64), RepoError>;
 }

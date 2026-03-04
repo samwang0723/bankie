@@ -12,6 +12,7 @@ import {
 import { api } from "../api/client.ts";
 import { useAuth, handleApiError } from "../hooks/useAuth.ts";
 import { ConfirmModal } from "../components/ConfirmModal.tsx";
+import { useToast } from "../hooks/useToast.tsx";
 import type {
   WebhookEndpoint,
   WebhookDelivery,
@@ -162,6 +163,7 @@ function DeliveryTable({ endpointId }: { endpointId: string }) {
 export function Webhooks() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const toast = useToast();
   const canManage = user?.role === "owner" || user?.role === "admin";
 
   const [showCreate, setShowCreate] = useState(false);
@@ -201,7 +203,9 @@ export function Webhooks() {
       setFormUrl("");
       setFormDesc("");
       setFormEvents([]);
-    }
+      toast.success("Webhook endpoint created");
+    },
+    onError: (err) => toast.error(err.message)
   });
 
   const deleteMutation = useMutation({
@@ -211,7 +215,9 @@ export function Webhooks() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["webhook-endpoints"] });
       setConfirmDelete(null);
-    }
+      toast.success("Webhook endpoint deleted");
+    },
+    onError: (err) => toast.error(err.message)
   });
 
   const toggleEvent = (evt: string) => {

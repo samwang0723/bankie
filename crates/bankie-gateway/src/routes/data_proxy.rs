@@ -141,7 +141,12 @@ struct SettlementParams {
 fn build_query(params: &[(&str, &Option<String>)]) -> String {
     let parts: Vec<String> = params
         .iter()
-        .filter_map(|(key, val)| val.as_ref().map(|v| format!("{}={}", key, v)))
+        .filter_map(|(key, val)| {
+            val.as_ref().map(|v| {
+                let encoded: String = url::form_urlencoded::byte_serialize(v.as_bytes()).collect();
+                format!("{}={}", key, encoded)
+            })
+        })
         .collect();
     if parts.is_empty() {
         String::new()
@@ -280,6 +285,20 @@ mod tests {
         assert_eq!(result, "?start_date=2026-01-01");
     }
 
+    #[test]
+    fn test_build_query_encodes_special_characters() {
+        let value = Some("hello world&foo=bar".to_string());
+        let result = build_query(&[("q", &value)]);
+        assert_eq!(result, "?q=hello+world%26foo%3Dbar");
+    }
+
+    #[test]
+    fn test_build_query_encodes_path_traversal() {
+        let value = Some("../../etc/passwd".to_string());
+        let result = build_query(&[("file", &value)]);
+        assert_eq!(result, "?file=..%2F..%2Fetc%2Fpasswd");
+    }
+
     // --- mint_portal_jwt tests ---
 
     #[test]
@@ -292,6 +311,7 @@ mod tests {
             role: "owner".to_string(),
             csrf: "csrf-token".to_string(),
             exp: 9999999999,
+            jti: String::new(),
         };
         let secret = "test-secret-key-for-jwt";
 
@@ -312,6 +332,7 @@ mod tests {
             role: "owner".to_string(),
             csrf: "csrf-token".to_string(),
             exp: 9999999999,
+            jti: String::new(),
         };
         let secret = "test-secret-key-for-jwt";
 
@@ -347,6 +368,7 @@ mod tests {
             role: "admin".to_string(),
             csrf: "c".to_string(),
             exp: 9999999999,
+            jti: String::new(),
         };
         let secret = "test-secret";
 

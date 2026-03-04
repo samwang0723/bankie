@@ -1,10 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::member::MemberRole;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct SignupRequest {
     pub org_name: String,
     pub name: String,
@@ -12,7 +13,7 @@ pub struct SignupRequest {
     pub password: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
@@ -27,19 +28,21 @@ pub struct SessionClaims {
     pub role: String,
     pub csrf: String,
     pub exp: usize,
+    /// JWT ID for server-side session invalidation via Redis blocklist.
+    #[serde(default)]
+    pub jti: String,
 }
 
-/// Auth response matching SPA's expected format:
-/// `{ user: { id, email, role, created_at }, organization: { id, name, slug, environment, created_at } }`
+/// Auth response matching SPA's expected format.
 ///
 /// Note: JWT is delivered ONLY via HttpOnly cookie, never in the response body.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AuthResponse {
     pub user: AuthUser,
     pub organization: AuthOrganization,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AuthUser {
     pub id: Uuid,
     pub name: String,
@@ -48,7 +51,7 @@ pub struct AuthUser {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AuthOrganization {
     pub id: Uuid,
     pub name: String,

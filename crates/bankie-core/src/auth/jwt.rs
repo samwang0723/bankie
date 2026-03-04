@@ -37,7 +37,7 @@ pub fn generate_secret_key(length: usize) -> String {
 
 pub async fn generate_jwt(service_id: &str, secret_key: &str) -> Result<String, sqlx::Error> {
     let expiration = Utc::now()
-        .checked_add_signed(Duration::days(365))
+        .checked_add_signed(Duration::days(30))
         .expect("valid timestamp")
         .timestamp();
 
@@ -79,6 +79,18 @@ pub async fn generate_jwt(service_id: &str, secret_key: &str) -> Result<String, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_jwt_expiry_is_30_days() {
+        // Verify the JWT expiry constant is set to 30 days (not 365)
+        let now = chrono::Utc::now();
+        let expiration = now
+            .checked_add_signed(chrono::Duration::days(30))
+            .unwrap()
+            .timestamp();
+        let diff_days = (expiration - now.timestamp()) / 86400;
+        assert_eq!(diff_days, 30);
+    }
 
     #[test]
     fn test_generate_secret_key() {

@@ -8,7 +8,7 @@
 # close, query endpoints, negative cases, sub-account scenarios
 # (master/interest/yield with parent_id linkage and cross-account transfers),
 # and webhook delivery pipeline (portal signup → webhook endpoint → event
-# trigger → webhook.site verification → HMAC signature check).
+# trigger → local receiver verification → HMAC signature check).
 #
 # Prerequisites:
 #   make local-setup   (starts infra + DB + server)
@@ -1663,25 +1663,76 @@ suite "13. Webhook Delivery Pipeline"
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:4040}"
 WEBHOOK_WAIT="${WEBHOOK_WAIT:-20}"
 
-# --- Step 1: Create webhook.site listener ---
-run_test "Create webhook.site listener token"
-WEBHOOK_SITE_RESP=$(curl -s https://webhook.site/token 2>/dev/null || echo "")
-WEBHOOK_TOKEN=$(echo "$WEBHOOK_SITE_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['uuid'])" 2>/dev/null || echo "")
-if [[ -n "$WEBHOOK_TOKEN" ]]; then
-  WEBHOOK_URL="https://webhook.site/${WEBHOOK_TOKEN}"
-  pass
+# --- Step 1: Start local webhook receiver ---
+WH_RECEIVER_PORT=19876
+WH_RECEIVER_DIR=$(mktemp -d)
+WH_RECEIVER_PID=""
+
+# Determine webhook URL based on whether gateway runs in Docker or locally.
+# Docker containers reach the host via host.docker.internal (macOS/Windows)
+# or the host network (Linux). The SSRF check is env-aware and skipped
+# in local/docker environments, so HTTP + private IPs are allowed.
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^bankie-gateway$'; then
+  WH_RECEIVER_URL="http://host.docker.internal:${WH_RECEIVER_PORT}/webhook"
 else
-  fail "Could not create webhook.site token (network or service unavailable)"
-  # Skip remaining webhook tests if webhook.site is unreachable
-  WEBHOOK_TOKEN=""
+  WH_RECEIVER_URL="http://localhost:${WH_RECEIVER_PORT}/webhook"
 fi
 
-if [[ -n "$WEBHOOK_TOKEN" ]]; then
+run_test "Start local webhook receiver on port ${WH_RECEIVER_PORT}"
+python3 -c "
+import http.server, json, os, sys, threading
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(length).decode()
+        # Save headers + body for verification
+        data = {
+            'headers': dict(self.headers),
+            'body': body,
+            'path': self.path
+        }
+        out_dir = '${WH_RECEIVER_DIR}'
+        # Append to a JSONL file (one delivery per line)
+        with open(os.path.join(out_dir, 'webhooks.jsonl'), 'a') as f:
+            f.write(json.dumps(data) + '\n')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(b'{\"ok\":true}')
+    def log_message(self, format, *args):
+        pass  # suppress access logs
+
+server = http.server.HTTPServer(('0.0.0.0', ${WH_RECEIVER_PORT}), Handler)
+server.serve_forever()
+" &
+WH_RECEIVER_PID=$!
+sleep 1
+
+# Verify the receiver is running
+if kill -0 "$WH_RECEIVER_PID" 2>/dev/null; then
+  pass
+else
+  fail "webhook receiver failed to start on port ${WH_RECEIVER_PORT}"
+  WH_RECEIVER_PID=""
+fi
+
+# Cleanup trap — ensure receiver is stopped even on test failure
+cleanup_webhook_receiver() {
+  if [[ -n "$WH_RECEIVER_PID" ]]; then
+    kill "$WH_RECEIVER_PID" 2>/dev/null || true
+    wait "$WH_RECEIVER_PID" 2>/dev/null || true
+  fi
+  rm -rf "$WH_RECEIVER_DIR" 2>/dev/null || true
+}
+trap cleanup_webhook_receiver EXIT
+
+if [[ -n "$WH_RECEIVER_PID" ]]; then
 
 # --- Step 2: Sign up a test org + login (portal session) ---
 WEBHOOK_TS=$(date +%s)
 WEBHOOK_EMAIL="webhook-e2e-${WEBHOOK_TS}@test.local"
-WEBHOOK_PASSWORD="testpass1234"
+WEBHOOK_PASSWORD="TestPass1234"
 WEBHOOK_ORG="webhook-e2e-${WEBHOOK_TS}"
 COOKIE_JAR=$(mktemp)
 
@@ -1699,6 +1750,12 @@ fi
 # Extract CSRF token from cookie jar
 CSRF_TOKEN=$(grep csrf_token "$COOKIE_JAR" | awk '{print $NF}' || echo "")
 
+# Initialize variables used across steps to avoid unbound errors
+RAW_API_KEY=""
+WH_ENDPOINT_ID=""
+WH_SIGNING_SECRET=""
+WH_ACCT_ID=""
+
 # --- Step 3: Create an API key via portal ---
 run_test "POST /portal/v1/api-keys -- create API key for webhook test"
 APIKEY_RESP=$(curl -s -w "\n%{http_code}" -b "$COOKIE_JAR" \
@@ -1708,7 +1765,7 @@ APIKEY_RESP=$(curl -s -w "\n%{http_code}" -b "$COOKIE_JAR" \
   -d '{"name":"webhook-e2e-key","scopes":["accounts:read","accounts:write"]}')
 APIKEY_STATUS=$(echo "$APIKEY_RESP" | tail -1)
 APIKEY_BODY=$(echo "$APIKEY_RESP" | sed '$d')
-if assert_status "$APIKEY_STATUS" "201" "create API key"; then
+if assert_status "$APIKEY_STATUS" "200" "create API key"; then
   RAW_API_KEY=$(echo "$APIKEY_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['raw_key'])" 2>/dev/null || echo "")
   if [[ -n "$RAW_API_KEY" ]]; then
     pass
@@ -1717,13 +1774,13 @@ if assert_status "$APIKEY_STATUS" "201" "create API key"; then
   fi
 fi
 
-# --- Step 4: Create a webhook endpoint via portal ---
+# --- Step 4: Create a webhook endpoint pointing to local receiver ---
 run_test "POST /portal/v1/webhooks -- create webhook endpoint"
 WH_CREATE_RESP=$(curl -s -w "\n%{http_code}" -b "$COOKIE_JAR" \
   -X POST "${GATEWAY_URL}/portal/v1/webhooks" \
   -H "Content-Type: application/json" \
   -H "X-CSRF-Token: ${CSRF_TOKEN}" \
-  -d "{\"url\":\"${WEBHOOK_URL}\",\"event_types\":[\"account.opened\",\"account.approved\"],\"description\":\"E2E test\"}")
+  -d "{\"url\":\"${WH_RECEIVER_URL}\",\"event_types\":[\"account.opened\",\"account.approved\"],\"description\":\"E2E test\"}")
 WH_CREATE_STATUS=$(echo "$WH_CREATE_RESP" | tail -1)
 WH_CREATE_BODY=$(echo "$WH_CREATE_RESP" | sed '$d')
 if assert_status "$WH_CREATE_STATUS" "201" "create webhook endpoint"; then
@@ -1758,33 +1815,28 @@ fi
 echo -e "    ${YELLOW}(waiting ${WEBHOOK_WAIT}s for webhook fan-out + delivery cycles...)${NC}"
 sleep "$WEBHOOK_WAIT"
 
-# --- Step 7: Verify webhook received at webhook.site ---
-run_test "GET webhook.site -- verify at least 1 request received"
-WH_SITE_REQUESTS=$(curl -s "https://webhook.site/token/${WEBHOOK_TOKEN}/requests?sorting=newest" 2>/dev/null || echo "")
-WH_REQ_COUNT=$(echo "$WH_SITE_REQUESTS" | python3 -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    print(len(data.get('data', [])))
-except:
-    print(0)
-" 2>/dev/null || echo "0")
+# --- Step 7: Verify webhook received at local receiver ---
+WH_RECEIVED_FILE="${WH_RECEIVER_DIR}/webhooks.jsonl"
+
+run_test "Verify local receiver got at least 1 webhook delivery"
+if [[ -f "$WH_RECEIVED_FILE" ]]; then
+  WH_REQ_COUNT=$(wc -l < "$WH_RECEIVED_FILE" | tr -d ' ')
+else
+  WH_REQ_COUNT=0
+fi
 if [[ "$WH_REQ_COUNT" -ge 1 ]]; then
   pass
 else
-  fail "webhook.site expected >= 1 requests, got ${WH_REQ_COUNT}"
+  fail "local receiver expected >= 1 deliveries, got ${WH_REQ_COUNT}"
 fi
 
 run_test "Verify X-Bankie-Signature header present on webhook delivery"
-WH_SIG_HEADER=$(echo "$WH_SITE_REQUESTS" | python3 -c "
-import sys, json
+WH_SIG_HEADER=$(python3 -c "
+import json, sys
 try:
-    data = json.load(sys.stdin)
-    req = data['data'][0]
-    headers = req.get('headers', {})
-    # webhook.site lowercases header names
-    sig = headers.get('x-bankie-signature', [''])[0] if isinstance(headers.get('x-bankie-signature'), list) else headers.get('x-bankie-signature', '')
-    print(sig)
+    with open('${WH_RECEIVED_FILE}') as f:
+        req = json.loads(f.readline())
+    print(req.get('headers', {}).get('X-Bankie-Signature', req.get('headers', {}).get('x-bankie-signature', '')))
 except:
     print('')
 " 2>/dev/null || echo "")
@@ -1795,12 +1847,12 @@ else
 fi
 
 run_test "Verify webhook payload contains event_type field"
-WH_EVENT_TYPE=$(echo "$WH_SITE_REQUESTS" | python3 -c "
-import sys, json
+WH_EVENT_TYPE=$(python3 -c "
+import json
 try:
-    data = json.load(sys.stdin)
-    req = data['data'][0]
-    body = json.loads(req.get('content', '{}'))
+    with open('${WH_RECEIVED_FILE}') as f:
+        req = json.loads(f.readline())
+    body = json.loads(req.get('body', '{}'))
     print(body.get('event_type', ''))
 except:
     print('')
@@ -1813,14 +1865,13 @@ fi
 
 # --- Step 8: Verify HMAC signature ---
 run_test "Verify HMAC-SHA256 signature matches signing secret"
-WH_SIG_VALID=$(echo "$WH_SITE_REQUESTS" | python3 -c "
-import sys, json, hmac, hashlib
+WH_SIG_VALID=$(python3 -c "
+import json, hmac, hashlib
 try:
-    data = json.load(sys.stdin)
-    req = data['data'][0]
-    body = req.get('content', '')
-    headers = req.get('headers', {})
-    sig_header = headers.get('x-bankie-signature', [''])[0] if isinstance(headers.get('x-bankie-signature'), list) else headers.get('x-bankie-signature', '')
+    with open('${WH_RECEIVED_FILE}') as f:
+        req = json.loads(f.readline())
+    body = req.get('body', '')
+    sig_header = req.get('headers', {}).get('X-Bankie-Signature', req.get('headers', {}).get('x-bankie-signature', ''))
     # Parse t=...,v1=...
     parts = dict(p.split('=', 1) for p in sig_header.split(','))
     ts = parts['t']
@@ -1873,17 +1924,736 @@ if [[ -n "$WH_ENDPOINT_ID" ]]; then
     -X DELETE "${GATEWAY_URL}/portal/v1/webhooks/${WH_ENDPOINT_ID}" \
     -H "X-CSRF-Token: ${CSRF_TOKEN}")
   DEL_STATUS=$(echo "$DEL_RESP" | tail -1)
-  if assert_status "$DEL_STATUS" "204" "delete webhook endpoint"; then
+  if assert_status "$DEL_STATUS" "200" "delete webhook endpoint"; then
     pass
   fi
 else
   fail "no endpoint id to delete"
 fi
 
-# Clean up cookie jar
+# Clean up cookie jar and receiver
 rm -f "$COOKIE_JAR"
+cleanup_webhook_receiver
+trap - EXIT
 
-fi  # end of WEBHOOK_TOKEN guard
+fi  # end of WH_RECEIVER_PID guard
+
+# ===========================================================================
+# Portal E2E Test Helpers
+# ===========================================================================
+# Portal tests use session cookies + CSRF, different from Core JWT auth.
+# All portal suites share a GATEWAY_URL and cookie-based helpers.
+
+GATEWAY_URL="${GATEWAY_URL:-http://localhost:4040}"
+PORTAL_COOKIE_JAR=$(mktemp)
+PORTAL_CSRF=""
+PORTAL_TS=$(date +%s)
+
+# Portal HTTP helpers — use cookie jar + CSRF header
+# Usage: portal_post <path> <data>
+#   Sets HTTP_BODY and HTTP_STATUS
+portal_post() {
+  local path="$1"
+  local data="$2"
+  local response
+  response=$(curl -s -w "\n%{http_code}" -b "$PORTAL_COOKIE_JAR" -c "$PORTAL_COOKIE_JAR" \
+    -X POST "${GATEWAY_URL}/portal/v1${path}" \
+    -H "Content-Type: application/json" \
+    -H "X-CSRF-Token: ${PORTAL_CSRF}" \
+    -d "$data")
+  HTTP_STATUS=$(echo "$response" | tail -1)
+  HTTP_BODY=$(echo "$response" | sed '$d')
+}
+
+# Usage: portal_get <path>
+#   Sets HTTP_BODY and HTTP_STATUS
+portal_get() {
+  local path="$1"
+  local response
+  response=$(curl -s -w "\n%{http_code}" -b "$PORTAL_COOKIE_JAR" \
+    "${GATEWAY_URL}/portal/v1${path}")
+  HTTP_STATUS=$(echo "$response" | tail -1)
+  HTTP_BODY=$(echo "$response" | sed '$d')
+}
+
+# Usage: portal_put <path> <data>
+#   Sets HTTP_BODY and HTTP_STATUS
+portal_put() {
+  local path="$1"
+  local data="$2"
+  local response
+  response=$(curl -s -w "\n%{http_code}" -b "$PORTAL_COOKIE_JAR" \
+    -X PUT "${GATEWAY_URL}/portal/v1${path}" \
+    -H "Content-Type: application/json" \
+    -H "X-CSRF-Token: ${PORTAL_CSRF}" \
+    -d "$data")
+  HTTP_STATUS=$(echo "$response" | tail -1)
+  HTTP_BODY=$(echo "$response" | sed '$d')
+}
+
+# Usage: portal_delete <path>
+#   Sets HTTP_BODY and HTTP_STATUS
+portal_delete() {
+  local path="$1"
+  local response
+  response=$(curl -s -w "\n%{http_code}" -b "$PORTAL_COOKIE_JAR" \
+    -X DELETE "${GATEWAY_URL}/portal/v1${path}" \
+    -H "X-CSRF-Token: ${PORTAL_CSRF}")
+  HTTP_STATUS=$(echo "$response" | tail -1)
+  HTTP_BODY=$(echo "$response" | sed '$d')
+}
+
+# Extract CSRF token from cookie jar
+refresh_csrf() {
+  PORTAL_CSRF=$(grep csrf_token "$PORTAL_COOKIE_JAR" 2>/dev/null | awk '{print $NF}' || echo "")
+}
+
+# ===========================================================================
+# SUITE 14: Portal Auth Flow (5 tests)
+# ===========================================================================
+suite "14. Portal Auth Flow"
+
+PORTAL_EMAIL="e2e-auth-${PORTAL_TS}@test.local"
+PORTAL_PASSWORD="TestPass123"
+PORTAL_ORG="e2e-auth-org-${PORTAL_TS}"
+
+run_test "POST /portal/v1/auth/signup -- create portal test org"
+portal_post "/auth/signup" "{\"org_name\":\"${PORTAL_ORG}\",\"name\":\"E2E Auth Tester\",\"email\":\"${PORTAL_EMAIL}\",\"password\":\"${PORTAL_PASSWORD}\"}"
+refresh_csrf
+if assert_status "$HTTP_STATUS" "200" "portal signup"; then
+  pass
+fi
+
+run_test "POST /portal/v1/auth/login -- login with valid credentials"
+portal_post "/auth/login" "{\"email\":\"${PORTAL_EMAIL}\",\"password\":\"${PORTAL_PASSWORD}\"}"
+refresh_csrf
+if assert_status "$HTTP_STATUS" "200" "portal login"; then
+  # Verify CSRF token was set
+  if [[ -n "$PORTAL_CSRF" ]]; then
+    pass
+  else
+    fail "portal login: CSRF token not set in cookies"
+  fi
+fi
+
+run_test "GET /portal/v1/dashboard/stats -- verify session auth works"
+portal_get "/dashboard/stats"
+if assert_status "$HTTP_STATUS" "200" "dashboard stats with session"; then
+  pass
+fi
+
+# Save session cookie for post-logout test
+SAVED_COOKIE_JAR=$(mktemp)
+cp "$PORTAL_COOKIE_JAR" "$SAVED_COOKIE_JAR"
+
+run_test "POST /portal/v1/auth/logout -- logout clears session"
+portal_post "/auth/logout" "{}"
+if assert_status "$HTTP_STATUS" "200" "portal logout"; then
+  pass
+fi
+
+run_test "GET /portal/v1/dashboard/stats -- verify session invalidated after logout"
+# Use the saved (pre-logout) cookie to test server-side session blocklist
+LOGOUT_RESP=$(curl -s -w "\n%{http_code}" -b "$SAVED_COOKIE_JAR" \
+  "${GATEWAY_URL}/portal/v1/dashboard/stats")
+LOGOUT_STATUS=$(echo "$LOGOUT_RESP" | tail -1)
+if assert_status "$LOGOUT_STATUS" "401" "session invalidated after logout"; then
+  pass
+fi
+rm -f "$SAVED_COOKIE_JAR"
+
+# Re-login for subsequent suites
+portal_post "/auth/login" "{\"email\":\"${PORTAL_EMAIL}\",\"password\":\"${PORTAL_PASSWORD}\"}"
+refresh_csrf
+
+# ===========================================================================
+# SUITE 15: API Key Lifecycle (5 tests)
+# ===========================================================================
+suite "15. API Key Lifecycle"
+
+APIKEY_ID=""
+APIKEY_RAW=""
+APIKEY_OLD_RAW=""
+
+run_test "POST /portal/v1/api-keys -- create API key"
+portal_post "/api-keys" '{"name":"e2e-lifecycle-key","scopes":["accounts:read","accounts:write"]}'
+if assert_status "$HTTP_STATUS" "200" "create API key"; then
+  APIKEY_RAW=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['raw_key'])" 2>/dev/null || echo "")
+  APIKEY_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+  if [[ -n "$APIKEY_RAW" && "$APIKEY_RAW" == bk_live_* ]]; then
+    pass
+  else
+    fail "create API key: raw_key missing or wrong prefix (got '${APIKEY_RAW}')"
+  fi
+fi
+
+run_test "GET /v1/accounts via gateway -- use API key through proxy"
+if [[ -n "$APIKEY_RAW" ]]; then
+  GW_RESP=$(curl -s -w "\n%{http_code}" \
+    "${GATEWAY_URL}/v1/accounts?offset=0&limit=1" \
+    -H "Authorization: Bearer ${APIKEY_RAW}")
+  GW_STATUS=$(echo "$GW_RESP" | tail -1)
+  # 200 = accounts found, both valid — key works
+  if [[ "$GW_STATUS" == "200" ]]; then
+    pass
+  else
+    fail "API key gateway proxy: expected 200, got ${GW_STATUS}"
+  fi
+else
+  fail "no API key to test"
+fi
+
+run_test "POST /portal/v1/api-keys/:id/rotate -- rotate API key"
+if [[ -n "$APIKEY_ID" ]]; then
+  APIKEY_OLD_RAW="$APIKEY_RAW"
+  portal_post "/api-keys/${APIKEY_ID}/rotate" '{}'
+  if assert_status "$HTTP_STATUS" "200" "rotate API key"; then
+    APIKEY_RAW=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['raw_key'])" 2>/dev/null || echo "")
+    if [[ -n "$APIKEY_RAW" && "$APIKEY_RAW" != "$APIKEY_OLD_RAW" ]]; then
+      pass
+    else
+      fail "rotate API key: new key not returned or same as old"
+    fi
+  fi
+else
+  fail "no API key id to rotate"
+fi
+
+run_test "GET /v1/accounts via gateway -- old key still works during grace period"
+if [[ -n "$APIKEY_OLD_RAW" ]]; then
+  GW_RESP=$(curl -s -w "\n%{http_code}" \
+    "${GATEWAY_URL}/v1/accounts?offset=0&limit=1" \
+    -H "Authorization: Bearer ${APIKEY_OLD_RAW}")
+  GW_STATUS=$(echo "$GW_RESP" | tail -1)
+  if [[ "$GW_STATUS" == "200" ]]; then
+    pass
+  else
+    fail "old API key during grace: expected 200, got ${GW_STATUS}"
+  fi
+else
+  fail "no old API key to test grace period"
+fi
+
+run_test "DELETE /portal/v1/api-keys/:id -- revoke then verify rejected"
+if [[ -n "$APIKEY_ID" ]]; then
+  portal_delete "/api-keys/${APIKEY_ID}"
+  if assert_status "$HTTP_STATUS" "200" "revoke API key"; then
+    sleep 1  # Brief wait for cache invalidation
+    GW_RESP=$(curl -s -w "\n%{http_code}" \
+      "${GATEWAY_URL}/v1/accounts?offset=0&limit=1" \
+      -H "Authorization: Bearer ${APIKEY_RAW}")
+    GW_STATUS=$(echo "$GW_RESP" | tail -1)
+    if [[ "$GW_STATUS" == "401" || "$GW_STATUS" == "403" ]]; then
+      pass
+    else
+      fail "revoked key should be rejected, got ${GW_STATUS}"
+    fi
+  fi
+else
+  fail "no API key id to revoke"
+fi
+
+# ===========================================================================
+# SUITE 16: RBAC Enforcement (5 tests)
+# ===========================================================================
+suite "16. RBAC Enforcement"
+
+# Owner session is already active from Suite 14 re-login.
+
+run_test "Owner: POST /portal/v1/api-keys -- owner can create API key"
+portal_post "/api-keys" '{"name":"e2e-rbac-key","scopes":["accounts:read"]}'
+if assert_status "$HTTP_STATUS" "200" "owner create API key"; then
+  RBAC_KEY_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+  pass
+fi
+# Cleanup: revoke the test key
+if [[ -n "$RBAC_KEY_ID" ]]; then
+  portal_delete "/api-keys/${RBAC_KEY_ID}"
+fi
+
+run_test "Owner: POST /portal/v1/members/invite -- owner can invite member"
+MEMBER_EMAIL="e2e-member-${PORTAL_TS}@test.local"
+portal_post "/members/invite" "{\"email\":\"${MEMBER_EMAIL}\",\"role\":\"member\"}"
+if assert_status "$HTTP_STATUS" "200" "owner invite member"; then
+  INVITE_LINK=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['invite_link'])" 2>/dev/null || echo "")
+  INVITED_MEMBER_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['member']['id'])" 2>/dev/null || echo "")
+  if [[ -n "$INVITE_LINK" ]]; then
+    pass
+  else
+    fail "invite member: no invite_link in response"
+  fi
+fi
+
+# Accept invite to create Member session
+INVITE_RAW_TOKEN=$(echo "$INVITE_LINK" | python3 -c "import sys; from urllib.parse import urlparse, parse_qs; url=sys.stdin.read().strip(); print(parse_qs(urlparse(url).query).get('token',[''])[0])" 2>/dev/null || echo "")
+
+if [[ -n "$INVITE_RAW_TOKEN" ]]; then
+  # Validate invite
+  curl -s -b "$PORTAL_COOKIE_JAR" -c "$PORTAL_COOKIE_JAR" \
+    "${GATEWAY_URL}/portal/v1/auth/invite?token=${INVITE_RAW_TOKEN}" > /dev/null 2>&1
+
+  # Accept invite with Member session
+  MEMBER_COOKIE_JAR=$(mktemp)
+  ACCEPT_RESP=$(curl -s -w "\n%{http_code}" -c "$MEMBER_COOKIE_JAR" \
+    -X POST "${GATEWAY_URL}/portal/v1/auth/invite/accept" \
+    -H "Content-Type: application/json" \
+    -d "{\"token\":\"${INVITE_RAW_TOKEN}\",\"name\":\"E2E Member\",\"password\":\"MemberPass1\"}")
+  ACCEPT_STATUS=$(echo "$ACCEPT_RESP" | tail -1)
+
+  if [[ "$ACCEPT_STATUS" == "200" ]]; then
+    MEMBER_CSRF=$(grep csrf_token "$MEMBER_COOKIE_JAR" 2>/dev/null | awk '{print $NF}' || echo "")
+  fi
+fi
+
+run_test "Member: POST /portal/v1/api-keys -- member cannot create API key (403)"
+if [[ -n "$MEMBER_COOKIE_JAR" && -f "$MEMBER_COOKIE_JAR" ]]; then
+  MEMBER_KEY_RESP=$(curl -s -w "\n%{http_code}" -b "$MEMBER_COOKIE_JAR" \
+    -X POST "${GATEWAY_URL}/portal/v1/api-keys" \
+    -H "Content-Type: application/json" \
+    -H "X-CSRF-Token: ${MEMBER_CSRF}" \
+    -d '{"name":"member-key","scopes":["accounts:read"]}')
+  MEMBER_KEY_STATUS=$(echo "$MEMBER_KEY_RESP" | tail -1)
+  if assert_status "$MEMBER_KEY_STATUS" "403" "member create API key denied"; then
+    pass
+  fi
+else
+  fail "no member session available"
+fi
+
+run_test "Member: POST /portal/v1/members/invite -- member cannot invite (403)"
+if [[ -n "$MEMBER_COOKIE_JAR" && -f "$MEMBER_COOKIE_JAR" ]]; then
+  MEMBER_INV_RESP=$(curl -s -w "\n%{http_code}" -b "$MEMBER_COOKIE_JAR" \
+    -X POST "${GATEWAY_URL}/portal/v1/members/invite" \
+    -H "Content-Type: application/json" \
+    -H "X-CSRF-Token: ${MEMBER_CSRF}" \
+    -d '{"email":"another@test.local","role":"member"}')
+  MEMBER_INV_STATUS=$(echo "$MEMBER_INV_RESP" | tail -1)
+  if assert_status "$MEMBER_INV_STATUS" "403" "member invite denied"; then
+    pass
+  fi
+else
+  fail "no member session available"
+fi
+
+run_test "Member: GET /portal/v1/dashboard/stats -- member can read dashboard"
+if [[ -n "$MEMBER_COOKIE_JAR" && -f "$MEMBER_COOKIE_JAR" ]]; then
+  MEMBER_DASH_RESP=$(curl -s -w "\n%{http_code}" -b "$MEMBER_COOKIE_JAR" \
+    "${GATEWAY_URL}/portal/v1/dashboard/stats")
+  MEMBER_DASH_STATUS=$(echo "$MEMBER_DASH_RESP" | tail -1)
+  if assert_status "$MEMBER_DASH_STATUS" "200" "member read dashboard"; then
+    pass
+  fi
+else
+  fail "no member session available"
+fi
+
+rm -f "$MEMBER_COOKIE_JAR" 2>/dev/null
+
+# ===========================================================================
+# SUITE 17: Rate Limiting (3 tests)
+# ===========================================================================
+suite "17. Rate Limiting"
+
+# Create a fresh API key for rate limit testing
+portal_post "/api-keys" '{"name":"e2e-ratelimit-key","scopes":["accounts:read"]}'
+refresh_csrf
+RL_KEY_RAW=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['raw_key'])" 2>/dev/null || echo "")
+RL_KEY_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+
+run_test "10 requests within rate limit -- all should succeed"
+if [[ -n "$RL_KEY_RAW" ]]; then
+  RL_FAIL_COUNT=0
+  for i in $(seq 1 10); do
+    RL_RESP=$(curl -s -o /dev/null -w "%{http_code}" \
+      "${GATEWAY_URL}/v1/accounts?offset=0&limit=1" \
+      -H "Authorization: Bearer ${RL_KEY_RAW}")
+    if [[ "$RL_RESP" == "429" ]]; then
+      RL_FAIL_COUNT=$((RL_FAIL_COUNT + 1))
+    fi
+  done
+  if [[ "$RL_FAIL_COUNT" -eq 0 ]]; then
+    pass
+  else
+    fail "got ${RL_FAIL_COUNT} rate-limited (429) responses in 10 requests"
+  fi
+else
+  fail "no API key for rate limit test"
+fi
+
+run_test "Burst 120 rapid requests -- expect at least one 429"
+if [[ -n "$RL_KEY_RAW" ]]; then
+  RL_429_COUNT=0
+  for i in $(seq 1 120); do
+    RL_RESP=$(curl -s -o /dev/null -w "%{http_code}" \
+      "${GATEWAY_URL}/v1/accounts?offset=0&limit=1" \
+      -H "Authorization: Bearer ${RL_KEY_RAW}")
+    if [[ "$RL_RESP" == "429" ]]; then
+      RL_429_COUNT=$((RL_429_COUNT + 1))
+    fi
+  done
+  if [[ "$RL_429_COUNT" -ge 1 ]]; then
+    pass
+  else
+    fail "burst 120 requests: expected at least 1 x 429, got ${RL_429_COUNT}"
+  fi
+else
+  fail "no API key for rate limit burst test"
+fi
+
+run_test "Recovery after rate limit -- request succeeds after cooldown"
+if [[ -n "$RL_KEY_RAW" ]]; then
+  sleep 3  # Wait for token bucket to refill
+  RL_RESP=$(curl -s -o /dev/null -w "%{http_code}" \
+    "${GATEWAY_URL}/v1/accounts?offset=0&limit=1" \
+    -H "Authorization: Bearer ${RL_KEY_RAW}")
+  if [[ "$RL_RESP" == "200" ]]; then
+    pass
+  else
+    fail "rate limit recovery: expected 200 after cooldown, got ${RL_RESP}"
+  fi
+else
+  fail "no API key for rate limit recovery test"
+fi
+
+# Cleanup rate limit key
+if [[ -n "$RL_KEY_ID" ]]; then
+  portal_delete "/api-keys/${RL_KEY_ID}"
+fi
+
+# ===========================================================================
+# SUITE 18: Data Proxy Round-Trip (3 tests)
+# ===========================================================================
+suite "18. Data Proxy Round-Trip"
+
+# Data proxy routes Core data through the portal session.
+# We need banking data in the same tenant as our portal org.
+# Create data via a fresh API key (same tenant) then query via data proxy.
+
+portal_post "/api-keys" '{"name":"e2e-dataproxy-key","scopes":["accounts:read","accounts:write"]}'
+refresh_csrf
+DP_KEY_RAW=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['raw_key'])" 2>/dev/null || echo "")
+DP_KEY_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+
+# Create a house account via gateway so it's in same tenant
+if [[ -n "$DP_KEY_RAW" ]]; then
+  curl -s -X POST "${GATEWAY_URL}/v1/house_account" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${DP_KEY_RAW}" \
+    -d '{"status":"active","account_name":"E2E DataProxy USD","account_type":"House","currency":"USD"}' > /dev/null 2>&1
+fi
+
+run_test "GET /portal/v1/data/accounts -- list accounts via data proxy"
+portal_get "/data/accounts?offset=0&limit=10"
+if assert_status "$HTTP_STATUS" "200" "data proxy accounts"; then
+  pass
+fi
+
+run_test "GET /portal/v1/data/house-accounts -- list house accounts via data proxy"
+portal_get "/data/house-accounts?currency=USD"
+if assert_status "$HTTP_STATUS" "200" "data proxy house accounts"; then
+  pass
+fi
+
+run_test "GET /portal/v1/data/transactions -- list transactions via data proxy"
+portal_get "/data/transactions?offset=0&limit=10"
+if assert_status "$HTTP_STATUS" "200" "data proxy transactions"; then
+  pass
+fi
+
+# Cleanup data proxy key
+if [[ -n "$DP_KEY_ID" ]]; then
+  portal_delete "/api-keys/${DP_KEY_ID}"
+fi
+
+# ===========================================================================
+# SUITE 19: Member Invite Flow (3 tests)
+# ===========================================================================
+suite "19. Member Invite Flow"
+
+INVITE_EMAIL="e2e-invite-${PORTAL_TS}@test.local"
+INVITE_PASSWORD="InvitePass1"
+INVITE2_LINK=""
+INVITE2_TOKEN=""
+INVITE2_MEMBER_ID=""
+
+run_test "POST /portal/v1/members/invite -- invite new member"
+portal_post "/members/invite" "{\"email\":\"${INVITE_EMAIL}\",\"role\":\"member\"}"
+if assert_status "$HTTP_STATUS" "200" "invite new member"; then
+  INVITE2_LINK=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['invite_link'])" 2>/dev/null || echo "")
+  INVITE2_MEMBER_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['member']['id'])" 2>/dev/null || echo "")
+  if [[ -n "$INVITE2_LINK" ]]; then
+    INVITE2_TOKEN=$(echo "$INVITE2_LINK" | python3 -c "import sys; from urllib.parse import urlparse, parse_qs; url=sys.stdin.read().strip(); print(parse_qs(urlparse(url).query).get('token',[''])[0])" 2>/dev/null || echo "")
+    pass
+  else
+    fail "invite: no invite_link returned"
+  fi
+fi
+
+run_test "Validate + accept invite -- GET invite then POST accept"
+if [[ -n "$INVITE2_TOKEN" ]]; then
+  # Step 1: Validate
+  VALIDATE_RESP=$(curl -s -w "\n%{http_code}" \
+    "${GATEWAY_URL}/portal/v1/auth/invite?token=${INVITE2_TOKEN}")
+  VALIDATE_STATUS=$(echo "$VALIDATE_RESP" | tail -1)
+  VALIDATE_BODY=$(echo "$VALIDATE_RESP" | sed '$d')
+
+  if [[ "$VALIDATE_STATUS" == "200" ]]; then
+    # Step 2: Accept
+    INVITE2_COOKIE_JAR=$(mktemp)
+    ACCEPT2_RESP=$(curl -s -w "\n%{http_code}" -c "$INVITE2_COOKIE_JAR" \
+      -X POST "${GATEWAY_URL}/portal/v1/auth/invite/accept" \
+      -H "Content-Type: application/json" \
+      -d "{\"token\":\"${INVITE2_TOKEN}\",\"name\":\"E2E Invited User\",\"password\":\"${INVITE_PASSWORD}\"}")
+    ACCEPT2_STATUS=$(echo "$ACCEPT2_RESP" | tail -1)
+    if assert_status "$ACCEPT2_STATUS" "200" "accept invite"; then
+      pass
+    fi
+    rm -f "$INVITE2_COOKIE_JAR"
+  else
+    fail "validate invite expected 200, got ${VALIDATE_STATUS}"
+  fi
+else
+  fail "no invite token to validate/accept"
+fi
+
+run_test "Login as invited member + verify in member list"
+if [[ -n "$INVITE_EMAIL" ]]; then
+  # Login as invited member
+  INVITE_LOGIN_JAR=$(mktemp)
+  INVITE_LOGIN_RESP=$(curl -s -w "\n%{http_code}" -c "$INVITE_LOGIN_JAR" \
+    -X POST "${GATEWAY_URL}/portal/v1/auth/login" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"${INVITE_EMAIL}\",\"password\":\"${INVITE_PASSWORD}\"}")
+  INVITE_LOGIN_STATUS=$(echo "$INVITE_LOGIN_RESP" | tail -1)
+
+  if [[ "$INVITE_LOGIN_STATUS" == "200" ]]; then
+    # Verify member appears in member list (via owner session)
+    portal_get "/members"
+    MEMBER_FOUND=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    members = data if isinstance(data, list) else data.get('members', data.get('data', []))
+    found = any(m.get('email') == '${INVITE_EMAIL}' and m.get('status') == 'Active' for m in members)
+    print('true' if found else 'false')
+except:
+    print('false')
+" 2>/dev/null || echo "false")
+    if [[ "$MEMBER_FOUND" == "true" ]]; then
+      pass
+    else
+      fail "invited member not found as Active in member list"
+    fi
+  else
+    fail "invited member login failed: expected 200, got ${INVITE_LOGIN_STATUS}"
+  fi
+  rm -f "$INVITE_LOGIN_JAR"
+else
+  fail "no invite email to login"
+fi
+
+# ===========================================================================
+# SUITE 20: Webhook CRUD (3 tests)
+# ===========================================================================
+suite "20. Webhook CRUD"
+
+WH_CRUD_ID=""
+WH_CRUD_SECRET=""
+
+run_test "POST + GET /portal/v1/webhooks -- create and list endpoints"
+portal_post "/webhooks" '{"url":"https://example.com/webhook-crud-test","event_types":["account.opened"],"description":"E2E CRUD test"}'
+if assert_status "$HTTP_STATUS" "201" "create webhook endpoint"; then
+  WH_CRUD_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+  WH_CRUD_SECRET=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['signing_secret'])" 2>/dev/null || echo "")
+
+  # Verify listing includes the endpoint
+  portal_get "/webhooks"
+  if assert_status "$HTTP_STATUS" "200" "list webhook endpoints"; then
+    WH_FOUND=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    endpoints = data if isinstance(data, list) else data.get('endpoints', data.get('data', []))
+    found = any(e.get('id') == '${WH_CRUD_ID}' for e in endpoints)
+    print('true' if found else 'false')
+except:
+    print('false')
+" 2>/dev/null || echo "false")
+    if [[ "$WH_FOUND" == "true" ]]; then
+      # Also verify signing_secret is NOT exposed in list
+      WH_LIST_SECRET=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    endpoints = data if isinstance(data, list) else data.get('endpoints', data.get('data', []))
+    for e in endpoints:
+        if e.get('id') == '${WH_CRUD_ID}':
+            print(e.get('signing_secret', 'NONE'))
+            break
+except:
+    print('NONE')
+" 2>/dev/null || echo "NONE")
+      if [[ "$WH_LIST_SECRET" == "NONE" || "$WH_LIST_SECRET" == "None" || "$WH_LIST_SECRET" == "null" ]]; then
+        pass
+      else
+        fail "webhook list exposes signing_secret: ${WH_LIST_SECRET}"
+      fi
+    else
+      fail "created webhook endpoint not found in list"
+    fi
+  fi
+else
+  fail "create webhook endpoint failed"
+fi
+
+run_test "PUT /portal/v1/webhooks/:id -- update webhook events"
+if [[ -n "$WH_CRUD_ID" ]]; then
+  portal_put "/webhooks/${WH_CRUD_ID}" '{"event_types":["account.opened","account.approved","account.closed"],"description":"Updated E2E CRUD"}'
+  if assert_status "$HTTP_STATUS" "200" "update webhook endpoint"; then
+    UPDATED_EVENTS=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    events = data.get('event_types', [])
+    print(len(events))
+except:
+    print(0)
+" 2>/dev/null || echo "0")
+    if [[ "$UPDATED_EVENTS" -ge 3 ]]; then
+      pass
+    else
+      fail "update webhook: expected >= 3 event_types, got ${UPDATED_EVENTS}"
+    fi
+  fi
+else
+  fail "no webhook endpoint id to update"
+fi
+
+run_test "POST rotate-secret + DELETE -- rotate secret then delete endpoint"
+if [[ -n "$WH_CRUD_ID" ]]; then
+  portal_post "/webhooks/${WH_CRUD_ID}/rotate-secret" '{}'
+  if assert_status "$HTTP_STATUS" "200" "rotate webhook secret"; then
+    NEW_SECRET=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('signing_secret',''))" 2>/dev/null || echo "")
+    if [[ -n "$NEW_SECRET" && "$NEW_SECRET" != "$WH_CRUD_SECRET" ]]; then
+      # Delete the endpoint
+      portal_delete "/webhooks/${WH_CRUD_ID}"
+      if assert_status "$HTTP_STATUS" "200" "delete webhook endpoint"; then
+        pass
+      fi
+    else
+      fail "rotated secret same as original or missing"
+    fi
+  fi
+else
+  fail "no webhook endpoint id for rotate+delete"
+fi
+
+# ===========================================================================
+# SUITE 21: Login Brute-Force Protection (2 tests)
+# ===========================================================================
+suite "21. Login Brute-Force Protection"
+
+BRUTE_EMAIL="e2e-brute-${PORTAL_TS}@test.local"
+BRUTE_PASSWORD="BrutePass1"
+
+# Create a target account for brute-force testing
+BRUTE_COOKIE=$(mktemp)
+curl -s -c "$BRUTE_COOKIE" -X POST "${GATEWAY_URL}/portal/v1/auth/signup" \
+  -H "Content-Type: application/json" \
+  -d "{\"org_name\":\"e2e-brute-org-${PORTAL_TS}\",\"name\":\"Brute Tester\",\"email\":\"${BRUTE_EMAIL}\",\"password\":\"${BRUTE_PASSWORD}\"}" > /dev/null 2>&1
+rm -f "$BRUTE_COOKIE"
+
+run_test "5 failed logins then 429 on 6th attempt"
+GOT_429=false
+for i in $(seq 1 6); do
+  BF_RESP=$(curl -s -w "\n%{http_code}" \
+    -X POST "${GATEWAY_URL}/portal/v1/auth/login" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"${BRUTE_EMAIL}\",\"password\":\"WrongPassword${i}\"}")
+  BF_STATUS=$(echo "$BF_RESP" | tail -1)
+  if [[ "$BF_STATUS" == "429" ]]; then
+    GOT_429=true
+    # Verify Retry-After header
+    BF_RETRY=$(curl -s -D - -o /dev/null \
+      -X POST "${GATEWAY_URL}/portal/v1/auth/login" \
+      -H "Content-Type: application/json" \
+      -d "{\"email\":\"${BRUTE_EMAIL}\",\"password\":\"WrongAgain\"}" 2>/dev/null | grep -i "retry-after" | head -1 || echo "")
+    break
+  fi
+done
+if [[ "$GOT_429" == "true" ]]; then
+  pass
+else
+  fail "brute-force: never got 429 after 6 failed attempts (last status: ${BF_STATUS})"
+fi
+
+run_test "Different email not affected by brute-force lockout"
+# Use the original portal email (not brute-forced) to prove lockout is per-email
+CLEAN_RESP=$(curl -s -w "\n%{http_code}" \
+  -X POST "${GATEWAY_URL}/portal/v1/auth/login" \
+  -H "Content-Type: application/json" \
+  -d "{\"email\":\"${PORTAL_EMAIL}\",\"password\":\"${PORTAL_PASSWORD}\"}")
+CLEAN_STATUS=$(echo "$CLEAN_RESP" | tail -1)
+if assert_status "$CLEAN_STATUS" "200" "clean email not rate-limited"; then
+  pass
+fi
+
+# Re-login as the portal owner for audit log tests
+portal_post "/auth/login" "{\"email\":\"${PORTAL_EMAIL}\",\"password\":\"${PORTAL_PASSWORD}\"}"
+refresh_csrf
+
+# ===========================================================================
+# SUITE 22: Audit Log Verification (2 tests)
+# ===========================================================================
+suite "22. Audit Log Verification"
+
+# Small delay for audit log async writes
+sleep 2
+
+run_test "GET /portal/v1/audit-logs -- verify login audit entries exist"
+portal_get "/audit-logs?action=auth.login_success&limit=5"
+if assert_status "$HTTP_STATUS" "200" "audit logs login"; then
+  AUDIT_COUNT=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    entries = data.get('data', [])
+    count = sum(1 for e in entries if e.get('action') == 'auth.login_success')
+    print(count)
+except:
+    print(0)
+" 2>/dev/null || echo "0")
+  if [[ "$AUDIT_COUNT" -ge 1 ]]; then
+    pass
+  else
+    fail "audit logs: expected >= 1 auth.login_success entry, got ${AUDIT_COUNT}"
+  fi
+fi
+
+run_test "GET /portal/v1/audit-logs -- verify api_key.created audit entries exist"
+portal_get "/audit-logs?action=api_key.created&limit=5"
+if assert_status "$HTTP_STATUS" "200" "audit logs api_key"; then
+  AUDIT_KEY_COUNT=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    entries = data.get('data', [])
+    count = sum(1 for e in entries if e.get('action') == 'api_key.created')
+    print(count)
+except:
+    print(0)
+" 2>/dev/null || echo "0")
+  if [[ "$AUDIT_KEY_COUNT" -ge 1 ]]; then
+    pass
+  else
+    fail "audit logs: expected >= 1 api_key.created entry, got ${AUDIT_KEY_COUNT}"
+  fi
+fi
+
+# ===========================================================================
+# Cleanup portal test state
+# ===========================================================================
+rm -f "$PORTAL_COOKIE_JAR" 2>/dev/null
 
 # ===========================================================================
 # REPORT

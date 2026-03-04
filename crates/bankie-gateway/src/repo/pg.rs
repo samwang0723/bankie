@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::RepoError;
 use crate::models::api_key::{ApiKey, KeyStatus};
-use crate::models::dashboard::{AuditLogEntry, NewAuditLog};
+use crate::models::dashboard::{AuditLogEntry, AuditLogFilters, NewAuditLog};
 use crate::models::member::{MemberRole, MemberStatus, OrgMember};
 use crate::models::org::{OrgStatus, Organization};
 use crate::models::webhook::{
@@ -696,6 +696,7 @@ struct AuditLogRow {
     resource_type: String,
     resource_id: Option<String>,
     changes: Option<serde_json::Value>,
+    client_ip: Option<String>,
     created_at: DateTime<Utc>,
 }
 
@@ -709,6 +710,7 @@ impl From<AuditLogRow> for AuditLogEntry {
             resource_type: row.resource_type,
             resource_id: row.resource_id,
             changes: row.changes,
+            client_ip: row.client_ip,
             created_at: row.created_at,
         }
     }
@@ -778,7 +780,7 @@ impl super::dashboard::DashboardRepository for PgDashboardRepository {
     ) -> Result<Vec<AuditLogEntry>, RepoError> {
         let rows: Vec<AuditLogRow> = sqlx::query_as(
             r#"
-            SELECT id, org_id, actor_id, action, resource_type, resource_id, changes, created_at
+            SELECT id, org_id, actor_id, action, resource_type, resource_id, changes, client_ip, created_at
             FROM portal.audit_logs
             WHERE org_id = $1
             ORDER BY created_at DESC
@@ -813,6 +815,60 @@ impl super::dashboard::DashboardRepository for PgDashboardRepository {
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
         Ok(())
+    }
+
+    async fn list_audit_logs(
+        &self,
+        org_id: Uuid,
+        filters: AuditLogFilters,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<AuditLogEntry>, i64), RepoError> {
+        // Count query with optional filters
+        let count_row: (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*)
+            FROM portal.audit_logs
+            WHERE org_id = $1
+              AND ($2::text IS NULL OR action = $2)
+              AND ($3::timestamptz IS NULL OR created_at >= $3)
+              AND ($4::timestamptz IS NULL OR created_at <= $4)
+            "#,
+        )
+        .bind(org_id)
+        .bind(filters.action.as_deref())
+        .bind(filters.from)
+        .bind(filters.to)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        let total = count_row.0;
+
+        // Data query with same filters + pagination
+        let rows: Vec<AuditLogRow> = sqlx::query_as(
+            r#"
+            SELECT id, org_id, actor_id, action, resource_type, resource_id, changes, client_ip, created_at
+            FROM portal.audit_logs
+            WHERE org_id = $1
+              AND ($2::text IS NULL OR action = $2)
+              AND ($3::timestamptz IS NULL OR created_at >= $3)
+              AND ($4::timestamptz IS NULL OR created_at <= $4)
+            ORDER BY created_at DESC
+            LIMIT $5 OFFSET $6
+            "#,
+        )
+        .bind(org_id)
+        .bind(filters.action.as_deref())
+        .bind(filters.from)
+        .bind(filters.to)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        Ok((rows.into_iter().map(AuditLogEntry::from).collect(), total))
     }
 }
 
