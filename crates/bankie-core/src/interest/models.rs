@@ -192,19 +192,6 @@ pub struct InterestEligibleAccount {
     pub balance: Decimal,
 }
 
-/// Represents an account that is due for interest posting on a given date.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize)]
-pub struct PostingDueAccount {
-    pub tenant_id: i32,
-    pub account_id: String,
-    pub ledger_id: String,
-    pub currency: String,
-    pub rate_config_id: Uuid,
-    pub posting_frequency: String,
-    pub posting_day: Option<i16>,
-}
-
 // =============================================================================
 // Tier breakdown for JSONB serialization
 // =============================================================================

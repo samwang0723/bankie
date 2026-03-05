@@ -165,17 +165,14 @@ async fn main() {
                 }
             }
             // Daily interest posting job
-            if let (Some(ref interest_repo), Some(ref cache)) = (&state.interest_repo, &state.cache)
-            {
-                match create_interest_posting_job(interest_repo.clone(), cache.clone()).await {
-                    Ok(job) => {
-                        if let Err(e) = sched.add(job).await {
-                            error!("Failed to add interest posting job: {:?}", e);
-                        }
+            match create_interest_posting_job(state.clone()).await {
+                Ok(job) => {
+                    if let Err(e) = sched.add(job).await {
+                        error!("Failed to add interest posting job: {:?}", e);
                     }
-                    Err(e) => {
-                        error!("Failed to create interest posting job: {:?}", e);
-                    }
+                }
+                Err(e) => {
+                    error!("Failed to create interest posting job: {:?}", e);
                 }
             }
             if let Err(e) = sched.start().await {

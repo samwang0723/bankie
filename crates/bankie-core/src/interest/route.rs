@@ -201,15 +201,47 @@ pub async fn create_rate_config(
     }
 
     // Validate posting frequency / day_count enums
-    if let Err(e) = req
+    let freq = match req
         .posting_frequency
         .parse::<super::models::PostingFrequency>()
     {
-        return AppError::BadRequest(format!("Invalid posting frequency: {}", e)).into_response();
-    }
+        Ok(f) => f,
+        Err(e) => {
+            return AppError::BadRequest(format!("Invalid posting frequency: {}", e))
+                .into_response()
+        }
+    };
     if let Err(e) = req.day_count.parse::<super::models::DayCountConvention>() {
         return AppError::BadRequest(format!("Invalid day count convention: {}", e))
             .into_response();
+    }
+
+    // Validate posting_day against posting_frequency
+    use super::models::PostingFrequency;
+    match (freq, req.posting_day) {
+        (PostingFrequency::Daily, Some(_)) => {
+            return AppError::BadRequest(
+                "Daily frequency must have posting_day = null".to_string(),
+            )
+            .into_response();
+        }
+        (PostingFrequency::Weekly, Some(d)) if !(1..=7).contains(&d) => {
+            return AppError::BadRequest(
+                "Weekly posting_day must be 1-7 (Mon=1, Sun=7)".to_string(),
+            )
+            .into_response();
+        }
+        (PostingFrequency::Monthly, Some(d)) if !(1..=28).contains(&d) => {
+            return AppError::BadRequest("Monthly posting_day must be 1-28".to_string())
+                .into_response();
+        }
+        (PostingFrequency::Weekly | PostingFrequency::Monthly, None) => {
+            return AppError::BadRequest(
+                "posting_day is required for Weekly/Monthly frequency".to_string(),
+            )
+            .into_response();
+        }
+        _ => {}
     }
 
     let config = InterestRateConfig {

@@ -458,6 +458,7 @@ impl InterestRepository for PgInterestRepository {
                  period_start, period_end, accrued_total, posted_amount,
                  transaction_id, status, error_message)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ON CONFLICT (account_id, period_start, period_end) DO NOTHING
             "#,
         )
         .bind(posting.id)

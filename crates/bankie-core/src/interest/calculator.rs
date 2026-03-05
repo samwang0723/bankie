@@ -81,7 +81,6 @@ pub fn apr_to_apy(apr: Decimal, compounding_periods: u32) -> Decimal {
 }
 
 /// Estimate total interest for a given balance over N days.
-#[allow(dead_code)]
 pub fn estimate_interest(
     balance: Decimal,
     tiers: &[InterestRateTier],
