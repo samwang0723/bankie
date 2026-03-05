@@ -4,10 +4,11 @@ use axum::extract::{Extension, Path, Query};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use chrono::NaiveDate;
+use chrono::{NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tracing::error;
 use uuid::Uuid;
 
 use super::calculator::estimate_interest;
@@ -109,6 +110,53 @@ pub struct EstimateResponse {
     pub currency: String,
 }
 
+// ─── Shared validation ───────────────────────────────────────────────────────
+
+/// Validate tier continuity: non-negative APRs, first starts at 0, no gaps, last unbounded.
+fn validate_tier_continuity(tiers: &[CreateTierRequest]) -> Result<(), String> {
+    if tiers.is_empty() {
+        return Err("At least one tier is required".to_string());
+    }
+    for tier in tiers {
+        if tier.apr < Decimal::ZERO {
+            return Err("APR must be non-negative".to_string());
+        }
+    }
+
+    let mut sorted: Vec<&CreateTierRequest> = tiers.iter().collect();
+    sorted.sort_by_key(|t| t.tier_order);
+
+    if sorted[0].min_balance != Decimal::ZERO {
+        return Err("First tier must start at min_balance = 0".to_string());
+    }
+    if sorted.last().unwrap().max_balance.is_some() {
+        return Err("Last tier must have max_balance = null (unbounded)".to_string());
+    }
+
+    for window in sorted.windows(2) {
+        let prev_max = match window[0].max_balance {
+            Some(m) => m,
+            None => {
+                return Err("Only the last tier can have max_balance = null".to_string());
+            }
+        };
+        if window[1].min_balance != prev_max {
+            return Err(format!(
+                "Gap between tier {} max_balance ({}) and tier {} min_balance ({})",
+                window[0].tier_order, prev_max, window[1].tier_order, window[1].min_balance
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Log a database error and return a generic 500 response.
+fn internal_error(e: impl std::fmt::Debug, context: &str) -> Response {
+    error!("{}: {:?}", context, e);
+    AppError::InternalServerError("Internal server error".to_string()).into_response()
+}
+
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
 /// GET /v1/interest/rates?currency=
@@ -119,14 +167,14 @@ pub async fn list_rate_configs(
 ) -> Response {
     let configs = match interest_db.list_rate_configs(params.currency, true).await {
         Ok(c) => c,
-        Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
+        Err(e) => return internal_error(e, "Failed to list rate configs"),
     };
 
     let mut results = Vec::with_capacity(configs.len());
     for config in configs {
         let tiers = match interest_db.get_rate_tiers(config.id).await {
             Ok(t) => t,
-            Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
+            Err(e) => return internal_error(e, "Failed to get rate tiers"),
         };
         results.push(RateConfigResponse { config, tiers });
     }
@@ -140,17 +188,19 @@ pub async fn create_rate_config(
     Extension(interest_db): Extension<Arc<dyn InterestRepository>>,
     Json(req): Json<CreateRateConfigRequest>,
 ) -> Response {
-    // Validate tiers
-    if req.tiers.is_empty() {
-        return AppError::BadRequest("At least one tier is required".to_string()).into_response();
-    }
-    for tier in &req.tiers {
-        if tier.apr < Decimal::ZERO {
-            return AppError::BadRequest("APR must be non-negative".to_string()).into_response();
-        }
+    // Validate tier continuity (fix #5)
+    if let Err(msg) = validate_tier_continuity(&req.tiers) {
+        return AppError::BadRequest(msg).into_response();
     }
 
-    // Validate posting frequency / posting_day
+    // Validate effective_from >= today (fix #7)
+    let today = Utc::now().date_naive();
+    if req.effective_from < today {
+        return AppError::BadRequest("effective_from must be today or in the future".to_string())
+            .into_response();
+    }
+
+    // Validate posting frequency / day_count enums
     if let Err(e) = req
         .posting_frequency
         .parse::<super::models::PostingFrequency>()
@@ -174,9 +224,9 @@ pub async fn create_rate_config(
         is_active: true,
     };
 
-    let saved_config = match interest_db.upsert_rate_config(&config).await {
+    let saved_config = match interest_db.create_rate_config(&config).await {
         Ok(c) => c,
-        Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
+        Err(e) => return internal_error(e, "Failed to create rate config"),
     };
 
     let tiers: Vec<InterestRateTier> = req
@@ -196,7 +246,7 @@ pub async fn create_rate_config(
         .replace_rate_tiers(saved_config.id, &tiers)
         .await
     {
-        return AppError::InternalServerError(e.to_string()).into_response();
+        return internal_error(e, "Failed to replace rate tiers");
     }
 
     (
@@ -218,12 +268,12 @@ pub async fn get_rate_config(
     let config = match interest_db.get_rate_config_by_id(id).await {
         Ok(Some(c)) => c,
         Ok(None) => return AppError::NotFound("Rate config not found".to_string()).into_response(),
-        Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
+        Err(e) => return internal_error(e, "Failed to get rate config"),
     };
 
     let tiers = match interest_db.get_rate_tiers(config.id).await {
         Ok(t) => t,
-        Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
+        Err(e) => return internal_error(e, "Failed to get rate tiers"),
     };
 
     (
@@ -253,7 +303,7 @@ pub async fn list_accruals(
         .await
     {
         Ok(accruals) => (StatusCode::OK, Json(json!({ "entries": accruals }))).into_response(),
-        Err(e) => AppError::InternalServerError(e.to_string()).into_response(),
+        Err(e) => internal_error(e, "Failed to get accrual history"),
     }
 }
 
@@ -277,7 +327,7 @@ pub async fn list_postings(
         .await
     {
         Ok(postings) => (StatusCode::OK, Json(json!({ "entries": postings }))).into_response(),
-        Err(e) => AppError::InternalServerError(e.to_string()).into_response(),
+        Err(e) => internal_error(e, "Failed to get postings"),
     }
 }
 
@@ -289,7 +339,7 @@ pub async fn estimate_interest_handler(
 ) -> Response {
     let accounts = match interest_db.list_interest_accounts().await {
         Ok(a) => a,
-        Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
+        Err(e) => return internal_error(e, "Failed to list interest accounts"),
     };
 
     let account = match accounts
@@ -304,7 +354,7 @@ pub async fn estimate_interest_handler(
 
     let balance = match interest_db.get_current_balance(&account.ledger_id).await {
         Ok(b) => b,
-        Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
+        Err(e) => return internal_error(e, "Failed to get current balance"),
     };
 
     // Find rate config for this currency
@@ -313,7 +363,7 @@ pub async fn estimate_interest_handler(
         .await
     {
         Ok(c) => c,
-        Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
+        Err(e) => return internal_error(e, "Failed to list rate configs for estimate"),
     };
 
     let config = match configs.first() {
@@ -331,7 +381,7 @@ pub async fn estimate_interest_handler(
 
     let tiers = match interest_db.get_rate_tiers(config.id).await {
         Ok(t) => t,
-        Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
+        Err(e) => return internal_error(e, "Failed to get rate tiers for estimate"),
     };
 
     let estimated = estimate_interest(balance, &tiers, &day_count, params.days);
@@ -370,7 +420,7 @@ pub async fn update_rate_config(
     let config = match interest_db.get_rate_config_by_id(id).await {
         Ok(Some(c)) => c,
         Ok(None) => return AppError::NotFound("Rate config not found".to_string()).into_response(),
-        Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
+        Err(e) => return internal_error(e, "Failed to get rate config for update"),
     };
 
     let is_active = req.is_active.unwrap_or(config.is_active);
@@ -395,7 +445,7 @@ pub async fn update_rate_config(
         Ok(updated) => {
             let tiers = match interest_db.get_rate_tiers(updated.id).await {
                 Ok(t) => t,
-                Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
+                Err(e) => return internal_error(e, "Failed to get rate tiers after sunset"),
             };
             (
                 StatusCode::OK,
@@ -406,7 +456,7 @@ pub async fn update_rate_config(
             )
                 .into_response()
         }
-        Err(e) => AppError::InternalServerError(e.to_string()).into_response(),
+        Err(e) => internal_error(e, "Failed to sunset rate config"),
     }
 }
 
@@ -417,60 +467,16 @@ pub async fn replace_rate_tiers(
     Extension(interest_db): Extension<Arc<dyn InterestRepository>>,
     Json(req): Json<ReplaceTiersRequest>,
 ) -> Response {
-    // Validate: at least one tier
-    if req.tiers.is_empty() {
-        return AppError::BadRequest("At least one tier is required".to_string()).into_response();
-    }
-
-    // Validate: all APRs non-negative
-    for tier in &req.tiers {
-        if tier.apr < Decimal::ZERO {
-            return AppError::BadRequest("APR must be non-negative".to_string()).into_response();
-        }
-    }
-
-    // Validate tier continuity: first tier starts at 0, no gaps
-    let mut sorted_tiers: Vec<&CreateTierRequest> = req.tiers.iter().collect();
-    sorted_tiers.sort_by_key(|t| t.tier_order);
-
-    if sorted_tiers[0].min_balance != Decimal::ZERO {
-        return AppError::BadRequest("First tier must start at min_balance = 0".to_string())
-            .into_response();
-    }
-
-    // Last tier must have max_balance = None (unbounded)
-    if sorted_tiers.last().unwrap().max_balance.is_some() {
-        return AppError::BadRequest(
-            "Last tier must have max_balance = null (unbounded)".to_string(),
-        )
-        .into_response();
-    }
-
-    // Check no gaps between adjacent tiers
-    for window in sorted_tiers.windows(2) {
-        let prev_max = match window[0].max_balance {
-            Some(m) => m,
-            None => {
-                return AppError::BadRequest(
-                    "Only the last tier can have max_balance = null".to_string(),
-                )
-                .into_response();
-            }
-        };
-        if window[1].min_balance != prev_max {
-            return AppError::BadRequest(format!(
-                "Gap between tier {} max_balance ({}) and tier {} min_balance ({})",
-                window[0].tier_order, prev_max, window[1].tier_order, window[1].min_balance
-            ))
-            .into_response();
-        }
+    // Use shared tier validation
+    if let Err(msg) = validate_tier_continuity(&req.tiers) {
+        return AppError::BadRequest(msg).into_response();
     }
 
     // Verify config exists
     let config = match interest_db.get_rate_config_by_id(id).await {
         Ok(Some(c)) => c,
         Ok(None) => return AppError::NotFound("Rate config not found".to_string()).into_response(),
-        Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
+        Err(e) => return internal_error(e, "Failed to get rate config for tier replacement"),
     };
 
     let tiers: Vec<InterestRateTier> = req
@@ -487,7 +493,7 @@ pub async fn replace_rate_tiers(
         .collect();
 
     if let Err(e) = interest_db.replace_rate_tiers(id, &tiers).await {
-        return AppError::InternalServerError(e.to_string()).into_response();
+        return internal_error(e, "Failed to replace rate tiers");
     }
 
     (
@@ -808,6 +814,98 @@ mod tests {
         let fetched = mock.get_rate_config_by_id(config_id).await.unwrap();
         assert!(fetched.is_some());
         mock.replace_rate_tiers(config_id, &[]).await.unwrap();
+    }
+
+    // ── Shared validation tests ────────────────────────────────────────
+
+    #[test]
+    fn test_validate_tier_continuity_valid_single_tier() {
+        let tiers = vec![CreateTierRequest {
+            tier_order: 1,
+            min_balance: dec!(0),
+            max_balance: None,
+            apr: dec!(0.05),
+        }];
+        assert!(validate_tier_continuity(&tiers).is_ok());
+    }
+
+    #[test]
+    fn test_validate_tier_continuity_valid_multi_tier() {
+        let tiers = vec![
+            CreateTierRequest {
+                tier_order: 1,
+                min_balance: dec!(0),
+                max_balance: Some(dec!(10000)),
+                apr: dec!(0.03),
+            },
+            CreateTierRequest {
+                tier_order: 2,
+                min_balance: dec!(10000),
+                max_balance: None,
+                apr: dec!(0.05),
+            },
+        ];
+        assert!(validate_tier_continuity(&tiers).is_ok());
+    }
+
+    #[test]
+    fn test_validate_tier_continuity_rejects_empty() {
+        assert!(validate_tier_continuity(&[]).is_err());
+    }
+
+    #[test]
+    fn test_validate_tier_continuity_rejects_negative_apr() {
+        let tiers = vec![CreateTierRequest {
+            tier_order: 1,
+            min_balance: dec!(0),
+            max_balance: None,
+            apr: dec!(-0.01),
+        }];
+        assert!(validate_tier_continuity(&tiers).is_err());
+    }
+
+    #[test]
+    fn test_validate_tier_continuity_rejects_gap() {
+        let tiers = vec![
+            CreateTierRequest {
+                tier_order: 1,
+                min_balance: dec!(0),
+                max_balance: Some(dec!(10000)),
+                apr: dec!(0.03),
+            },
+            CreateTierRequest {
+                tier_order: 2,
+                min_balance: dec!(15000),
+                max_balance: None,
+                apr: dec!(0.05),
+            },
+        ];
+        let err = validate_tier_continuity(&tiers).unwrap_err();
+        assert!(err.contains("Gap"));
+    }
+
+    #[test]
+    fn test_validate_tier_continuity_rejects_nonzero_start() {
+        let tiers = vec![CreateTierRequest {
+            tier_order: 1,
+            min_balance: dec!(100),
+            max_balance: None,
+            apr: dec!(0.05),
+        }];
+        let err = validate_tier_continuity(&tiers).unwrap_err();
+        assert!(err.contains("min_balance = 0"));
+    }
+
+    #[test]
+    fn test_validate_tier_continuity_rejects_bounded_last() {
+        let tiers = vec![CreateTierRequest {
+            tier_order: 1,
+            min_balance: dec!(0),
+            max_balance: Some(dec!(10000)),
+            apr: dec!(0.05),
+        }];
+        let err = validate_tier_continuity(&tiers).unwrap_err();
+        assert!(err.contains("unbounded"));
     }
 
     // ── Estimate tests ──────────────────────────────────────────────────

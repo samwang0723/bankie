@@ -43,7 +43,7 @@ pub trait InterestRepository: Send + Sync {
         active_only: bool,
     ) -> Result<Vec<InterestRateConfig>, Error>;
 
-    async fn upsert_rate_config(
+    async fn create_rate_config(
         &self,
         config: &InterestRateConfig,
     ) -> Result<InterestRateConfig, Error>;
@@ -214,7 +214,7 @@ impl InterestRepository for PgInterestRepository {
         }
     }
 
-    async fn upsert_rate_config(
+    async fn create_rate_config(
         &self,
         config: &InterestRateConfig,
     ) -> Result<InterestRateConfig, Error> {
@@ -224,16 +224,6 @@ impl InterestRepository for PgInterestRepository {
                 (id, currency, account_kind, day_count, posting_frequency,
                  posting_day, effective_from, effective_to, is_active)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            ON CONFLICT (id) DO UPDATE SET
-                currency = EXCLUDED.currency,
-                account_kind = EXCLUDED.account_kind,
-                day_count = EXCLUDED.day_count,
-                posting_frequency = EXCLUDED.posting_frequency,
-                posting_day = EXCLUDED.posting_day,
-                effective_from = EXCLUDED.effective_from,
-                effective_to = EXCLUDED.effective_to,
-                is_active = EXCLUDED.is_active,
-                updated_at = now()
             RETURNING id, currency, account_kind, day_count, posting_frequency,
                       posting_day, effective_from, effective_to, is_active
             "#,
@@ -313,14 +303,17 @@ impl InterestRepository for PgInterestRepository {
     ) -> Result<Vec<InterestEligibleAccount>, Error> {
         let rows = sqlx::query(
             r#"
-            SELECT bav.tenant_id, bav.id AS account_id, bav.ledger_id,
-                   bav.currency, bs.balance
-            FROM bank_account_view bav
+            SELECT bav.tenant_id,
+                   bav.view_id AS account_id,
+                   bav.payload->>'ledger_id' AS ledger_id,
+                   bav.payload->>'currency' AS currency,
+                   bs.available AS balance
+            FROM bank_account_views bav
             INNER JOIN balance_snapshots bs
-                ON bs.account_id = bav.id AND bs.snapshot_date = $1
-            WHERE bav.kind = 'Interest'
-              AND bav.status = 'Approved'
-              AND bs.balance > 0
+                ON bs.account_id = bav.view_id AND bs.snapshot_date = $1
+            WHERE bav.payload->>'kind' = 'Interest'
+              AND bav.payload->>'status' = 'Approved'
+              AND bs.available > 0
             "#,
         )
         .bind(accrual_date)
@@ -526,10 +519,13 @@ impl InterestRepository for PgInterestRepository {
     async fn list_interest_accounts(&self) -> Result<Vec<InterestAccountInfo>, Error> {
         let rows = sqlx::query(
             r#"
-            SELECT bav.id AS account_id, bav.ledger_id, bav.currency, bav.tenant_id
-            FROM bank_account_view bav
-            WHERE bav.kind = 'Interest'
-              AND bav.status = 'Approved'
+            SELECT bav.view_id AS account_id,
+                   bav.payload->>'ledger_id' AS ledger_id,
+                   bav.payload->>'currency' AS currency,
+                   bav.tenant_id
+            FROM bank_account_views bav
+            WHERE bav.payload->>'kind' = 'Interest'
+              AND bav.payload->>'status' = 'Approved'
             "#,
         )
         .fetch_all(&self.pool)

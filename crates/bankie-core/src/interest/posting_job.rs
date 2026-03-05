@@ -177,16 +177,71 @@ pub async fn run_posting_cycle(db: &dyn InterestRepository, cache: &redis::Clien
 pub async fn execute_posting(
     posting: &InterestPosting,
     db: &dyn InterestRepository,
-    _house_ledger_id: &str,
-    _services: &crate::service::BankAccountServices,
+    house_ledger_id: &str,
+    services: &crate::service::BankAccountServices,
 ) -> Result<(), String> {
-    // The actual transaction creation would go through the existing deposit pipeline.
-    // For now, mark the posting as completed with a placeholder.
-    // In production, this would call create_transaction_with_journal_custom_prefix
-    // with TRANS_INTEREST prefix and the InterestPayable house account.
-    db.update_posting_status(posting.id, "completed", None, None)
+    use crate::common::money::{Currency, Money};
+    use crate::domain::models::LedgerAction;
+    use crate::event_sourcing::helper::create_transaction_with_journal_custom_prefix;
+
+    // 1. Look up the bank account to get ledger_id and currency
+    let account_uuid = uuid::Uuid::parse_str(&posting.account_id)
+        .map_err(|e| format!("Invalid account_id UUID: {}", e))?;
+    let view = services
+        .services
+        .get_bank_account(account_uuid)
         .await
-        .map_err(|e| format!("Failed to update posting status: {}", e))
+        .map_err(|e| format!("Failed to fetch bank account: {}", e))?;
+
+    // 2. Build a minimal BankAccount from the view for the helper
+    let bank_account = crate::domain::models::BankAccount {
+        id: view.id,
+        ledger_id: view.ledger_id,
+        currency: view.currency,
+        status: view.status,
+        account_type: view.account_type,
+        kind: view.kind,
+        ..Default::default()
+    };
+
+    // 3. Create Money with the posted amount
+    let currency: Currency = posting
+        .currency
+        .parse()
+        .map_err(|e| format!("Invalid currency: {}", e))?;
+    let amount = Money::new(posting.posted_amount, currency);
+
+    // 4. Create a real deposit transaction via the banking pipeline
+    match create_transaction_with_journal_custom_prefix(
+        &bank_account,
+        services,
+        amount,
+        house_ledger_id.to_string(),
+        LedgerAction::Deposit,
+        posting.tenant_id,
+        "IN",
+    )
+    .await
+    {
+        Ok(transaction_id) => db
+            .update_posting_status(posting.id, "completed", Some(transaction_id), None)
+            .await
+            .map_err(|e| format!("Failed to update posting status: {}", e)),
+        Err(e) => {
+            let err_msg = format!("Interest deposit failed: {}", e);
+            error!(
+                account_id = %posting.account_id,
+                posting_id = %posting.id,
+                "{}",
+                err_msg
+            );
+            // Mark posting as failed so it can be retried
+            let _ = db
+                .update_posting_status(posting.id, "failed", None, Some(err_msg.clone()))
+                .await;
+            Err(err_msg)
+        }
+    }
 }
 
 #[cfg(test)]
