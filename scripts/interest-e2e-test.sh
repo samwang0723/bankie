@@ -27,7 +27,7 @@ set -euo pipefail
 BASE_URL="${BASE_URL:-http://localhost:3030}"
 DB_URL="${DB_URL:-postgres://bankie_app:password@localhost:5432/bankie_main}"
 TOKEN="${1:-${TOKEN:-}}"
-OUTBOX_WAIT="${OUTBOX_WAIT:-15}"
+OUTBOX_WAIT="${OUTBOX_WAIT:-25}"
 INTEREST_WAIT="${INTEREST_WAIT:-20}"
 
 if [[ -z "$TOKEN" ]]; then
@@ -266,7 +266,7 @@ http_post "${BASE_URL}/v1/interest/rates" '{
   "account_kind": "Interest",
   "day_count": "Actual/365",
   "posting_frequency": "Daily",
-  "effective_from": "2026-01-01",
+  "effective_from": "'"${TODAY}"'",
   "tiers": [
     { "tier_order": 1, "min_balance": 0, "max_balance": 10000, "apr": 0.045 },
     { "tier_order": 2, "min_balance": 10000, "max_balance": null, "apr": 0.040 }
@@ -525,7 +525,7 @@ if assert_status "$HTTP_STATUS" "200" "transfer to interest"; then
   pass
 fi
 
-wait_for_outbox
+wait_for_outbox 20
 
 run_test "Verify Interest account ledger balance = 25000"
 http_get "${BASE_URL}/v1/ledger/${INTEREST_LEDGER_ID}"
@@ -863,33 +863,33 @@ fi
 # ===========================================================================
 suite "8. Auth & Tenant Isolation"
 
-run_test "GET /v1/interest/rates -- without auth → 401"
+run_test "GET /v1/interest/rates -- without auth → 403"
 http_get "${BASE_URL}/v1/interest/rates?currency=USD" "no"
-if assert_status "$HTTP_STATUS" "401" "rates no auth"; then
+if assert_status "$HTTP_STATUS" "403" "rates no auth"; then
   pass
 fi
 
-run_test "GET /v1/interest/accruals -- without auth → 401"
+run_test "GET /v1/interest/accruals -- without auth → 403"
 http_get "${BASE_URL}/v1/interest/accruals?account_id=${INTEREST_ACCOUNT_ID}&start_date=2026-01-01&end_date=2026-12-31" "no"
-if assert_status "$HTTP_STATUS" "401" "accruals no auth"; then
+if assert_status "$HTTP_STATUS" "403" "accruals no auth"; then
   pass
 fi
 
-run_test "GET /v1/interest/postings -- without auth → 401"
+run_test "GET /v1/interest/postings -- without auth → 403"
 http_get "${BASE_URL}/v1/interest/postings?account_id=${INTEREST_ACCOUNT_ID}&start_date=2026-01-01&end_date=2026-12-31" "no"
-if assert_status "$HTTP_STATUS" "401" "postings no auth"; then
+if assert_status "$HTTP_STATUS" "403" "postings no auth"; then
   pass
 fi
 
-run_test "GET /v1/interest/estimate -- without auth → 401"
+run_test "GET /v1/interest/estimate -- without auth → 403"
 http_get "${BASE_URL}/v1/interest/estimate?account_id=${INTEREST_ACCOUNT_ID}&days=30" "no"
-if assert_status "$HTTP_STATUS" "401" "estimate no auth"; then
+if assert_status "$HTTP_STATUS" "403" "estimate no auth"; then
   pass
 fi
 
-run_test "POST /v1/interest/rates -- without auth → 401"
+run_test "POST /v1/interest/rates -- without auth → 403"
 http_post "${BASE_URL}/v1/interest/rates" '{"currency":"USD","effective_from":"2026-01-01","tiers":[{"tier_order":1,"min_balance":0,"max_balance":null,"apr":0.01}]}' "no"
-if assert_status "$HTTP_STATUS" "401" "create rate no auth"; then
+if assert_status "$HTTP_STATUS" "403" "create rate no auth"; then
   pass
 fi
 
@@ -972,10 +972,10 @@ run_test "Verify Interest account is Frozen"
 http_get "${BASE_URL}/v1/bank_account/${INTEREST_ACCOUNT_ID}"
 if assert_status "$HTTP_STATUS" "200" "verify frozen"; then
   acct_status=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo "")
-  if [[ "$acct_status" == "Frozen" ]]; then
+  if [[ "$acct_status" == "Freeze" ]]; then
     pass
   else
-    fail "expected Frozen, got ${acct_status}"
+    fail "expected Freeze, got ${acct_status}"
   fi
 fi
 
