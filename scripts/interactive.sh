@@ -40,6 +40,7 @@ LAST_LEDGER_ID=""
 LAST_USER_ID=""
 LAST_ACCOUNT_NUMBER=""
 LAST_CURRENCY="USD"
+LAST_RATE_CONFIG_ID=""
 PORTAL_LOGGED_IN=""
 PORTAL_EMAIL=""
 
@@ -92,6 +93,15 @@ http_post() {
   local body="$2"
   local response
   response=$(curl -s -w "\n%{http_code}" -X POST "$url" -H "$AUTH" -H "$CT" -d "$body")
+  HTTP_STATUS=$(echo "$response" | tail -1)
+  HTTP_BODY=$(echo "$response" | sed '$d')
+}
+
+http_put() {
+  local url="$1"
+  local body="$2"
+  local response
+  response=$(curl -s -w "\n%{http_code}" -X PUT "$url" -H "$AUTH" -H "$CT" -d "$body")
   HTTP_STATUS=$(echo "$response" | tail -1)
   HTTP_BODY=$(echo "$response" | sed '$d')
 }
@@ -1244,6 +1254,232 @@ action_portal_audit_logs() {
 }
 
 # ---------------------------------------------------------------------------
+# Interest Engine Actions (38-44, via Gateway API key auth)
+# ---------------------------------------------------------------------------
+
+action_interest_list_rates() {
+  echo -e "\n${CYAN}Interest: List Rate Configs${NC}"
+  separator
+  api_key_check || return
+
+  local currency
+  currency=$(prompt "Currency filter (blank for all)" "")
+
+  local url="${GATEWAY_URL}/v1/interest/rates"
+  [[ -n "$currency" ]] && url="${url}?currency=${currency}"
+
+  http_get "$url"
+  print_status
+  pretty_json "$HTTP_BODY"
+
+  # Remember first config ID if available
+  local first_id
+  first_id=$(echo "$HTTP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['entries'][0]['id'] if d.get('entries') else '')" 2>/dev/null)
+  [[ -n "$first_id" ]] && LAST_RATE_CONFIG_ID="$first_id"
+}
+
+action_interest_create_rate() {
+  echo -e "\n${CYAN}Interest: Create Rate Config${NC}"
+  separator
+  api_key_check || return
+
+  local currency day_count freq posting_day effective_from
+  currency=$(prompt "Currency" "$LAST_CURRENCY")
+  day_count=$(prompt "Day count convention (Actual/365, Actual/360, 30/360)" "Actual/365")
+  freq=$(prompt "Posting frequency (Daily, Weekly, Monthly)" "Monthly")
+  posting_day=$(prompt "Posting day (1-28 for Monthly, 1-7 for Weekly, blank for Daily)" "1")
+  effective_from=$(prompt "Effective from (YYYY-MM-DD)" "$(date -u +%Y-%m-%d)")
+
+  echo ""
+  echo -e "  ${BOLD}Define tiers${NC} (blended rate — each tier covers a balance range)"
+  echo -e "  ${DIM}Enter tiers one at a time. Last tier should have no max (unbounded).${NC}"
+
+  local tiers_json="["
+  local tier_order=1
+  local prev_max="0"
+  while true; do
+    echo ""
+    echo -e "  ${YELLOW}Tier ${tier_order}:${NC}"
+    local min_bal max_bal apr
+    min_bal=$(prompt "  Min balance" "$prev_max")
+    max_bal=$(prompt "  Max balance (blank = unbounded/last tier)" "")
+    apr=$(prompt "  APR (e.g. 0.045 for 4.5%)" "0.045")
+
+    if [[ $tier_order -gt 1 ]]; then
+      tiers_json="${tiers_json},"
+    fi
+
+    if [[ -z "$max_bal" ]]; then
+      tiers_json="${tiers_json}{\"tier_order\":${tier_order},\"min_balance\":${min_bal},\"max_balance\":null,\"apr\":${apr}}"
+      break
+    else
+      tiers_json="${tiers_json}{\"tier_order\":${tier_order},\"min_balance\":${min_bal},\"max_balance\":${max_bal},\"apr\":${apr}}"
+      prev_max="$max_bal"
+    fi
+
+    tier_order=$((tier_order + 1))
+  done
+  tiers_json="${tiers_json}]"
+
+  local posting_day_json="null"
+  [[ -n "$posting_day" ]] && posting_day_json="$posting_day"
+
+  local body
+  body=$(cat <<EOF
+{
+  "currency": "${currency}",
+  "day_count": "${day_count}",
+  "posting_frequency": "${freq}",
+  "posting_day": ${posting_day_json},
+  "effective_from": "${effective_from}",
+  "tiers": ${tiers_json}
+}
+EOF
+)
+
+  http_post "${GATEWAY_URL}/v1/interest/rates" "$body"
+  print_status
+  pretty_json "$HTTP_BODY"
+
+  local config_id
+  config_id=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
+  [[ -n "$config_id" ]] && LAST_RATE_CONFIG_ID="$config_id"
+}
+
+action_interest_view_rate() {
+  echo -e "\n${CYAN}Interest: View Rate Config${NC}"
+  separator
+  api_key_check || return
+
+  local config_id
+  config_id=$(prompt "Rate config ID" "$LAST_RATE_CONFIG_ID")
+  [[ -z "$config_id" ]] && { echo -e "  ${RED}Config ID required.${NC}"; return; }
+
+  http_get "${GATEWAY_URL}/v1/interest/rates/${config_id}"
+  print_status
+  pretty_json "$HTTP_BODY"
+  LAST_RATE_CONFIG_ID="$config_id"
+}
+
+action_interest_sunset_rate() {
+  echo -e "\n${CYAN}Interest: Sunset Rate Config${NC}"
+  separator
+  api_key_check || return
+
+  local config_id effective_to deactivate
+  config_id=$(prompt "Rate config ID" "$LAST_RATE_CONFIG_ID")
+  [[ -z "$config_id" ]] && { echo -e "  ${RED}Config ID required.${NC}"; return; }
+
+  effective_to=$(prompt "Effective to date (YYYY-MM-DD, blank to skip)" "")
+  deactivate=$(prompt "Deactivate? (y/n)" "y")
+
+  local is_active="true"
+  [[ "$deactivate" == "y" || "$deactivate" == "Y" ]] && is_active="false"
+
+  local body="{"
+  [[ -n "$effective_to" ]] && body="${body}\"effective_to\":\"${effective_to}\","
+  body="${body}\"is_active\":${is_active}}"
+
+  http_put "${GATEWAY_URL}/v1/interest/rates/${config_id}" "$body"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_interest_replace_tiers() {
+  echo -e "\n${CYAN}Interest: Replace Rate Tiers${NC}"
+  separator
+  api_key_check || return
+
+  local config_id
+  config_id=$(prompt "Rate config ID" "$LAST_RATE_CONFIG_ID")
+  [[ -z "$config_id" ]] && { echo -e "  ${RED}Config ID required.${NC}"; return; }
+
+  echo ""
+  echo -e "  ${BOLD}Define new tiers${NC} (replaces all existing tiers atomically)"
+
+  local tiers_json="["
+  local tier_order=1
+  local prev_max="0"
+  while true; do
+    echo ""
+    echo -e "  ${YELLOW}Tier ${tier_order}:${NC}"
+    local min_bal max_bal apr
+    min_bal=$(prompt "  Min balance" "$prev_max")
+    max_bal=$(prompt "  Max balance (blank = unbounded/last tier)" "")
+    apr=$(prompt "  APR (e.g. 0.045 for 4.5%)" "0.045")
+
+    if [[ $tier_order -gt 1 ]]; then
+      tiers_json="${tiers_json},"
+    fi
+
+    if [[ -z "$max_bal" ]]; then
+      tiers_json="${tiers_json}{\"tier_order\":${tier_order},\"min_balance\":${min_bal},\"max_balance\":null,\"apr\":${apr}}"
+      break
+    else
+      tiers_json="${tiers_json}{\"tier_order\":${tier_order},\"min_balance\":${min_bal},\"max_balance\":${max_bal},\"apr\":${apr}}"
+      prev_max="$max_bal"
+    fi
+
+    tier_order=$((tier_order + 1))
+  done
+  tiers_json="${tiers_json}]"
+
+  http_put "${GATEWAY_URL}/v1/interest/rates/${config_id}/tiers" "{\"tiers\":${tiers_json}}"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_interest_accruals() {
+  echo -e "\n${CYAN}Interest: View Accruals${NC}"
+  separator
+  api_key_check || return
+
+  local account_id start_date end_date
+  account_id=$(prompt "Account ID" "$LAST_ACCOUNT_ID")
+  [[ -z "$account_id" ]] && { echo -e "  ${RED}Account ID required.${NC}"; return; }
+
+  start_date=$(prompt "Start date (YYYY-MM-DD)" "$(date -u -v-30d +%Y-%m-%d 2>/dev/null || date -u -d '30 days ago' +%Y-%m-%d 2>/dev/null)")
+  end_date=$(prompt "End date (YYYY-MM-DD)" "$(date -u +%Y-%m-%d)")
+
+  http_get "${GATEWAY_URL}/v1/interest/accruals?account_id=${account_id}&start_date=${start_date}&end_date=${end_date}"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_interest_postings() {
+  echo -e "\n${CYAN}Interest: View Postings${NC}"
+  separator
+  api_key_check || return
+
+  local account_id start_date end_date
+  account_id=$(prompt "Account ID" "$LAST_ACCOUNT_ID")
+  [[ -z "$account_id" ]] && { echo -e "  ${RED}Account ID required.${NC}"; return; }
+
+  start_date=$(prompt "Start date (YYYY-MM-DD)" "$(date -u -v-30d +%Y-%m-%d 2>/dev/null || date -u -d '30 days ago' +%Y-%m-%d 2>/dev/null)")
+  end_date=$(prompt "End date (YYYY-MM-DD)" "$(date -u +%Y-%m-%d)")
+
+  http_get "${GATEWAY_URL}/v1/interest/postings?account_id=${account_id}&start_date=${start_date}&end_date=${end_date}"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+action_interest_estimate() {
+  echo -e "\n${CYAN}Interest: Estimate Interest${NC}"
+  separator
+  api_key_check || return
+
+  local account_id days
+  account_id=$(prompt "Account ID" "$LAST_ACCOUNT_ID")
+  [[ -z "$account_id" ]] && { echo -e "  ${RED}Account ID required.${NC}"; return; }
+
+  days=$(prompt "Days to estimate" "30")
+
+  http_get "${GATEWAY_URL}/v1/interest/estimate?account_id=${account_id}&days=${days}"
+  print_status
+  pretty_json "$HTTP_BODY"
+}
+
+# ---------------------------------------------------------------------------
 # Main Menu
 # ---------------------------------------------------------------------------
 
@@ -1285,6 +1521,16 @@ print_menu() {
   echo -e "    ${GREEN}16${NC}) List house accounts"
   echo -e "    ${GREEN}17${NC}) Create house account"
   echo ""
+  echo -e "  ${BOLD}Interest Engine${NC}"
+  echo -e "    ${GREEN}38${NC}) List rate configs"
+  echo -e "    ${GREEN}39${NC}) Create rate config"
+  echo -e "    ${GREEN}40${NC}) View rate config"
+  echo -e "    ${GREEN}41${NC}) Sunset rate config"
+  echo -e "    ${GREEN}42${NC}) Replace rate tiers"
+  echo -e "    ${GREEN}43${NC}) View accruals"
+  echo -e "    ${GREEN}44${NC}) View postings"
+  echo -e "    ${GREEN}45${NC}) Estimate interest"
+  echo ""
   echo -e "  ${BOLD}Shortcuts${NC}"
   echo -e "    ${GREEN}18${NC}) Quick flow (open + approve + deposit)"
   echo -e "    ${GREEN}19${NC}) List all accounts"
@@ -1313,12 +1559,13 @@ print_menu() {
   echo ""
 
   # Show remembered state
-  if [[ -n "$LAST_ACCOUNT_ID" || -n "$LAST_LEDGER_ID" || -n "$LAST_USER_ID" || -n "$PORTAL_LOGGED_IN" ]]; then
+  if [[ -n "$LAST_ACCOUNT_ID" || -n "$LAST_LEDGER_ID" || -n "$LAST_USER_ID" || -n "$LAST_RATE_CONFIG_ID" || -n "$PORTAL_LOGGED_IN" ]]; then
     echo -e "  ${DIM}Remembered:${NC}"
     [[ -n "$LAST_ACCOUNT_ID" ]] && echo -e "    ${DIM}Account:  ${LAST_ACCOUNT_ID}${NC}"
     [[ -n "$LAST_LEDGER_ID" ]] && echo -e "    ${DIM}Ledger:   ${LAST_LEDGER_ID}${NC}"
     [[ -n "$LAST_USER_ID" ]] && echo -e "    ${DIM}User:     ${LAST_USER_ID}${NC}"
     [[ -n "$LAST_ACCOUNT_NUMBER" ]] && echo -e "    ${DIM}Acct #:   ${LAST_ACCOUNT_NUMBER}${NC}"
+    [[ -n "$LAST_RATE_CONFIG_ID" ]] && echo -e "    ${DIM}Rate Cfg: ${LAST_RATE_CONFIG_ID}${NC}"
     [[ -n "$PORTAL_LOGGED_IN" ]] && echo -e "    ${DIM}Portal:   ${PORTAL_EMAIL} (logged in)${NC}"
     echo ""
   fi
@@ -1339,7 +1586,7 @@ fi
 
 while true; do
   print_menu
-  read -rp "  Choose [0-37]: " choice
+  read -rp "  Choose [0-45]: " choice
 
   case "$choice" in
     1)  action_open_account ;;
@@ -1379,6 +1626,14 @@ while true; do
     35) action_portal_audit_logs ;;
     36) action_switch_api_key ;;
     37) action_show_api_key ;;
+    38) action_interest_list_rates ;;
+    39) action_interest_create_rate ;;
+    40) action_interest_view_rate ;;
+    41) action_interest_sunset_rate ;;
+    42) action_interest_replace_tiers ;;
+    43) action_interest_accruals ;;
+    44) action_interest_postings ;;
+    45) action_interest_estimate ;;
     0|q|Q|exit)
       echo -e "\n${GREEN}Bye!${NC}\n"
       exit 0

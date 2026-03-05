@@ -390,6 +390,53 @@ if assert_status "$HTTP_STATUS" "400" "invalid posting frequency"; then
   pass
 fi
 
+run_test "POST /v1/interest/rates -- Daily with posting_day set → 400 (H3 fix)"
+http_post "${BASE_URL}/v1/interest/rates" '{
+  "currency": "EUR",
+  "posting_frequency": "Daily",
+  "posting_day": 1,
+  "effective_from": "2026-06-01",
+  "tiers": [{ "tier_order": 1, "min_balance": 0, "max_balance": null, "apr": 0.03 }]
+}'
+if assert_status "$HTTP_STATUS" "400" "Daily with posting_day"; then
+  pass
+fi
+
+run_test "POST /v1/interest/rates -- Weekly with posting_day=0 → 400 (H3 fix)"
+http_post "${BASE_URL}/v1/interest/rates" '{
+  "currency": "EUR",
+  "posting_frequency": "Weekly",
+  "posting_day": 0,
+  "effective_from": "2026-06-01",
+  "tiers": [{ "tier_order": 1, "min_balance": 0, "max_balance": null, "apr": 0.03 }]
+}'
+if assert_status "$HTTP_STATUS" "400" "Weekly posting_day=0"; then
+  pass
+fi
+
+run_test "POST /v1/interest/rates -- Monthly without posting_day → 400 (H3 fix)"
+http_post "${BASE_URL}/v1/interest/rates" '{
+  "currency": "EUR",
+  "posting_frequency": "Monthly",
+  "effective_from": "2026-06-01",
+  "tiers": [{ "tier_order": 1, "min_balance": 0, "max_balance": null, "apr": 0.03 }]
+}'
+if assert_status "$HTTP_STATUS" "400" "Monthly missing posting_day"; then
+  pass
+fi
+
+run_test "POST /v1/interest/rates -- Monthly with posting_day=29 → 400 (H3 fix)"
+http_post "${BASE_URL}/v1/interest/rates" '{
+  "currency": "EUR",
+  "posting_frequency": "Monthly",
+  "posting_day": 29,
+  "effective_from": "2026-06-01",
+  "tiers": [{ "tier_order": 1, "min_balance": 0, "max_balance": null, "apr": 0.03 }]
+}'
+if assert_status "$HTTP_STATUS" "400" "Monthly posting_day=29"; then
+  pass
+fi
+
 run_test "PUT /v1/interest/rates/:id/tiers -- gap between tiers → 400"
 http_put "${BASE_URL}/v1/interest/rates/${RATE_CONFIG_ID}/tiers" '{
   "tiers": [
@@ -783,6 +830,55 @@ else:
     pass
   else
     fail "posting missing period_start or period_end"
+  fi
+
+  # C1 fix verification: completed postings must have transaction_id
+  if [[ "$posting_status" == "completed" ]]; then
+    run_test "Verify completed posting has transaction_id (C1 fix)"
+    txn_id=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+entries = data.get('entries', [])
+if entries:
+    v = entries[0].get('transaction_id')
+    print(v if v else '')
+else:
+    print('')
+" 2>/dev/null || echo "")
+    if [[ -n "$txn_id" ]] && [[ "$txn_id" != "None" ]] && [[ "$txn_id" != "null" ]]; then
+      pass
+    else
+      fail "completed posting should have transaction_id, got '${txn_id}'"
+    fi
+
+    run_test "Verify interest transaction has IN- prefix reference (C1 fix)"
+    http_get "${BASE_URL}/v1/transaction?bank_account_id=${INTEREST_ACCOUNT_ID}&offset=0&limit=10"
+    if assert_status "$HTTP_STATUS" "200" "interest transactions"; then
+      in_ref_count=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+entries = data.get('entries', [])
+count = sum(1 for e in entries if e.get('transaction_reference','').startswith('IN-'))
+print(count)
+" 2>/dev/null || echo "0")
+      if [[ "$in_ref_count" -ge "1" ]]; then
+        pass
+      else
+        fail "expected >= 1 transaction with IN- prefix, got ${in_ref_count}"
+      fi
+    fi
+
+    run_test "Verify interest posting credited ledger balance"
+    wait_for_outbox
+    http_get "${BASE_URL}/v1/ledger/${INTEREST_LEDGER_ID}"
+    if assert_status "$HTTP_STATUS" "200" "ledger after posting"; then
+      new_balance=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['available']['amount'])" 2>/dev/null || echo "0")
+      if python3 -c "exit(0 if float('${new_balance}') > 25000.0 else 1)" 2>/dev/null; then
+        pass
+      else
+        fail "ledger after posting: expected > 25000, got ${new_balance}"
+      fi
+    fi
   fi
 else
   echo -e "    ${YELLOW}(Skipping detailed posting checks — no posting data available)${NC}"
