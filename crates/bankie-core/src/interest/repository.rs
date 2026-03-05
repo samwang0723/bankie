@@ -6,23 +6,34 @@ use sqlx::{Error, PgPool, Row};
 use uuid::Uuid;
 
 use super::models::{
-    InterestAccrual, InterestEligibleAccount, InterestPosting, InterestRateConfig,
-    InterestRateTier, PostingDueAccount,
+    InterestAccrual, InterestEligibleAccount, InterestPosting, InterestRateConfig, InterestRateTier,
 };
 
-/// Separate repository trait for interest engine operations.
-/// Decoupled from `DatabaseClient` to keep the mock surface clean.
-#[allow(dead_code, clippy::too_many_arguments)]
+/// Lightweight struct for the posting job to iterate over accounts.
+#[derive(Debug, Clone)]
+pub struct InterestAccountInfo {
+    pub account_id: String,
+    pub ledger_id: String,
+    pub currency: String,
+    pub tenant_id: i32,
+}
+
+/// Unified repository trait for all interest engine operations.
+/// Used by accrual_job, posting_job, and route handlers.
+#[allow(clippy::too_many_arguments)]
 #[automock]
 #[async_trait]
 pub trait InterestRepository: Send + Sync {
-    // Rate config queries
+    // ── Rate config queries ──────────────────────────────────────────────
+
     async fn get_active_rate_config(
         &self,
         currency: &str,
         account_kind: &str,
         date: NaiveDate,
     ) -> Result<Option<InterestRateConfig>, Error>;
+
+    async fn get_rate_config_by_id(&self, id: Uuid) -> Result<Option<InterestRateConfig>, Error>;
 
     async fn get_rate_tiers(&self, rate_config_id: Uuid) -> Result<Vec<InterestRateTier>, Error>;
 
@@ -32,35 +43,32 @@ pub trait InterestRepository: Send + Sync {
         active_only: bool,
     ) -> Result<Vec<InterestRateConfig>, Error>;
 
-    async fn create_rate_config(&self, config: InterestRateConfig) -> Result<Uuid, Error>;
+    async fn upsert_rate_config(
+        &self,
+        config: &InterestRateConfig,
+    ) -> Result<InterestRateConfig, Error>;
 
-    async fn update_rate_config(
+    async fn sunset_rate_config(
         &self,
         id: Uuid,
         effective_to: Option<NaiveDate>,
         is_active: bool,
-    ) -> Result<(), Error>;
+    ) -> Result<InterestRateConfig, Error>;
 
     async fn replace_rate_tiers(
         &self,
         rate_config_id: Uuid,
-        tiers: Vec<InterestRateTier>,
+        tiers: &[InterestRateTier],
     ) -> Result<(), Error>;
 
-    // Accrual operations
+    // ── Accrual operations ───────────────────────────────────────────────
+
     async fn get_interest_eligible_accounts(
         &self,
         accrual_date: NaiveDate,
     ) -> Result<Vec<InterestEligibleAccount>, Error>;
 
     async fn create_accrual(&self, accrual: InterestAccrual) -> Result<(), Error>;
-
-    async fn get_accruals_for_period(
-        &self,
-        account_id: &str,
-        period_start: NaiveDate,
-        period_end: NaiveDate,
-    ) -> Result<Vec<InterestAccrual>, Error>;
 
     async fn sum_accruals_for_period(
         &self,
@@ -69,25 +77,6 @@ pub trait InterestRepository: Send + Sync {
         period_end: NaiveDate,
     ) -> Result<Decimal, Error>;
 
-    // Posting operations
-    async fn get_accounts_due_for_posting(
-        &self,
-        posting_date: NaiveDate,
-    ) -> Result<Vec<PostingDueAccount>, Error>;
-
-    async fn get_last_posting_date(&self, account_id: &str) -> Result<Option<NaiveDate>, Error>;
-
-    async fn create_posting(&self, posting: InterestPosting) -> Result<(), Error>;
-
-    async fn update_posting_status(
-        &self,
-        posting_id: Uuid,
-        status: &str,
-        transaction_id: Option<Uuid>,
-        error_message: Option<String>,
-    ) -> Result<(), Error>;
-
-    // Query endpoints
     async fn get_accrual_history(
         &self,
         account_id: &str,
@@ -96,15 +85,37 @@ pub trait InterestRepository: Send + Sync {
         tenant_id: i32,
     ) -> Result<Vec<InterestAccrual>, Error>;
 
-    async fn get_posting_history(
+    // ── Posting operations ───────────────────────────────────────────────
+
+    async fn get_postings(
         &self,
         account_id: &str,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
         tenant_id: i32,
     ) -> Result<Vec<InterestPosting>, Error>;
+
+    async fn create_posting(&self, posting: InterestPosting) -> Result<(), Error>;
+
+    #[allow(dead_code)]
+    async fn update_posting_status(
+        &self,
+        posting_id: Uuid,
+        status: &str,
+        transaction_id: Option<Uuid>,
+        error_message: Option<String>,
+    ) -> Result<(), Error>;
+
+    async fn get_last_posting_date(&self, account_id: &str) -> Result<Option<NaiveDate>, Error>;
+
+    // ── Account queries ──────────────────────────────────────────────────
+
+    async fn list_interest_accounts(&self) -> Result<Vec<InterestAccountInfo>, Error>;
+
+    async fn get_current_balance(&self, ledger_id: &str) -> Result<Decimal, Error>;
 }
 
 /// PostgreSQL implementation of `InterestRepository`.
-/// Takes a `PgPool` directly (same pattern as `Adapter`).
 #[derive(Clone)]
 pub struct PgInterestRepository {
     pool: PgPool,
@@ -141,6 +152,20 @@ impl InterestRepository for PgInterestRepository {
         .bind(currency)
         .bind(account_kind)
         .bind(date)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    async fn get_rate_config_by_id(&self, id: Uuid) -> Result<Option<InterestRateConfig>, Error> {
+        sqlx::query_as::<_, InterestRateConfig>(
+            r#"
+            SELECT id, currency, account_kind, day_count, posting_frequency,
+                   posting_day, effective_from, effective_to, is_active
+            FROM interest_rate_configs
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
         .fetch_optional(&self.pool)
         .await
     }
@@ -189,14 +214,28 @@ impl InterestRepository for PgInterestRepository {
         }
     }
 
-    async fn create_rate_config(&self, config: InterestRateConfig) -> Result<Uuid, Error> {
-        sqlx::query_scalar::<_, Uuid>(
+    async fn upsert_rate_config(
+        &self,
+        config: &InterestRateConfig,
+    ) -> Result<InterestRateConfig, Error> {
+        sqlx::query_as::<_, InterestRateConfig>(
             r#"
             INSERT INTO interest_rate_configs
                 (id, currency, account_kind, day_count, posting_frequency,
                  posting_day, effective_from, effective_to, is_active)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            RETURNING id
+            ON CONFLICT (id) DO UPDATE SET
+                currency = EXCLUDED.currency,
+                account_kind = EXCLUDED.account_kind,
+                day_count = EXCLUDED.day_count,
+                posting_frequency = EXCLUDED.posting_frequency,
+                posting_day = EXCLUDED.posting_day,
+                effective_from = EXCLUDED.effective_from,
+                effective_to = EXCLUDED.effective_to,
+                is_active = EXCLUDED.is_active,
+                updated_at = now()
+            RETURNING id, currency, account_kind, day_count, posting_frequency,
+                      posting_day, effective_from, effective_to, is_active
             "#,
         )
         .bind(config.id)
@@ -212,31 +251,32 @@ impl InterestRepository for PgInterestRepository {
         .await
     }
 
-    async fn update_rate_config(
+    async fn sunset_rate_config(
         &self,
         id: Uuid,
         effective_to: Option<NaiveDate>,
         is_active: bool,
-    ) -> Result<(), Error> {
-        sqlx::query(
+    ) -> Result<InterestRateConfig, Error> {
+        sqlx::query_as::<_, InterestRateConfig>(
             r#"
             UPDATE interest_rate_configs
             SET effective_to = $2, is_active = $3, updated_at = now()
             WHERE id = $1
+            RETURNING id, currency, account_kind, day_count, posting_frequency,
+                      posting_day, effective_from, effective_to, is_active
             "#,
         )
         .bind(id)
         .bind(effective_to)
         .bind(is_active)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        .fetch_one(&self.pool)
+        .await
     }
 
     async fn replace_rate_tiers(
         &self,
         rate_config_id: Uuid,
-        tiers: Vec<InterestRateTier>,
+        tiers: &[InterestRateTier],
     ) -> Result<(), Error> {
         let mut tx = self.pool.begin().await?;
 
@@ -271,8 +311,6 @@ impl InterestRepository for PgInterestRepository {
         &self,
         accrual_date: NaiveDate,
     ) -> Result<Vec<InterestEligibleAccount>, Error> {
-        // JOIN bank_account_view (kind=Interest, status=Approved) with
-        // balance_snapshots (for accrual_date) to get balance from snapshot.
         let rows = sqlx::query(
             r#"
             SELECT bav.tenant_id, bav.id AS account_id, bav.ledger_id,
@@ -341,30 +379,6 @@ impl InterestRepository for PgInterestRepository {
         Ok(())
     }
 
-    async fn get_accruals_for_period(
-        &self,
-        account_id: &str,
-        period_start: NaiveDate,
-        period_end: NaiveDate,
-    ) -> Result<Vec<InterestAccrual>, Error> {
-        sqlx::query_as::<_, InterestAccrual>(
-            r#"
-            SELECT id, tenant_id, account_id, ledger_id, currency, accrual_date,
-                   balance_used, daily_interest, rate_config_id, tier_breakdown
-            FROM interest_accruals
-            WHERE account_id = $1
-              AND accrual_date >= $2
-              AND accrual_date <= $3
-            ORDER BY accrual_date
-            "#,
-        )
-        .bind(account_id)
-        .bind(period_start)
-        .bind(period_end)
-        .fetch_all(&self.pool)
-        .await
-    }
-
     async fn sum_accruals_for_period(
         &self,
         account_id: &str,
@@ -388,81 +402,58 @@ impl InterestRepository for PgInterestRepository {
         Ok(result.0)
     }
 
-    async fn get_accounts_due_for_posting(
+    async fn get_accrual_history(
         &self,
-        posting_date: NaiveDate,
-    ) -> Result<Vec<PostingDueAccount>, Error> {
-        let rows = sqlx::query(
+        account_id: &str,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+        tenant_id: i32,
+    ) -> Result<Vec<InterestAccrual>, Error> {
+        sqlx::query_as::<_, InterestAccrual>(
             r#"
-            SELECT bav.tenant_id, bav.id AS account_id, bav.ledger_id,
-                   bav.currency, irc.id AS rate_config_id,
-                   irc.posting_frequency, irc.posting_day
-            FROM bank_account_view bav
-            INNER JOIN interest_rate_configs irc
-                ON irc.currency = bav.currency
-                AND irc.account_kind = 'Interest'
-                AND irc.is_active = true
-                AND irc.effective_from <= $1
-                AND (irc.effective_to IS NULL OR irc.effective_to >= $1)
-            WHERE bav.kind = 'Interest'
-              AND bav.status = 'Approved'
-            "#,
-        )
-        .bind(posting_date)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let accounts = rows
-            .iter()
-            .filter_map(|row| {
-                let tenant_id: Option<i32> = row.try_get("tenant_id").ok();
-                let account_id: Option<String> = row.try_get("account_id").ok();
-                let ledger_id: Option<String> = row.try_get("ledger_id").ok();
-                let currency: Option<String> = row.try_get("currency").ok();
-                let rate_config_id: Option<Uuid> = row.try_get("rate_config_id").ok();
-                let posting_frequency: Option<String> = row.try_get("posting_frequency").ok();
-                let posting_day: Option<i16> = row.try_get("posting_day").ok();
-
-                match (
-                    tenant_id,
-                    account_id,
-                    ledger_id,
-                    currency,
-                    rate_config_id,
-                    posting_frequency,
-                ) {
-                    (Some(t), Some(a), Some(l), Some(c), Some(r), Some(pf)) => {
-                        Some(PostingDueAccount {
-                            tenant_id: t,
-                            account_id: a,
-                            ledger_id: l,
-                            currency: c,
-                            rate_config_id: r,
-                            posting_frequency: pf,
-                            posting_day,
-                        })
-                    }
-                    _ => None,
-                }
-            })
-            .collect();
-
-        Ok(accounts)
-    }
-
-    async fn get_last_posting_date(&self, account_id: &str) -> Result<Option<NaiveDate>, Error> {
-        sqlx::query_scalar::<_, NaiveDate>(
-            r#"
-            SELECT posting_date
-            FROM interest_postings
+            SELECT id, tenant_id, account_id, ledger_id, currency, accrual_date,
+                   balance_used, daily_interest, rate_config_id, tier_breakdown
+            FROM interest_accruals
             WHERE account_id = $1
-              AND status = 'completed'
-            ORDER BY posting_date DESC
-            LIMIT 1
+              AND accrual_date >= $2
+              AND accrual_date <= $3
+              AND tenant_id = $4
+            ORDER BY accrual_date DESC
             "#,
         )
         .bind(account_id)
-        .fetch_optional(&self.pool)
+        .bind(start_date)
+        .bind(end_date)
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    async fn get_postings(
+        &self,
+        account_id: &str,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+        tenant_id: i32,
+    ) -> Result<Vec<InterestPosting>, Error> {
+        sqlx::query_as::<_, InterestPosting>(
+            r#"
+            SELECT id, tenant_id, account_id, currency, posting_date,
+                   period_start, period_end, accrued_total, posted_amount,
+                   transaction_id, status, error_message
+            FROM interest_postings
+            WHERE account_id = $1
+              AND posting_date >= $2
+              AND posting_date <= $3
+              AND tenant_id = $4
+            ORDER BY posting_date DESC
+            "#,
+        )
+        .bind(account_id)
+        .bind(start_date)
+        .bind(end_date)
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
         .await
     }
 
@@ -516,52 +507,69 @@ impl InterestRepository for PgInterestRepository {
         Ok(())
     }
 
-    async fn get_accrual_history(
-        &self,
-        account_id: &str,
-        start_date: NaiveDate,
-        end_date: NaiveDate,
-        tenant_id: i32,
-    ) -> Result<Vec<InterestAccrual>, Error> {
-        sqlx::query_as::<_, InterestAccrual>(
+    async fn get_last_posting_date(&self, account_id: &str) -> Result<Option<NaiveDate>, Error> {
+        sqlx::query_scalar::<_, NaiveDate>(
             r#"
-            SELECT id, tenant_id, account_id, ledger_id, currency, accrual_date,
-                   balance_used, daily_interest, rate_config_id, tier_breakdown
-            FROM interest_accruals
+            SELECT posting_date
+            FROM interest_postings
             WHERE account_id = $1
-              AND accrual_date >= $2
-              AND accrual_date <= $3
-              AND tenant_id = $4
-            ORDER BY accrual_date DESC
+              AND status = 'completed'
+            ORDER BY posting_date DESC
+            LIMIT 1
             "#,
         )
         .bind(account_id)
-        .bind(start_date)
-        .bind(end_date)
-        .bind(tenant_id)
-        .fetch_all(&self.pool)
+        .fetch_optional(&self.pool)
         .await
     }
 
-    async fn get_posting_history(
-        &self,
-        account_id: &str,
-        tenant_id: i32,
-    ) -> Result<Vec<InterestPosting>, Error> {
-        sqlx::query_as::<_, InterestPosting>(
+    async fn list_interest_accounts(&self) -> Result<Vec<InterestAccountInfo>, Error> {
+        let rows = sqlx::query(
             r#"
-            SELECT id, tenant_id, account_id, currency, posting_date,
-                   period_start, period_end, accrued_total, posted_amount,
-                   transaction_id, status, error_message
-            FROM interest_postings
-            WHERE account_id = $1
-              AND tenant_id = $2
-            ORDER BY posting_date DESC
+            SELECT bav.id AS account_id, bav.ledger_id, bav.currency, bav.tenant_id
+            FROM bank_account_view bav
+            WHERE bav.kind = 'Interest'
+              AND bav.status = 'Approved'
             "#,
         )
-        .bind(account_id)
-        .bind(tenant_id)
         .fetch_all(&self.pool)
-        .await
+        .await?;
+
+        let accounts = rows
+            .iter()
+            .filter_map(|row| {
+                let account_id: Option<String> = row.try_get("account_id").ok();
+                let ledger_id: Option<String> = row.try_get("ledger_id").ok();
+                let currency: Option<String> = row.try_get("currency").ok();
+                let tenant_id: Option<i32> = row.try_get("tenant_id").ok();
+
+                match (account_id, ledger_id, currency, tenant_id) {
+                    (Some(a), Some(l), Some(c), Some(t)) => Some(InterestAccountInfo {
+                        account_id: a,
+                        ledger_id: l,
+                        currency: c,
+                        tenant_id: t,
+                    }),
+                    _ => None,
+                }
+            })
+            .collect();
+
+        Ok(accounts)
+    }
+
+    async fn get_current_balance(&self, ledger_id: &str) -> Result<Decimal, Error> {
+        let balance: Option<Decimal> = sqlx::query_scalar(
+            r#"
+            SELECT (payload->'available'->>'amount')::numeric
+            FROM ledger_views
+            WHERE view_id = $1
+            "#,
+        )
+        .bind(ledger_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(balance.unwrap_or(Decimal::ZERO))
     }
 }

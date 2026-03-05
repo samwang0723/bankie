@@ -11,8 +11,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::calculator::estimate_interest;
-use super::db::InterestDbClient;
 use super::models::{InterestRateConfig, InterestRateTier};
+use super::repository::InterestRepository;
 use crate::common::error::AppError;
 
 // ─── Request / Response types ────────────────────────────────────────────────
@@ -112,19 +112,19 @@ pub struct EstimateResponse {
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
 /// GET /v1/interest/rates?currency=
-pub async fn list_rate_configs<D: InterestDbClient>(
+pub async fn list_rate_configs(
     Extension(_tenant_id): Extension<i32>,
     Query(params): Query<RateListParams>,
-    interest_db: Extension<Arc<D>>,
+    Extension(interest_db): Extension<Arc<dyn InterestRepository>>,
 ) -> Response {
-    let configs = match interest_db.get_active_rate_configs(params.currency).await {
+    let configs = match interest_db.list_rate_configs(params.currency, true).await {
         Ok(c) => c,
         Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
     };
 
     let mut results = Vec::with_capacity(configs.len());
     for config in configs {
-        let tiers = match interest_db.get_tiers_for_config(config.id).await {
+        let tiers = match interest_db.get_rate_tiers(config.id).await {
             Ok(t) => t,
             Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
         };
@@ -135,9 +135,9 @@ pub async fn list_rate_configs<D: InterestDbClient>(
 }
 
 /// POST /v1/interest/rates
-pub async fn create_rate_config<D: InterestDbClient>(
+pub async fn create_rate_config(
     Extension(_tenant_id): Extension<i32>,
-    interest_db: Extension<Arc<D>>,
+    Extension(interest_db): Extension<Arc<dyn InterestRepository>>,
     Json(req): Json<CreateRateConfigRequest>,
 ) -> Response {
     // Validate tiers
@@ -192,7 +192,10 @@ pub async fn create_rate_config<D: InterestDbClient>(
         })
         .collect();
 
-    if let Err(e) = interest_db.replace_tiers(saved_config.id, &tiers).await {
+    if let Err(e) = interest_db
+        .replace_rate_tiers(saved_config.id, &tiers)
+        .await
+    {
         return AppError::InternalServerError(e.to_string()).into_response();
     }
 
@@ -207,10 +210,10 @@ pub async fn create_rate_config<D: InterestDbClient>(
 }
 
 /// GET /v1/interest/rates/:id
-pub async fn get_rate_config<D: InterestDbClient>(
+pub async fn get_rate_config(
     Extension(_tenant_id): Extension<i32>,
     Path(id): Path<Uuid>,
-    interest_db: Extension<Arc<D>>,
+    Extension(interest_db): Extension<Arc<dyn InterestRepository>>,
 ) -> Response {
     let config = match interest_db.get_rate_config_by_id(id).await {
         Ok(Some(c)) => c,
@@ -218,7 +221,7 @@ pub async fn get_rate_config<D: InterestDbClient>(
         Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
     };
 
-    let tiers = match interest_db.get_tiers_for_config(config.id).await {
+    let tiers = match interest_db.get_rate_tiers(config.id).await {
         Ok(t) => t,
         Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
     };
@@ -231,17 +234,17 @@ pub async fn get_rate_config<D: InterestDbClient>(
 }
 
 /// GET /v1/interest/accruals?account_id=&start_date=&end_date=
-pub async fn list_accruals<D: InterestDbClient>(
+pub async fn list_accruals(
     Extension(tenant_id): Extension<i32>,
     Query(params): Query<AccrualListParams>,
-    interest_db: Extension<Arc<D>>,
+    Extension(interest_db): Extension<Arc<dyn InterestRepository>>,
 ) -> Response {
     if params.start_date > params.end_date {
         return AppError::BadRequest("start_date must be <= end_date".to_string()).into_response();
     }
 
     match interest_db
-        .get_accruals(
+        .get_accrual_history(
             &params.account_id,
             params.start_date,
             params.end_date,
@@ -255,10 +258,10 @@ pub async fn list_accruals<D: InterestDbClient>(
 }
 
 /// GET /v1/interest/postings?account_id=&start_date=&end_date=
-pub async fn list_postings<D: InterestDbClient>(
+pub async fn list_postings(
     Extension(tenant_id): Extension<i32>,
     Query(params): Query<PostingListParams>,
-    interest_db: Extension<Arc<D>>,
+    Extension(interest_db): Extension<Arc<dyn InterestRepository>>,
 ) -> Response {
     if params.start_date > params.end_date {
         return AppError::BadRequest("start_date must be <= end_date".to_string()).into_response();
@@ -279,14 +282,11 @@ pub async fn list_postings<D: InterestDbClient>(
 }
 
 /// GET /v1/interest/estimate?account_id=&days=
-pub async fn estimate_interest_handler<D: InterestDbClient>(
+pub async fn estimate_interest_handler(
     Extension(tenant_id): Extension<i32>,
     Query(params): Query<EstimateParams>,
-    interest_db: Extension<Arc<D>>,
+    Extension(interest_db): Extension<Arc<dyn InterestRepository>>,
 ) -> Response {
-    // Get current balance
-    // We need to look up the account's ledger_id first.
-    // For simplicity, we get balance from the interest DB client.
     let accounts = match interest_db.list_interest_accounts().await {
         Ok(a) => a,
         Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
@@ -309,7 +309,7 @@ pub async fn estimate_interest_handler<D: InterestDbClient>(
 
     // Find rate config for this currency
     let configs = match interest_db
-        .get_active_rate_configs(Some(account.currency.clone()))
+        .list_rate_configs(Some(account.currency.clone()), true)
         .await
     {
         Ok(c) => c,
@@ -329,7 +329,7 @@ pub async fn estimate_interest_handler<D: InterestDbClient>(
         Err(e) => return AppError::BadRequest(e).into_response(),
     };
 
-    let tiers = match interest_db.get_tiers_for_config(config.id).await {
+    let tiers = match interest_db.get_rate_tiers(config.id).await {
         Ok(t) => t,
         Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
     };
@@ -352,10 +352,10 @@ pub async fn estimate_interest_handler<D: InterestDbClient>(
 
 /// PUT /v1/interest/rates/:id — Sunset a rate config.
 /// Only effective_to and is_active can be changed. Never modifies rate values.
-pub async fn update_rate_config<D: InterestDbClient>(
+pub async fn update_rate_config(
     Extension(_tenant_id): Extension<i32>,
     Path(id): Path<Uuid>,
-    interest_db: Extension<Arc<D>>,
+    Extension(interest_db): Extension<Arc<dyn InterestRepository>>,
     Json(req): Json<UpdateRateConfigRequest>,
 ) -> Response {
     // Must provide at least one field to update
@@ -393,7 +393,7 @@ pub async fn update_rate_config<D: InterestDbClient>(
         .await
     {
         Ok(updated) => {
-            let tiers = match interest_db.get_tiers_for_config(updated.id).await {
+            let tiers = match interest_db.get_rate_tiers(updated.id).await {
                 Ok(t) => t,
                 Err(e) => return AppError::InternalServerError(e.to_string()).into_response(),
             };
@@ -411,10 +411,10 @@ pub async fn update_rate_config<D: InterestDbClient>(
 }
 
 /// PUT /v1/interest/rates/:id/tiers — Replace all tiers atomically.
-pub async fn replace_rate_tiers<D: InterestDbClient>(
+pub async fn replace_rate_tiers(
     Extension(_tenant_id): Extension<i32>,
     Path(id): Path<Uuid>,
-    interest_db: Extension<Arc<D>>,
+    Extension(interest_db): Extension<Arc<dyn InterestRepository>>,
     Json(req): Json<ReplaceTiersRequest>,
 ) -> Response {
     // Validate: at least one tier
@@ -486,7 +486,7 @@ pub async fn replace_rate_tiers<D: InterestDbClient>(
         })
         .collect();
 
-    if let Err(e) = interest_db.replace_tiers(id, &tiers).await {
+    if let Err(e) = interest_db.replace_rate_tiers(id, &tiers).await {
         return AppError::InternalServerError(e.to_string()).into_response();
     }
 
@@ -500,8 +500,8 @@ pub async fn replace_rate_tiers<D: InterestDbClient>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interest::db::{InterestAccountInfo, MockInterestDbClient};
     use crate::interest::models::InterestAccrual;
+    use crate::interest::repository::{InterestAccountInfo, MockInterestRepository};
     use mockall::predicate::*;
     use rust_decimal_macros::dec;
 
@@ -567,12 +567,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_rate_configs_empty() {
-        let mut mock = MockInterestDbClient::new();
-        mock.expect_get_active_rate_configs()
-            .with(eq(None::<String>))
-            .returning(|_| Ok(vec![]));
+        let mut mock = MockInterestRepository::new();
+        mock.expect_list_rate_configs()
+            .with(eq(None::<String>), eq(true))
+            .returning(|_, _| Ok(vec![]));
 
-        let configs = mock.get_active_rate_configs(None).await.unwrap();
+        let configs = mock.list_rate_configs(None, true).await.unwrap();
         assert!(configs.is_empty());
     }
 
@@ -582,24 +582,24 @@ mod tests {
         let config = make_config(config_id, "USD");
         let tier = make_tier(config_id);
 
-        let mut mock = MockInterestDbClient::new();
+        let mut mock = MockInterestRepository::new();
         let config_clone = config.clone();
-        mock.expect_get_active_rate_configs()
-            .returning(move |_| Ok(vec![config_clone.clone()]));
+        mock.expect_list_rate_configs()
+            .returning(move |_, _| Ok(vec![config_clone.clone()]));
         let tier_clone = tier.clone();
-        mock.expect_get_tiers_for_config()
+        mock.expect_get_rate_tiers()
             .returning(move |_| Ok(vec![tier_clone.clone()]));
 
-        let configs = mock.get_active_rate_configs(None).await.unwrap();
+        let configs = mock.list_rate_configs(None, true).await.unwrap();
         assert_eq!(configs.len(), 1);
-        let tiers = mock.get_tiers_for_config(config_id).await.unwrap();
+        let tiers = mock.get_rate_tiers(config_id).await.unwrap();
         assert_eq!(tiers.len(), 1);
         assert_eq!(tiers[0].apr, dec!(0.045));
     }
 
     #[tokio::test]
     async fn test_get_rate_config_not_found() {
-        let mut mock = MockInterestDbClient::new();
+        let mut mock = MockInterestRepository::new();
         mock.expect_get_rate_config_by_id().returning(|_| Ok(None));
 
         let result = mock.get_rate_config_by_id(Uuid::new_v4()).await.unwrap();
@@ -608,7 +608,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_accruals() {
-        let mut mock = MockInterestDbClient::new();
+        let mut mock = MockInterestRepository::new();
         let accrual = InterestAccrual {
             id: Uuid::new_v4(),
             tenant_id: 1,
@@ -622,11 +622,11 @@ mod tests {
             tier_breakdown: serde_json::json!([]),
         };
         let accrual_clone = accrual.clone();
-        mock.expect_get_accruals()
+        mock.expect_get_accrual_history()
             .returning(move |_, _, _, _| Ok(vec![accrual_clone.clone()]));
 
         let accruals = mock
-            .get_accruals(
+            .get_accrual_history(
                 "acc-1",
                 NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
                 NaiveDate::from_ymd_opt(2026, 3, 31).unwrap(),
@@ -640,7 +640,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_postings() {
-        let mut mock = MockInterestDbClient::new();
+        let mut mock = MockInterestRepository::new();
         mock.expect_get_postings()
             .returning(|_, _, _, _| Ok(vec![]));
 
@@ -673,7 +673,7 @@ mod tests {
         let config_id = Uuid::new_v4();
         let config = make_config(config_id, "USD");
 
-        let mut mock = MockInterestDbClient::new();
+        let mut mock = MockInterestRepository::new();
         mock.expect_get_rate_config_by_id()
             .with(eq(config_id))
             .returning(move |_| Ok(Some(config.clone())));
@@ -689,7 +689,7 @@ mod tests {
                 eq(false),
             )
             .returning(move |_, _, _| Ok(sunset_clone.clone()));
-        mock.expect_get_tiers_for_config().returning(|_| Ok(vec![]));
+        mock.expect_get_rate_tiers().returning(|_| Ok(vec![]));
 
         // Verify the mock works
         let fetched = mock
@@ -795,19 +795,19 @@ mod tests {
         let config_id = Uuid::new_v4();
         let config = make_config(config_id, "USD");
 
-        let mut mock = MockInterestDbClient::new();
+        let mut mock = MockInterestRepository::new();
         let config_clone = config.clone();
         mock.expect_get_rate_config_by_id()
             .with(eq(config_id))
             .returning(move |_| Ok(Some(config_clone.clone())));
-        mock.expect_replace_tiers()
+        mock.expect_replace_rate_tiers()
             .with(eq(config_id), always())
             .returning(|_, _| Ok(()));
 
         // Verify the mock calls succeed
         let fetched = mock.get_rate_config_by_id(config_id).await.unwrap();
         assert!(fetched.is_some());
-        mock.replace_tiers(config_id, &[]).await.unwrap();
+        mock.replace_rate_tiers(config_id, &[]).await.unwrap();
     }
 
     // ── Estimate tests ──────────────────────────────────────────────────
@@ -817,7 +817,7 @@ mod tests {
         let config_id = Uuid::new_v4();
         let tier = make_tier(config_id);
 
-        let mut mock = MockInterestDbClient::new();
+        let mut mock = MockInterestRepository::new();
         mock.expect_list_interest_accounts().returning(|| {
             Ok(vec![InterestAccountInfo {
                 account_id: "acc-1".to_string(),
@@ -830,19 +830,19 @@ mod tests {
             .returning(|_| Ok(dec!(10000)));
         let config = make_config(config_id, "USD");
         let config_clone = config.clone();
-        mock.expect_get_active_rate_configs()
-            .returning(move |_| Ok(vec![config_clone.clone()]));
+        mock.expect_list_rate_configs()
+            .returning(move |_, _| Ok(vec![config_clone.clone()]));
         let tier_clone = tier.clone();
-        mock.expect_get_tiers_for_config()
+        mock.expect_get_rate_tiers()
             .returning(move |_| Ok(vec![tier_clone.clone()]));
 
         // Simulate the estimate calculation
         let balance = mock.get_current_balance("ledger-1").await.unwrap();
         let configs = mock
-            .get_active_rate_configs(Some("USD".to_string()))
+            .list_rate_configs(Some("USD".to_string()), true)
             .await
             .unwrap();
-        let tiers = mock.get_tiers_for_config(config_id).await.unwrap();
+        let tiers = mock.get_rate_tiers(config_id).await.unwrap();
         let day_count = configs[0].day_count_convention().unwrap();
         let estimated = estimate_interest(balance, &tiers, &day_count, 30);
 

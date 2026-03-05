@@ -1,12 +1,17 @@
 use auth::jwt::{generate_jwt, generate_secret_key};
 use auth::middleware::authorize;
 use axum::Router;
-use axum::{middleware, routing::get, routing::post};
+use axum::{middleware, routing::get, routing::post, routing::put};
 use clap::Parser;
 use clap_derive::Parser;
 use common::idempotency::idempotency_check;
 use event_sourcing::command::BankAccountCommand;
 use interest::accrual_job::create_accrual_job;
+use interest::posting_job::create_interest_posting_job;
+use interest::route::{
+    create_rate_config, estimate_interest_handler, get_rate_config, list_accruals, list_postings,
+    list_rate_configs, replace_rate_tiers, update_rate_config,
+};
 use job::{create_balance_snapshot_job, create_ledger_job};
 use route::{
     accounts_query_handler, balance_history_handler, bank_account_by_number_handler,
@@ -159,6 +164,20 @@ async fn main() {
                     error!("Failed to create interest accrual job: {:?}", e);
                 }
             }
+            // Daily interest posting job
+            if let (Some(ref interest_repo), Some(ref cache)) = (&state.interest_repo, &state.cache)
+            {
+                match create_interest_posting_job(interest_repo.clone(), cache.clone()).await {
+                    Ok(job) => {
+                        if let Err(e) = sched.add(job).await {
+                            error!("Failed to add interest posting job: {:?}", e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to create interest posting job: {:?}", e);
+                    }
+                }
+            }
             if let Err(e) = sched.start().await {
                 error!("Failed to start scheduler: {:?}", e);
             }
@@ -173,6 +192,7 @@ async fn main() {
                 .expect("Redis client must be initialized at startup");
 
             // Authenticated API routes (with auth + idempotency middleware)
+            let interest_repo = state.interest_repo.clone();
             let api_routes = Router::new()
                 .route("/v1/bank_account/:id", get(bank_account_query_handler))
                 .route(
@@ -197,10 +217,26 @@ async fn main() {
                     get(balance_history_handler),
                 )
                 .route("/v1/report/settlement", get(settlement_report_handler))
+                // Interest engine routes
+                .route(
+                    "/v1/interest/rates",
+                    get(list_rate_configs).post(create_rate_config),
+                )
+                .route(
+                    "/v1/interest/rates/:id",
+                    get(get_rate_config).put(update_rate_config),
+                )
+                .route("/v1/interest/rates/:id/tiers", put(replace_rate_tiers))
+                .route("/v1/interest/accruals", get(list_accruals))
+                .route("/v1/interest/postings", get(list_postings))
+                .route("/v1/interest/estimate", get(estimate_interest_handler))
                 .layer(middleware::from_fn(idempotency_check))
                 .layer(middleware::from_fn(authorize::<PgPool>))
                 .layer(AddExtensionLayer::new(redis_client))
-                .layer(AddExtensionLayer::new(state.clone()));
+                .layer(AddExtensionLayer::new(state.clone()))
+                .layer(AddExtensionLayer::new(
+                    interest_repo.expect("Interest repository must be initialized"),
+                ));
 
             // Health check endpoints (no auth required)
             let router = Router::new()

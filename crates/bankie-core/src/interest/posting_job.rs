@@ -7,8 +7,8 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use super::calculator::round_for_posting;
-use super::db::InterestDbClient;
 use super::models::InterestPosting;
+use super::repository::InterestRepository;
 use crate::repository::redis::{acquire_lock, release_lock, LOCK_TIMEOUT};
 
 const POSTING_LOCK_KEY: &str = "interest_posting_lock";
@@ -16,8 +16,8 @@ const POSTING_LOCK_KEY: &str = "interest_posting_lock";
 /// Create the interest posting cron job.
 /// Runs daily at 00:10 UTC, finds accounts with posting due today,
 /// sums their unposted accruals and creates posting records.
-pub async fn create_interest_posting_job<D: InterestDbClient + 'static>(
-    interest_db: Arc<D>,
+pub async fn create_interest_posting_job(
+    interest_db: Arc<dyn InterestRepository>,
     cache: Arc<redis::Client>,
 ) -> Result<Job, JobSchedulerError> {
     // Cron: "0 10 0 * * *" = every day at 00:10:00 UTC
@@ -31,7 +31,7 @@ pub async fn create_interest_posting_job<D: InterestDbClient + 'static>(
 }
 
 /// Core posting logic — extracted for testability.
-pub async fn run_posting_cycle<D: InterestDbClient>(db: &D, cache: &redis::Client) {
+pub async fn run_posting_cycle(db: &dyn InterestRepository, cache: &redis::Client) {
     let identifier = match acquire_lock(cache, POSTING_LOCK_KEY, LOCK_TIMEOUT).await {
         Some(id) => id,
         None => {
@@ -44,7 +44,7 @@ pub async fn run_posting_cycle<D: InterestDbClient>(db: &D, cache: &redis::Clien
     info!("Interest posting job started for {}", today);
 
     // 1. Get all active rate configs
-    let configs = match db.get_active_rate_configs(None).await {
+    let configs = match db.list_rate_configs(None, true).await {
         Ok(c) => c,
         Err(e) => {
             error!("Failed to fetch rate configs: {:?}", e);
@@ -93,7 +93,7 @@ pub async fn run_posting_cycle<D: InterestDbClient>(db: &D, cache: &redis::Clien
         }
 
         // Determine period: from last posting end date (or effective_from) to today
-        let period_start = match db.last_posting_end_date(&account.account_id).await {
+        let period_start = match db.get_last_posting_date(&account.account_id).await {
             Ok(Some(d)) => d,
             Ok(None) => config.effective_from,
             Err(e) => {
@@ -114,7 +114,7 @@ pub async fn run_posting_cycle<D: InterestDbClient>(db: &D, cache: &redis::Clien
 
         // Sum unposted accruals for the period
         let accrued_total = match db
-            .sum_unposted_accruals(&account.account_id, period_start, period_end)
+            .sum_accruals_for_period(&account.account_id, period_start, period_end)
             .await
         {
             Ok(total) => total,
@@ -151,7 +151,7 @@ pub async fn run_posting_cycle<D: InterestDbClient>(db: &D, cache: &redis::Clien
             error_message: None,
         };
 
-        if let Err(e) = db.create_posting(&posting).await {
+        if let Err(e) = db.create_posting(posting).await {
             error!(
                 "Failed to create posting for {}: {:?}",
                 account.account_id, e
@@ -173,9 +173,10 @@ pub async fn run_posting_cycle<D: InterestDbClient>(db: &D, cache: &redis::Clien
 /// Execute a pending posting by creating a deposit transaction.
 /// Called after the posting record is created.
 /// This bridges the interest posting into the existing banking pipeline.
+#[allow(dead_code)]
 pub async fn execute_posting(
     posting: &InterestPosting,
-    db: &dyn InterestDbClient,
+    db: &dyn InterestRepository,
     _house_ledger_id: &str,
     _services: &crate::service::BankAccountServices,
 ) -> Result<(), String> {
@@ -191,9 +192,8 @@ pub async fn execute_posting(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interest::db::InterestAccountInfo;
-    use crate::interest::db::MockInterestDbClient;
     use crate::interest::models::InterestRateConfig;
+    use crate::interest::repository::{InterestAccountInfo, MockInterestRepository};
     use chrono::NaiveDate;
     use mockall::predicate::*;
     use rust_decimal_macros::dec;
@@ -231,10 +231,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_posting_skips_when_no_configs() {
-        let mut mock_db = MockInterestDbClient::new();
+        let mut mock_db = MockInterestRepository::new();
         mock_db
-            .expect_get_active_rate_configs()
-            .returning(|_| Ok(vec![]));
+            .expect_list_rate_configs()
+            .returning(|_, _| Ok(vec![]));
         mock_db
             .expect_list_interest_accounts()
             .returning(|| Ok(vec![make_account("acc-1", "USD", 1)]));
@@ -245,19 +245,19 @@ mod tests {
 
         // We can't easily test run_posting_cycle without Redis,
         // but we can verify the logic components individually
-        let configs = mock_db.get_active_rate_configs(None).await.unwrap();
+        let configs = mock_db.list_rate_configs(None, true).await.unwrap();
         assert!(configs.is_empty());
     }
 
     #[tokio::test]
     async fn test_posting_skips_zero_accrual() {
-        let mut mock_db = MockInterestDbClient::new();
+        let mut mock_db = MockInterestRepository::new();
         mock_db
-            .expect_sum_unposted_accruals()
+            .expect_sum_accruals_for_period()
             .returning(|_, _, _| Ok(Decimal::ZERO));
 
         let total = mock_db
-            .sum_unposted_accruals(
+            .sum_accruals_for_period(
                 "acc-1",
                 NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
                 NaiveDate::from_ymd_opt(2026, 3, 5).unwrap(),
@@ -269,13 +269,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_posting_created_for_positive_accrual() {
-        let mut mock_db = MockInterestDbClient::new();
+        let mut mock_db = MockInterestRepository::new();
         mock_db
-            .expect_sum_unposted_accruals()
+            .expect_sum_accruals_for_period()
             .returning(|_, _, _| Ok(dec!(12.3456)));
 
         let total = mock_db
-            .sum_unposted_accruals(
+            .sum_accruals_for_period(
                 "acc-1",
                 NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
                 NaiveDate::from_ymd_opt(2026, 3, 5).unwrap(),
@@ -289,13 +289,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_last_posting_end_date_none_uses_effective_from() {
-        let mut mock_db = MockInterestDbClient::new();
+        let mut mock_db = MockInterestRepository::new();
         mock_db
-            .expect_last_posting_end_date()
+            .expect_get_last_posting_date()
             .returning(|_| Ok(None));
 
         let config = make_config("USD", "Monthly", Some(1));
-        let last = mock_db.last_posting_end_date("acc-1").await.unwrap();
+        let last = mock_db.get_last_posting_date("acc-1").await.unwrap();
         assert!(last.is_none());
         // When None, we'd use config.effective_from
         assert_eq!(
@@ -306,7 +306,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_posting_marks_completed() {
-        let mut mock_db = MockInterestDbClient::new();
+        let mut mock_db = MockInterestRepository::new();
         let posting_id = Uuid::new_v4();
         mock_db
             .expect_update_posting_status()
@@ -327,7 +327,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_interest_accounts() {
-        let mut mock_db = MockInterestDbClient::new();
+        let mut mock_db = MockInterestRepository::new();
         mock_db.expect_list_interest_accounts().returning(|| {
             Ok(vec![
                 make_account("acc-1", "USD", 1),
