@@ -16,7 +16,6 @@ use crate::{
         tenant::Tenant,
         user::BankAccountWithLedger,
     },
-    interest::models::{InterestAccrual, InterestRateConfig, InterestRateTier},
 };
 
 #[allow(dead_code, clippy::too_many_arguments)]
@@ -157,33 +156,6 @@ pub trait DatabaseClient {
     ) -> Result<Vec<BankAccountWithLedger>, Error>;
     async fn count_accounts(&self, tenant_id: i32) -> Result<i64, Error>;
     async fn count_accounts_by_status(&self, tenant_id: i32) -> Result<Vec<(String, i64)>, Error>;
-
-    // ── Interest engine methods ──────────────────────────────────────────
-    /// Get the active rate config for a given currency on a given date.
-    async fn get_active_rate_config(
-        &self,
-        currency: String,
-        as_of: NaiveDate,
-    ) -> Result<Option<InterestRateConfig>, Error>;
-
-    /// Get all tiers for a rate config, ordered by tier_order.
-    async fn get_rate_tiers(&self, rate_config_id: Uuid) -> Result<Vec<InterestRateTier>, Error>;
-
-    /// Get all interest-eligible accounts: Approved status, Interest kind,
-    /// fiat currencies (USD, TWD). Returns account_id, ledger_id, currency,
-    /// available balance, and tenant_id.
-    async fn get_interest_eligible_accounts(&self) -> Result<Vec<BankAccountWithLedger>, Error>;
-
-    /// Insert a daily accrual record. Uses ON CONFLICT DO NOTHING for idempotency.
-    async fn insert_interest_accrual(&self, accrual: InterestAccrual) -> Result<(), Error>;
-
-    /// Sum accrued interest for an account over a date range (for posting).
-    async fn sum_accrued_interest(
-        &self,
-        account_id: String,
-        period_start: NaiveDate,
-        period_end: NaiveDate,
-    ) -> Result<Decimal, Error>;
 }
 
 pub struct Adapter<C: DatabaseClient + Send + Sync> {
@@ -485,43 +457,5 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
         tenant_id: i32,
     ) -> Result<Vec<(String, i64)>, Error> {
         self.client.count_accounts_by_status(tenant_id).await
-    }
-
-    // ── Interest engine methods ──────────────────────────────────────────
-
-    pub async fn get_active_rate_config(
-        &self,
-        currency: String,
-        as_of: NaiveDate,
-    ) -> Result<Option<InterestRateConfig>, Error> {
-        self.client.get_active_rate_config(currency, as_of).await
-    }
-
-    pub async fn get_rate_tiers(
-        &self,
-        rate_config_id: Uuid,
-    ) -> Result<Vec<InterestRateTier>, Error> {
-        self.client.get_rate_tiers(rate_config_id).await
-    }
-
-    pub async fn get_interest_eligible_accounts(
-        &self,
-    ) -> Result<Vec<BankAccountWithLedger>, Error> {
-        self.client.get_interest_eligible_accounts().await
-    }
-
-    pub async fn insert_interest_accrual(&self, accrual: InterestAccrual) -> Result<(), Error> {
-        self.client.insert_interest_accrual(accrual).await
-    }
-
-    pub async fn sum_accrued_interest(
-        &self,
-        account_id: String,
-        period_start: NaiveDate,
-        period_end: NaiveDate,
-    ) -> Result<Decimal, Error> {
-        self.client
-            .sum_accrued_interest(account_id, period_start, period_end)
-            .await
     }
 }

@@ -1,37 +1,40 @@
-use std::sync::Arc;
-
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use tokio_cron_scheduler::{Job, JobSchedulerError};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use crate::{
-    repository::{
-        adapter::Adapter,
-        redis::{acquire_lock, release_lock, LOCK_TIMEOUT},
-    },
-    SharedState,
-};
+use crate::repository::redis::{acquire_lock, release_lock, LOCK_TIMEOUT};
+use crate::SharedState;
 
-use super::{calculator::calculate_daily_interest, models::InterestAccrual};
+use super::calculator::calculate_daily_interest;
+use super::models::InterestAccrual;
+use super::repository::InterestRepository;
 
 const ACCRUAL_LOCK_KEY: &str = "interest_accrual_lock";
 
 /// Daily interest accrual job — runs at 00:05 UTC.
-/// For each Interest-kind account with a fiat currency (USD, TWD),
+/// For each Interest-kind account with a positive balance snapshot,
 /// calculates daily interest using the active rate config + tiers,
 /// and inserts an accrual record (idempotent via ON CONFLICT DO NOTHING).
 pub async fn create_accrual_job(state: SharedState) -> Result<Job, JobSchedulerError> {
     // Cron: "0 5 0 * * *" = every day at 00:05:00 UTC
     Job::new_async("0 5 0 * * *", move |_uuid, _l| {
-        let db = state.database.clone();
+        let interest_repo = state.interest_repo.clone();
         let cache = state.cache.clone();
         Box::pin(async move {
             let cache = match cache {
                 Some(c) => c,
                 None => {
                     error!("Cache not configured, skipping interest accrual");
+                    return;
+                }
+            };
+
+            let repo = match interest_repo {
+                Some(r) => r,
+                None => {
+                    error!("Interest repository not configured, skipping accrual");
                     return;
                 }
             };
@@ -47,7 +50,7 @@ pub async fn create_accrual_job(state: SharedState) -> Result<Job, JobSchedulerE
             let accrual_date = chrono::Utc::now().date_naive() - chrono::Duration::days(1);
             info!("Starting daily interest accrual for {}", accrual_date);
 
-            if let Err(e) = run_accrual(&db, accrual_date).await {
+            if let Err(e) = run_accrual(repo.as_ref(), accrual_date).await {
                 error!("Interest accrual failed: {:?}", e);
             }
 
@@ -56,12 +59,12 @@ pub async fn create_accrual_job(state: SharedState) -> Result<Job, JobSchedulerE
     })
 }
 
-/// Core accrual logic, separated for testability.
-pub async fn run_accrual<C: crate::repository::adapter::DatabaseClient + Send + Sync>(
-    db: &Arc<Adapter<C>>,
+/// Core accrual logic, separated for testability with mock `InterestRepository`.
+pub async fn run_accrual(
+    repo: &dyn InterestRepository,
     accrual_date: NaiveDate,
 ) -> Result<(), anyhow::Error> {
-    let accounts = db.get_interest_eligible_accounts().await?;
+    let accounts = repo.get_interest_eligible_accounts(accrual_date).await?;
     if accounts.is_empty() {
         info!("No eligible accounts for interest accrual");
         return Ok(());
@@ -72,50 +75,20 @@ pub async fn run_accrual<C: crate::repository::adapter::DatabaseClient + Send + 
     let mut error_count = 0u64;
 
     for account in &accounts {
-        let account_id = match &account.id {
-            Some(id) if !id.is_empty() => id.clone(),
-            _ => {
-                skip_count += 1;
-                continue;
-            }
-        };
-        let ledger_id = match &account.ledger_id {
-            Some(id) if !id.is_empty() => id.clone(),
-            _ => {
-                skip_count += 1;
-                continue;
-            }
-        };
-        let currency = match &account.currency {
-            Some(c) if !c.is_empty() => c.clone(),
-            _ => {
-                skip_count += 1;
-                continue;
-            }
-        };
-        let tenant_id = account.tenant_id.unwrap_or(0);
-        let balance = account.available.unwrap_or(Decimal::ZERO);
-
-        if balance <= Decimal::ZERO {
-            skip_count += 1;
-            continue;
-        }
-
-        // Look up active rate config for this currency
-        let config = match db
-            .get_active_rate_config(currency.clone(), accrual_date)
+        // Look up active rate config for this currency + Interest kind
+        let config = match repo
+            .get_active_rate_config(&account.currency, "Interest", accrual_date)
             .await
         {
             Ok(Some(c)) => c,
             Ok(None) => {
-                // No rate config for this currency — skip silently
                 skip_count += 1;
                 continue;
             }
             Err(e) => {
                 error!(
                     "Failed to get rate config for {} (account {}): {:?}",
-                    currency, account_id, e
+                    account.currency, account.account_id, e
                 );
                 error_count += 1;
                 continue;
@@ -131,7 +104,7 @@ pub async fn run_accrual<C: crate::repository::adapter::DatabaseClient + Send + 
             }
         };
 
-        let tiers = match db.get_rate_tiers(config.id).await {
+        let tiers = match repo.get_rate_tiers(config.id).await {
             Ok(t) => t,
             Err(e) => {
                 error!("Failed to get rate tiers for config {}: {:?}", config.id, e);
@@ -145,7 +118,8 @@ pub async fn run_accrual<C: crate::repository::adapter::DatabaseClient + Send + 
             continue;
         }
 
-        let (daily_interest, breakdowns) = calculate_daily_interest(balance, &tiers, &day_count);
+        let (daily_interest, breakdowns) =
+            calculate_daily_interest(account.balance, &tiers, &day_count);
 
         if daily_interest == Decimal::ZERO {
             skip_count += 1;
@@ -157,23 +131,23 @@ pub async fn run_accrual<C: crate::repository::adapter::DatabaseClient + Send + 
 
         let accrual = InterestAccrual {
             id: Uuid::new_v4(),
-            tenant_id,
-            account_id: account_id.clone(),
-            ledger_id,
-            currency,
+            tenant_id: account.tenant_id,
+            account_id: account.account_id.clone(),
+            ledger_id: account.ledger_id.clone(),
+            currency: account.currency.clone(),
             accrual_date,
-            balance_used: balance,
+            balance_used: account.balance,
             daily_interest,
             rate_config_id: config.id,
             tier_breakdown,
         };
 
-        match db.insert_interest_accrual(accrual).await {
+        match repo.create_accrual(accrual).await {
             Ok(()) => success_count += 1,
             Err(e) => {
                 error!(
                     "Failed to insert accrual for account {}: {:?}",
-                    account_id, e
+                    account.account_id, e
                 );
                 error_count += 1;
             }
@@ -190,9 +164,8 @@ pub async fn run_accrual<C: crate::repository::adapter::DatabaseClient + Send + 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::user::BankAccountWithLedger;
-    use crate::interest::models::{InterestRateConfig, InterestRateTier};
-    use crate::repository::adapter::{Adapter, MockDatabaseClient};
+    use crate::interest::models::{InterestEligibleAccount, InterestRateConfig, InterestRateTier};
+    use crate::interest::repository::MockInterestRepository;
     use chrono::NaiveDate;
     use mockall::predicate::*;
     use rust_decimal_macros::dec;
@@ -201,18 +174,15 @@ mod tests {
         id: &str,
         ledger_id: &str,
         currency: &str,
-        available: Decimal,
+        balance: Decimal,
         tenant_id: i32,
-    ) -> BankAccountWithLedger {
-        BankAccountWithLedger {
-            id: Some(id.to_string()),
-            ledger_id: Some(ledger_id.to_string()),
-            currency: Some(currency.to_string()),
-            available: Some(available),
-            tenant_id: Some(tenant_id),
-            status: Some("Approved".to_string()),
-            kind: Some("Interest".to_string()),
-            ..Default::default()
+    ) -> InterestEligibleAccount {
+        InterestEligibleAccount {
+            tenant_id,
+            account_id: id.to_string(),
+            ledger_id: ledger_id.to_string(),
+            currency: currency.to_string(),
+            balance,
         }
     }
 
@@ -249,63 +219,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_accrual_no_eligible_accounts() {
-        let mut mock = MockDatabaseClient::new();
+        let mut mock = MockInterestRepository::new();
         mock.expect_get_interest_eligible_accounts()
             .times(1)
-            .returning(|| Ok(vec![]));
+            .returning(|_| Ok(vec![]));
 
-        let db = Arc::new(Adapter::new(mock));
         let date = NaiveDate::from_ymd_opt(2026, 3, 5).unwrap();
-        let result = run_accrual(&db, date).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_accrual_skips_zero_balance() {
-        let mut mock = MockDatabaseClient::new();
-        mock.expect_get_interest_eligible_accounts()
-            .times(1)
-            .returning(|| {
-                Ok(vec![make_eligible_account(
-                    "acc-1",
-                    "led-1",
-                    "USD",
-                    dec!(0),
-                    1,
-                )])
-            });
-
-        let db = Arc::new(Adapter::new(mock));
-        let date = NaiveDate::from_ymd_opt(2026, 3, 5).unwrap();
-        let result = run_accrual(&db, date).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_accrual_skips_missing_id() {
-        let mut mock = MockDatabaseClient::new();
-        mock.expect_get_interest_eligible_accounts()
-            .times(1)
-            .returning(|| {
-                Ok(vec![BankAccountWithLedger {
-                    id: None,
-                    available: Some(dec!(1000)),
-                    ..Default::default()
-                }])
-            });
-
-        let db = Arc::new(Adapter::new(mock));
-        let date = NaiveDate::from_ymd_opt(2026, 3, 5).unwrap();
-        let result = run_accrual(&db, date).await;
+        let result = run_accrual(&mock, date).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_accrual_skips_no_rate_config() {
-        let mut mock = MockDatabaseClient::new();
+        let mut mock = MockInterestRepository::new();
         mock.expect_get_interest_eligible_accounts()
             .times(1)
-            .returning(|| {
+            .returning(|_| {
                 Ok(vec![make_eligible_account(
                     "acc-1",
                     "led-1",
@@ -316,21 +245,20 @@ mod tests {
             });
         mock.expect_get_active_rate_config()
             .times(1)
-            .returning(|_, _| Ok(None));
+            .returning(|_, _, _| Ok(None));
 
-        let db = Arc::new(Adapter::new(mock));
         let date = NaiveDate::from_ymd_opt(2026, 3, 5).unwrap();
-        let result = run_accrual(&db, date).await;
+        let result = run_accrual(&mock, date).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_accrual_skips_empty_tiers() {
         let config_id = Uuid::new_v4();
-        let mut mock = MockDatabaseClient::new();
+        let mut mock = MockInterestRepository::new();
         mock.expect_get_interest_eligible_accounts()
             .times(1)
-            .returning(|| {
+            .returning(|_| {
                 Ok(vec![make_eligible_account(
                     "acc-1",
                     "led-1",
@@ -341,25 +269,24 @@ mod tests {
             });
         mock.expect_get_active_rate_config()
             .times(1)
-            .returning(move |_, _| Ok(Some(make_rate_config(config_id, "USD"))));
+            .returning(move |_, _, _| Ok(Some(make_rate_config(config_id, "USD"))));
         mock.expect_get_rate_tiers()
             .times(1)
             .returning(|_| Ok(vec![]));
 
-        let db = Arc::new(Adapter::new(mock));
         let date = NaiveDate::from_ymd_opt(2026, 3, 5).unwrap();
-        let result = run_accrual(&db, date).await;
+        let result = run_accrual(&mock, date).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_accrual_inserts_record_successfully() {
         let config_id = Uuid::new_v4();
-        let mut mock = MockDatabaseClient::new();
+        let mut mock = MockInterestRepository::new();
 
         mock.expect_get_interest_eligible_accounts()
             .times(1)
-            .returning(|| {
+            .returning(|_| {
                 Ok(vec![make_eligible_account(
                     "acc-1",
                     "led-1",
@@ -372,13 +299,13 @@ mod tests {
         let config_id_clone = config_id;
         mock.expect_get_active_rate_config()
             .times(1)
-            .returning(move |_, _| Ok(Some(make_rate_config(config_id_clone, "USD"))));
+            .returning(move |_, _, _| Ok(Some(make_rate_config(config_id_clone, "USD"))));
 
         mock.expect_get_rate_tiers()
             .times(1)
             .returning(move |_| Ok(vec![make_tier(config_id, 1, dec!(0), None, dec!(0.045))]));
 
-        mock.expect_insert_interest_accrual()
+        mock.expect_create_accrual()
             .times(1)
             .withf(|accrual| {
                 accrual.account_id == "acc-1"
@@ -388,20 +315,19 @@ mod tests {
             })
             .returning(|_| Ok(()));
 
-        let db = Arc::new(Adapter::new(mock));
         let date = NaiveDate::from_ymd_opt(2026, 3, 5).unwrap();
-        let result = run_accrual(&db, date).await;
+        let result = run_accrual(&mock, date).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_accrual_handles_insert_error_gracefully() {
         let config_id = Uuid::new_v4();
-        let mut mock = MockDatabaseClient::new();
+        let mut mock = MockInterestRepository::new();
 
         mock.expect_get_interest_eligible_accounts()
             .times(1)
-            .returning(|| {
+            .returning(|_| {
                 Ok(vec![make_eligible_account(
                     "acc-1",
                     "led-1",
@@ -414,87 +340,59 @@ mod tests {
         let config_id_clone = config_id;
         mock.expect_get_active_rate_config()
             .times(1)
-            .returning(move |_, _| Ok(Some(make_rate_config(config_id_clone, "USD"))));
+            .returning(move |_, _, _| Ok(Some(make_rate_config(config_id_clone, "USD"))));
 
         mock.expect_get_rate_tiers()
             .times(1)
             .returning(move |_| Ok(vec![make_tier(config_id, 1, dec!(0), None, dec!(0.045))]));
 
-        mock.expect_insert_interest_accrual()
+        mock.expect_create_accrual()
             .times(1)
             .returning(|_| Err(sqlx::Error::Protocol("test error".to_string())));
 
-        let db = Arc::new(Adapter::new(mock));
         let date = NaiveDate::from_ymd_opt(2026, 3, 5).unwrap();
-        // Should not propagate the insert error — it logs and continues
-        let result = run_accrual(&db, date).await;
+        let result = run_accrual(&mock, date).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_accrual_multiple_accounts_mixed_results() {
         let config_id = Uuid::new_v4();
-        let mut mock = MockDatabaseClient::new();
+        let mut mock = MockInterestRepository::new();
 
         mock.expect_get_interest_eligible_accounts()
             .times(1)
-            .returning(|| {
+            .returning(|_| {
                 Ok(vec![
                     make_eligible_account("acc-1", "led-1", "USD", dec!(10000), 1),
-                    make_eligible_account("acc-2", "led-2", "USD", dec!(0), 1), // zero balance
                     make_eligible_account("acc-3", "led-3", "TWD", dec!(50000), 2),
                 ])
             });
 
         let config_id_clone = config_id;
-        // Called for acc-1 (USD) and acc-3 (TWD)
         mock.expect_get_active_rate_config()
             .times(2)
-            .returning(move |currency, _| Ok(Some(make_rate_config(config_id_clone, &currency))));
+            .returning(move |_, _, _| Ok(Some(make_rate_config(config_id_clone, "USD"))));
 
         mock.expect_get_rate_tiers()
             .times(2)
             .returning(move |_| Ok(vec![make_tier(config_id, 1, dec!(0), None, dec!(0.045))]));
 
-        mock.expect_insert_interest_accrual()
-            .times(2)
-            .returning(|_| Ok(()));
+        mock.expect_create_accrual().times(2).returning(|_| Ok(()));
 
-        let db = Arc::new(Adapter::new(mock));
         let date = NaiveDate::from_ymd_opt(2026, 3, 5).unwrap();
-        let result = run_accrual(&db, date).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_accrual_skips_negative_balance() {
-        let mut mock = MockDatabaseClient::new();
-        mock.expect_get_interest_eligible_accounts()
-            .times(1)
-            .returning(|| {
-                Ok(vec![make_eligible_account(
-                    "acc-1",
-                    "led-1",
-                    "USD",
-                    dec!(-500),
-                    1,
-                )])
-            });
-
-        let db = Arc::new(Adapter::new(mock));
-        let date = NaiveDate::from_ymd_opt(2026, 3, 5).unwrap();
-        let result = run_accrual(&db, date).await;
+        let result = run_accrual(&mock, date).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_accrual_correct_daily_interest_amount() {
         let config_id = Uuid::new_v4();
-        let mut mock = MockDatabaseClient::new();
+        let mut mock = MockInterestRepository::new();
 
         mock.expect_get_interest_eligible_accounts()
             .times(1)
-            .returning(|| {
+            .returning(|_| {
                 Ok(vec![make_eligible_account(
                     "acc-1",
                     "led-1",
@@ -507,7 +405,7 @@ mod tests {
         let config_id_clone = config_id;
         mock.expect_get_active_rate_config()
             .times(1)
-            .returning(move |_, _| Ok(Some(make_rate_config(config_id_clone, "USD"))));
+            .returning(move |_, _, _| Ok(Some(make_rate_config(config_id_clone, "USD"))));
 
         mock.expect_get_rate_tiers()
             .times(1)
@@ -515,14 +413,104 @@ mod tests {
 
         // Verify the exact daily interest: 10000 * 0.045 / 365
         let expected_daily = dec!(10000) * dec!(0.045) / dec!(365);
-        mock.expect_insert_interest_accrual()
+        mock.expect_create_accrual()
             .times(1)
             .withf(move |accrual| accrual.daily_interest == expected_daily)
             .returning(|_| Ok(()));
 
-        let db = Arc::new(Adapter::new(mock));
         let date = NaiveDate::from_ymd_opt(2026, 3, 5).unwrap();
-        let result = run_accrual(&db, date).await;
+        let result = run_accrual(&mock, date).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_accrual_rate_config_lookup_error() {
+        let mut mock = MockInterestRepository::new();
+
+        mock.expect_get_interest_eligible_accounts()
+            .times(1)
+            .returning(|_| {
+                Ok(vec![make_eligible_account(
+                    "acc-1",
+                    "led-1",
+                    "USD",
+                    dec!(10000),
+                    1,
+                )])
+            });
+
+        mock.expect_get_active_rate_config()
+            .times(1)
+            .returning(|_, _, _| Err(sqlx::Error::Protocol("db error".to_string())));
+
+        let date = NaiveDate::from_ymd_opt(2026, 3, 5).unwrap();
+        let result = run_accrual(&mock, date).await;
+        assert!(result.is_ok()); // errors are logged, not propagated
+    }
+
+    #[tokio::test]
+    async fn test_accrual_tier_lookup_error() {
+        let config_id = Uuid::new_v4();
+        let mut mock = MockInterestRepository::new();
+
+        mock.expect_get_interest_eligible_accounts()
+            .times(1)
+            .returning(|_| {
+                Ok(vec![make_eligible_account(
+                    "acc-1",
+                    "led-1",
+                    "USD",
+                    dec!(10000),
+                    1,
+                )])
+            });
+
+        let config_id_clone = config_id;
+        mock.expect_get_active_rate_config()
+            .times(1)
+            .returning(move |_, _, _| Ok(Some(make_rate_config(config_id_clone, "USD"))));
+
+        mock.expect_get_rate_tiers()
+            .times(1)
+            .returning(|_| Err(sqlx::Error::Protocol("db error".to_string())));
+
+        let date = NaiveDate::from_ymd_opt(2026, 3, 5).unwrap();
+        let result = run_accrual(&mock, date).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_accrual_zero_interest_skipped() {
+        let config_id = Uuid::new_v4();
+        let mut mock = MockInterestRepository::new();
+
+        mock.expect_get_interest_eligible_accounts()
+            .times(1)
+            .returning(|_| {
+                Ok(vec![make_eligible_account(
+                    "acc-1",
+                    "led-1",
+                    "USD",
+                    dec!(10000),
+                    1,
+                )])
+            });
+
+        let config_id_clone = config_id;
+        mock.expect_get_active_rate_config()
+            .times(1)
+            .returning(move |_, _, _| Ok(Some(make_rate_config(config_id_clone, "USD"))));
+
+        // 0% APR → zero daily interest → should skip insert
+        mock.expect_get_rate_tiers()
+            .times(1)
+            .returning(move |_| Ok(vec![make_tier(config_id, 1, dec!(0), None, dec!(0))]));
+
+        // create_accrual should NOT be called
+        mock.expect_create_accrual().times(0);
+
+        let date = NaiveDate::from_ymd_opt(2026, 3, 5).unwrap();
+        let result = run_accrual(&mock, date).await;
         assert!(result.is_ok());
     }
 }

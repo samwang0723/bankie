@@ -11,6 +11,7 @@ use crate::common::fx_rate::FxRateService;
 use crate::configs::settings::SETTINGS;
 use crate::domain::models::{BankAccount, BankAccountView, Ledger, LedgerView};
 use crate::event_sourcing::command::BankAccountCommand;
+use crate::interest::repository::{InterestRepository, PgInterestRepository};
 use crate::repository::adapter::{Adapter, DatabaseClient};
 use crate::repository::configs::{configure_bank_account, configure_ledger};
 use crate::SharedState;
@@ -26,6 +27,7 @@ pub struct ApplicationState<C: DatabaseClient + Send + Sync> {
     pub command_sender: Option<Arc<Sender<BankAccountCommand>>>,
     pub asset_registry: AssetRegistry,
     pub fx_rate_service: Option<Arc<FxRateService>>,
+    pub interest_repo: Option<Arc<dyn InterestRepository>>,
 }
 
 impl<C: DatabaseClient + Send + Sync> ApplicationState<C> {
@@ -38,6 +40,7 @@ impl<C: DatabaseClient + Send + Sync> ApplicationState<C> {
             command_sender: None,
             asset_registry: AssetRegistry::with_defaults(),
             fx_rate_service: None,
+            interest_repo: None,
         }
     }
 
@@ -68,6 +71,11 @@ impl<C: DatabaseClient + Send + Sync> ApplicationState<C> {
 
     pub fn with_fx_rate_service(mut self, service: Arc<FxRateService>) -> Self {
         self.fx_rate_service = Some(service);
+        self
+    }
+
+    pub fn with_interest_repository(mut self, repo: Arc<dyn InterestRepository>) -> Self {
+        self.interest_repo = Some(repo);
         self
     }
 }
@@ -143,6 +151,9 @@ pub async fn new_application_state(tx: Sender<BankAccountCommand>) -> SharedStat
         }
     };
 
+    let interest_repo: Arc<dyn InterestRepository> =
+        Arc::new(PgInterestRepository::new(pool.clone()));
+
     Arc::new(
         ApplicationState::<PgPool>::new(Adapter::new(pool))
             .with_cache(cache)
@@ -153,6 +164,7 @@ pub async fn new_application_state(tx: Sender<BankAccountCommand>) -> SharedStat
             .with_ledger(ledger_loader_saver)
             .with_command_sender(tx)
             .with_asset_registry(asset_registry)
-            .with_fx_rate_service(fx_rate_service),
+            .with_fx_rate_service(fx_rate_service)
+            .with_interest_repository(interest_repo),
     )
 }

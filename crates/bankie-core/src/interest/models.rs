@@ -178,6 +178,34 @@ pub struct InterestPosting {
 }
 
 // =============================================================================
+// Helper structs for interest engine queries
+// =============================================================================
+
+/// Represents an account eligible for daily interest accrual.
+/// Uses balance from `balance_snapshots` (not live ledger).
+#[derive(Debug, Clone, Serialize)]
+pub struct InterestEligibleAccount {
+    pub tenant_id: i32,
+    pub account_id: String,
+    pub ledger_id: String,
+    pub currency: String,
+    pub balance: Decimal,
+}
+
+/// Represents an account that is due for interest posting on a given date.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize)]
+pub struct PostingDueAccount {
+    pub tenant_id: i32,
+    pub account_id: String,
+    pub ledger_id: String,
+    pub currency: String,
+    pub rate_config_id: Uuid,
+    pub posting_frequency: String,
+    pub posting_day: Option<i16>,
+}
+
+// =============================================================================
 // Tier breakdown for JSONB serialization
 // =============================================================================
 
