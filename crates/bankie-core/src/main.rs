@@ -6,6 +6,7 @@ use clap::Parser;
 use clap_derive::Parser;
 use common::idempotency::idempotency_check;
 use event_sourcing::command::BankAccountCommand;
+use interest::accrual_job::create_accrual_job;
 use job::{create_balance_snapshot_job, create_ledger_job};
 use route::{
     accounts_query_handler, balance_history_handler, bank_account_by_number_handler,
@@ -33,6 +34,7 @@ mod configs;
 mod domain;
 mod event_sourcing;
 mod house_account;
+mod interest;
 mod job;
 mod report;
 mod repository;
@@ -144,6 +146,17 @@ async fn main() {
                 }
                 Err(e) => {
                     error!("Failed to create balance snapshot job: {:?}", e);
+                }
+            }
+            // Daily interest accrual job
+            match create_accrual_job(state.clone()).await {
+                Ok(job) => {
+                    if let Err(e) = sched.add(job).await {
+                        error!("Failed to add interest accrual job: {:?}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to create interest accrual job: {:?}", e);
                 }
             }
             if let Err(e) = sched.start().await {
