@@ -33,6 +33,7 @@ mod configs;
 mod domain;
 mod event_sourcing;
 mod house_account;
+mod interest;
 mod job;
 mod report;
 mod repository;

@@ -12,6 +12,7 @@ use super::models::LedgerAction;
 pub const TRANS_DEPOSIT: &str = "DE";
 pub const TRANS_WITHDRAWAL: &str = "WI";
 pub const TRANS_TRANSFER: &str = "TR";
+pub const TRANS_INTEREST: &str = "IN";
 
 #[derive(FromRow, Debug, Serialize)]
 pub struct Transaction {
@@ -52,8 +53,10 @@ pub struct TransactionWithMoney {
 
 impl Transaction {
     pub fn transaction_type(&self) -> LedgerAction {
-        if self.transaction_reference.contains(TRANS_DEPOSIT) {
-            LedgerAction::Deposit
+        if self.transaction_reference.contains(TRANS_INTEREST)
+            || self.transaction_reference.contains(TRANS_DEPOSIT)
+        {
+            LedgerAction::Deposit // interest postings and deposits are credits
         } else if self.transaction_reference.contains(TRANS_WITHDRAWAL) {
             LedgerAction::Withdraw
         } else if self.transaction_reference.contains(TRANS_TRANSFER) {
@@ -164,6 +167,12 @@ mod tests {
     fn test_transaction_type_transfer() {
         let tx = make_transaction("TR-11111", dec!(75), "USD");
         assert_eq!(tx.transaction_type(), LedgerAction::Transfer);
+    }
+
+    #[test]
+    fn test_transaction_type_interest() {
+        let tx = make_transaction("IN1234567890", dec!(1.23), "USD");
+        assert_eq!(tx.transaction_type(), LedgerAction::Deposit); // interest = credit
     }
 
     #[test]

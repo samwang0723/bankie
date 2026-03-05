@@ -66,6 +66,51 @@ pub async fn create_transaction_with_journal(
     action_type: LedgerAction,
     tenant_id: i32,
 ) -> Result<Uuid, error::BankAccountError> {
+    create_transaction_with_journal_inner(
+        bank_account,
+        services,
+        amount,
+        house_account_ledger,
+        action_type,
+        tenant_id,
+        None,
+    )
+    .await
+}
+
+/// Like `create_transaction_with_journal` but allows overriding the transaction
+/// reference prefix (e.g. `Some("IN")` for interest postings).
+#[allow(dead_code)]
+pub async fn create_transaction_with_journal_custom_prefix(
+    bank_account: &models::BankAccount,
+    services: &BankAccountServices,
+    amount: Money,
+    house_account_ledger: String,
+    action_type: LedgerAction,
+    tenant_id: i32,
+    prefix: &str,
+) -> Result<Uuid, error::BankAccountError> {
+    create_transaction_with_journal_inner(
+        bank_account,
+        services,
+        amount,
+        house_account_ledger,
+        action_type,
+        tenant_id,
+        Some(prefix),
+    )
+    .await
+}
+
+async fn create_transaction_with_journal_inner(
+    bank_account: &models::BankAccount,
+    services: &BankAccountServices,
+    amount: Money,
+    house_account_ledger: String,
+    action_type: LedgerAction,
+    tenant_id: i32,
+    prefix_override: Option<&str>,
+) -> Result<Uuid, error::BankAccountError> {
     // Validate ledger available is sufficient
     services
         .services
@@ -77,11 +122,11 @@ pub async fn create_transaction_with_journal(
         )
         .await?;
 
-    let key = match action_type {
+    let key = prefix_override.unwrap_or(match action_type {
         LedgerAction::Deposit => TRANS_DEPOSIT,
         LedgerAction::Withdraw => TRANS_WITHDRAWAL,
         LedgerAction::Transfer => TRANS_TRANSFER,
-    };
+    });
 
     // FX rate conversion: graceful degradation — never blocks the transaction
     let fx_conversion = if let Some(fx_service) = &services.fx_rate_service {
