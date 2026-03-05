@@ -36,6 +36,15 @@ pub trait InterestDbClient: Send + Sync {
         tiers: &[InterestRateTier],
     ) -> Result<(), Error>;
 
+    /// Sunset a rate config: update effective_to and/or is_active.
+    /// Never modifies rate values (currency, day_count, posting_frequency, etc.).
+    async fn sunset_rate_config(
+        &self,
+        id: Uuid,
+        effective_to: Option<NaiveDate>,
+        is_active: bool,
+    ) -> Result<InterestRateConfig, Error>;
+
     // ── Accrual read ────────────────────────────────────────────────────
     async fn get_accruals(
         &self,
