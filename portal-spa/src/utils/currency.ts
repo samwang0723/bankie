@@ -66,14 +66,22 @@ export function formatFxRate(rate: string | null | undefined): string | null {
   return `@ ${formatted}`;
 }
 
+/** Whether a transaction is a debit (money leaving the account). */
+export function isDebit(txType: string, description: string | null): boolean {
+  if (txType === "withdrawal") return true;
+  if (txType === "transfer" && description === "Transfer out") return true;
+  return false;
+}
+
 /** Format a transaction amount with +/- prefix, respecting per-currency precision. */
 export function formatAmount(
   amount: string,
   txType: string,
-  currency: string
+  currency: string,
+  description?: string | null
 ): string {
   const num = parseFloat(amount);
-  const prefix = txType === "withdrawal" ? "- " : "+ ";
+  const prefix = isDebit(txType, description ?? null) ? "- " : "+ ";
   const formatted = Math.abs(num).toLocaleString("en-US", {
     minimumFractionDigits: minDecimals(currency),
     maximumFractionDigits: maxDecimals(currency)

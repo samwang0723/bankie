@@ -9,7 +9,8 @@ import {
   formatBalance,
   formatAmount,
   formatUsdValue,
-  formatFxRate
+  formatFxRate,
+  isDebit
 } from "../utils/currency.ts";
 
 function formatAccountNumber(raw: string): string {
@@ -21,7 +22,8 @@ function formatAccountNumber(raw: string): string {
 const TYPE_LABELS: Record<string, string> = {
   deposit: "Deposit",
   withdrawal: "Withdrawal",
-  transfer: "Transfer"
+  transfer: "Transfer",
+  interest: "Interest"
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -35,7 +37,8 @@ function TypeBadge({ txType }: { txType: string }) {
   const styles: Record<string, string> = {
     Deposit: "bg-[#DCFCE7] text-[#16A34A]",
     Withdrawal: "bg-[#FEE2E2] text-[#DC2626]",
-    Transfer: "bg-[#E0E7FF] text-[#4F46E5]"
+    Transfer: "bg-[#E0E7FF] text-[#4F46E5]",
+    Interest: "bg-[#FEF3C7] text-[#D97706]"
   };
   return (
     <span
@@ -279,6 +282,7 @@ export function Transactions() {
           <option value="deposit">Deposit</option>
           <option value="withdrawal">Withdrawal</option>
           <option value="transfer">Transfer</option>
+          <option value="interest">Interest</option>
         </select>
         <select
           value={statusFilter}
@@ -427,12 +431,17 @@ export function Transactions() {
                   </td>
                   <td
                     className={`px-6 font-mono text-[13px] text-right font-semibold w-[170px] whitespace-nowrap ${
-                      tx.transaction_type === "withdrawal"
+                      isDebit(tx.transaction_type, tx.description)
                         ? "text-[#DC2626]"
                         : "text-[#16A34A]"
                     }`}
                   >
-                    {formatAmount(tx.amount, tx.transaction_type, tx.currency)}
+                    {formatAmount(
+                      tx.amount,
+                      tx.transaction_type,
+                      tx.currency,
+                      tx.description
+                    )}
                   </td>
                   <td className="px-6 text-right w-[150px] whitespace-nowrap">
                     {(() => {

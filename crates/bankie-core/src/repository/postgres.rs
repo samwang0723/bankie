@@ -684,6 +684,7 @@ impl DatabaseClient for PgPool {
         dest_ledger_id: String,
         amount: Money,
         tenant_id: i32,
+        fx_conversion: Option<(Decimal, Decimal, String)>,
     ) -> Result<Uuid, Error> {
         let mut tx = self.begin().await?;
 
@@ -741,14 +742,17 @@ impl DatabaseClient for PgPool {
 
         let currency_str = amount.currency.to_string();
         let now = chrono::Utc::now();
+        let fx_rate = fx_conversion.as_ref().map(|(r, _, _)| *r);
+        let amount_usd = fx_conversion.as_ref().map(|(_, a, _)| *a);
+        let fx_source = fx_conversion.as_ref().map(|(_, _, s)| s.clone());
 
         // Source transaction (debit/withdrawal side)
         let source_tx_id = Uuid::new_v4();
         let source_ref = crate::common::snowflake::generate_transaction_reference(TRANS_TRANSFER);
         sqlx::query(
             r#"
-            INSERT INTO transactions (id, bank_account_id, transaction_reference, transaction_date, amount, currency, description, metadata, status, journal_entry_id, tenant_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            INSERT INTO transactions (id, bank_account_id, transaction_reference, transaction_date, amount, currency, description, metadata, status, journal_entry_id, tenant_id, fx_rate_to_usd, amount_usd, fx_rate_source)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
         )
         .bind(source_tx_id)
@@ -762,6 +766,9 @@ impl DatabaseClient for PgPool {
         .bind("processing")
         .bind(journal_entry_id)
         .bind(tenant_id)
+        .bind(fx_rate)
+        .bind(amount_usd)
+        .bind(&fx_source)
         .execute(&mut *tx)
         .await?;
 
@@ -770,8 +777,8 @@ impl DatabaseClient for PgPool {
         let dest_ref = crate::common::snowflake::generate_transaction_reference(TRANS_TRANSFER);
         sqlx::query(
             r#"
-            INSERT INTO transactions (id, bank_account_id, transaction_reference, transaction_date, amount, currency, description, metadata, status, journal_entry_id, tenant_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            INSERT INTO transactions (id, bank_account_id, transaction_reference, transaction_date, amount, currency, description, metadata, status, journal_entry_id, tenant_id, fx_rate_to_usd, amount_usd, fx_rate_source)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
         )
         .bind(dest_tx_id)
@@ -785,6 +792,9 @@ impl DatabaseClient for PgPool {
         .bind("processing")
         .bind(journal_entry_id)
         .bind(tenant_id)
+        .bind(fx_rate)
+        .bind(amount_usd)
+        .bind(&fx_source)
         .execute(&mut *tx)
         .await?;
 

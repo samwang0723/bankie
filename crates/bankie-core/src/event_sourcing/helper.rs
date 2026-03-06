@@ -231,6 +231,16 @@ pub async fn create_transfer_transactions(
     let source_account_id = Uuid::parse_str(&source_account.id)
         .map_err(|e| error::BankAccountError::from(e.to_string().as_str()))?;
 
+    // FX rate conversion: graceful degradation — never blocks the transaction
+    let fx_conversion = if let Some(fx_service) = &services.fx_rate_service {
+        fx_service
+            .convert_to_usd(amount.amount, &amount.currency.to_string())
+            .await
+            .map(|c| (c.fx_rate_to_usd, c.amount_usd, c.source.to_string()))
+    } else {
+        None
+    };
+
     services
         .services
         .create_transfer_transactions(
@@ -240,6 +250,7 @@ pub async fn create_transfer_transactions(
             dest_ledger_id,
             amount,
             tenant_id,
+            fx_conversion,
         )
         .await
         .map_err(|_| "transfer transaction creation failed".into())
