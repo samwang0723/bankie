@@ -16,13 +16,15 @@ RUN mkdir -p crates/bankie-common/src && \
     echo "pub enum AppError {}" > crates/bankie-common/src/error.rs && \
     mkdir -p crates/bankie-core/src/repository && \
     echo "fn main() {}" > crates/bankie-core/src/main.rs && \
+    echo "fn main() {}" > crates/bankie-core/src/worker.rs && \
+    echo "" > crates/bankie-core/src/lib.rs && \
     echo "fn main() {}" > crates/bankie-core/src/repository/migrate.rs && \
     mkdir -p crates/bankie-gateway/src && \
     echo "fn main() {}" > crates/bankie-gateway/src/main.rs && \
     echo "" > crates/bankie-gateway/src/lib.rs && \
     mkdir -p crates/healthcheck/src && \
     echo "fn main() {}" > crates/healthcheck/src/main.rs
-RUN cargo build --release --bin bankie --bin migrations --bin bankie-gateway --bin healthcheck || true
+RUN cargo build --release --bin bankie --bin bankie-worker --bin migrations --bin bankie-gateway --bin healthcheck || true
 
 # Copy real source code
 COPY crates crates
@@ -31,10 +33,10 @@ COPY crates/bankie-core/.sqlx crates/bankie-core/.sqlx
 
 ENV SQLX_OFFLINE=true
 
-RUN touch crates/bankie-common/src/lib.rs crates/bankie-core/src/main.rs crates/bankie-core/src/repository/migrate.rs crates/bankie-gateway/src/main.rs crates/bankie-gateway/src/lib.rs
-RUN cargo build --release --bin bankie --bin migrations --bin bankie-gateway --bin healthcheck
+RUN touch crates/bankie-common/src/lib.rs crates/bankie-core/src/main.rs crates/bankie-core/src/worker.rs crates/bankie-core/src/lib.rs crates/bankie-core/src/repository/migrate.rs crates/bankie-gateway/src/main.rs crates/bankie-gateway/src/lib.rs
+RUN cargo build --release --bin bankie --bin bankie-worker --bin migrations --bin bankie-gateway --bin healthcheck
 
-RUN strip target/release/bankie target/release/migrations target/release/bankie-gateway target/release/healthcheck
+RUN strip target/release/bankie target/release/bankie-worker target/release/migrations target/release/bankie-gateway target/release/healthcheck
 
 # Stage 2: Migrations runner (needs full OS for DB tools)
 FROM debian:bookworm-slim AS migrations
@@ -74,3 +76,14 @@ COPY --from=builder /app/config.*.yaml /app/
 EXPOSE 4040
 
 CMD ["/app/bankie-gateway"]
+
+# Stage 5: Worker
+FROM gcr.io/distroless/cc-debian12 AS worker
+
+WORKDIR /app
+
+COPY --from=builder /app/target/release/bankie-worker /app/bankie-worker
+COPY --from=builder /app/target/release/healthcheck /app/healthcheck
+COPY --from=builder /app/config.*.yaml /app/
+
+CMD ["/app/bankie-worker"]

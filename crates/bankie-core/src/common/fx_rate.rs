@@ -177,6 +177,12 @@ pub struct CoinGeckoProvider {
     client: reqwest::Client,
 }
 
+impl Default for CoinGeckoProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CoinGeckoProvider {
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
@@ -254,6 +260,12 @@ impl FxRateProvider for CoinGeckoProvider {
 /// ExchangeRate API provider for fiat rates (TWD).
 pub struct ExchangeRateProvider {
     client: reqwest::Client,
+}
+
+impl Default for ExchangeRateProvider {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ExchangeRateProvider {

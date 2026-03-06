@@ -18,6 +18,69 @@ use crate::SharedState;
 
 use postgres_es::{PostgresCqrs, PostgresViewRepository};
 
+/// Create application state for the worker binary.
+/// Skips mpsc command channel and BankAccount CQRS (worker never handles HTTP commands).
+/// Includes: database, cache, ledger CQRS, interest_repo, fx_rate_service.
+pub async fn new_worker_state() -> SharedState {
+    let pool: PgPool = PgPoolOptions::new()
+        .max_connections(20)
+        .min_connections(2)
+        .acquire_timeout(Duration::from_secs(3))
+        .idle_timeout(Duration::from_secs(600))
+        .connect(&SETTINGS.database.connection_string())
+        .await
+        .expect("Failed to connect to database");
+
+    let (ledger_cqrs, ledger_query) = configure_ledger(pool.clone());
+    let ledger_loader_saver = LedgerLoaderSaver {
+        cqrs: ledger_cqrs,
+        query: ledger_query,
+    };
+
+    let cache = match redis::Client::open(SETTINGS.redis.connection_string()) {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to connect to Redis: {:?}", e);
+            panic!("Redis connection required for startup");
+        }
+    };
+
+    // Initialize FX rate service with providers
+    let fx_rate_service = {
+        use crate::common::fx_rate::{CoinGeckoProvider, ExchangeRateProvider, FxRateProvider};
+        let providers: Vec<Box<dyn FxRateProvider>> = vec![
+            Box::new(CoinGeckoProvider::new()),
+            Box::new(ExchangeRateProvider::new()),
+        ];
+        Arc::new(FxRateService::new(providers, Arc::new(cache.clone())))
+    };
+
+    // Load assets from DB
+    let adapter = Adapter::new(pool.clone());
+    let asset_registry = match adapter.load_assets().await {
+        Ok(assets) => {
+            info!("Loaded {} assets from database", assets.len());
+            AssetRegistry::new(assets)
+        }
+        Err(e) => {
+            error!("Failed to load assets from DB, using defaults: {:?}", e);
+            AssetRegistry::with_defaults()
+        }
+    };
+
+    let interest_repo: Arc<dyn InterestRepository> =
+        Arc::new(PgInterestRepository::new(pool.clone()));
+
+    Arc::new(
+        ApplicationState::<PgPool>::new(Adapter::new(pool))
+            .with_cache(cache)
+            .with_ledger(ledger_loader_saver)
+            .with_asset_registry(asset_registry)
+            .with_fx_rate_service(fx_rate_service)
+            .with_interest_repository(interest_repo),
+    )
+}
+
 #[derive(Clone)]
 pub struct ApplicationState<C: DatabaseClient + Send + Sync> {
     pub bank_account: Option<BankAccountLoaderSaver>,
