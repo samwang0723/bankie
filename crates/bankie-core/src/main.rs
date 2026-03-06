@@ -18,9 +18,9 @@ use bankie_core::SharedState;
 
 use axum::Router;
 use axum::{middleware, routing::get, routing::post, routing::put};
+use bankie_core::repository::pools::DbPools;
 use clap::Parser;
 use clap_derive::Parser;
-use bankie_core::repository::pools::DbPools;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::task;

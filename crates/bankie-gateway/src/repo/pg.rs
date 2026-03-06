@@ -137,14 +137,12 @@ fn status_str(status: &KeyStatus) -> &'static str {
 
 pub struct PgOrgRepository {
     write_pool: PgPool,
-    read_pool: PgPool,
 }
 
 impl PgOrgRepository {
     pub fn new(pools: &DbPools) -> Self {
         Self {
             write_pool: pools.write().clone(),
-            read_pool: pools.read().clone(),
         }
     }
 }
@@ -185,7 +183,7 @@ impl super::org::OrgRepository for PgOrgRepository {
             "#,
         )
         .bind(id)
-        .fetch_optional(&self.read_pool)
+        .fetch_optional(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -201,7 +199,7 @@ impl super::org::OrgRepository for PgOrgRepository {
             "#,
         )
         .bind(&slug)
-        .fetch_optional(&self.read_pool)
+        .fetch_optional(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -307,7 +305,7 @@ impl super::member::MemberRepository for PgMemberRepository {
             "#,
         )
         .bind(&email)
-        .fetch_optional(&self.read_pool)
+        .fetch_optional(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -324,7 +322,7 @@ impl super::member::MemberRepository for PgMemberRepository {
             "#,
         )
         .bind(id)
-        .fetch_optional(&self.read_pool)
+        .fetch_optional(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -342,7 +340,7 @@ impl super::member::MemberRepository for PgMemberRepository {
             "#,
         )
         .bind(org_id)
-        .fetch_all(&self.read_pool)
+        .fetch_all(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -364,7 +362,7 @@ impl super::member::MemberRepository for PgMemberRepository {
         )
         .bind(id)
         .bind(org_id)
-        .fetch_optional(&self.read_pool)
+        .fetch_optional(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -613,7 +611,7 @@ impl super::api_key::ApiKeyRepository for PgApiKeyRepository {
         )
         .bind(id)
         .bind(org_id)
-        .fetch_optional(&self.read_pool)
+        .fetch_optional(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -648,7 +646,7 @@ impl super::api_key::ApiKeyRepository for PgApiKeyRepository {
             "#,
         )
         .bind(org_id)
-        .fetch_all(&self.read_pool)
+        .fetch_all(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1138,7 +1136,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
         )
         .bind(id)
         .bind(org_id)
-        .fetch_optional(&self.read_pool)
+        .fetch_optional(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1156,7 +1154,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
             "#,
         )
         .bind(org_id)
-        .fetch_all(&self.read_pool)
+        .fetch_all(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1522,7 +1520,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
             )
             .bind(endpoint_id)
             .bind(status_filter.as_deref())
-            .fetch_one(&self.read_pool)
+            .fetch_one(&self.write_pool)
             .await
             .map_err(|e| RepoError::Database(e.to_string()))?
         } else {
@@ -1533,7 +1531,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
                 "#,
             )
             .bind(endpoint_id)
-            .fetch_one(&self.read_pool)
+            .fetch_one(&self.write_pool)
             .await
             .map_err(|e| RepoError::Database(e.to_string()))?
         };
@@ -1555,7 +1553,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
             .bind(status_filter.as_deref())
             .bind(per_page)
             .bind(offset)
-            .fetch_all(&self.read_pool)
+            .fetch_all(&self.write_pool)
             .await
             .map_err(|e| RepoError::Database(e.to_string()))?
         } else {
@@ -1573,7 +1571,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
             .bind(endpoint_id)
             .bind(per_page)
             .bind(offset)
-            .fetch_all(&self.read_pool)
+            .fetch_all(&self.write_pool)
             .await
             .map_err(|e| RepoError::Database(e.to_string()))?
         };
@@ -1597,7 +1595,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
         )
         .bind(id)
         .bind(endpoint_id)
-        .fetch_optional(&self.read_pool)
+        .fetch_optional(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
