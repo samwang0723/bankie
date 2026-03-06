@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use cqrs_es::persist::ViewRepository;
+use rust_decimal::Decimal;
 use sqlx::PgPool;
 use tracing::error;
 use uuid::Uuid;
@@ -87,6 +88,7 @@ pub trait BankAccountApi: Sync + Send {
         tenant_id: i32,
     ) -> Result<(), anyhow::Error>;
     async fn get_ledger_balance(&self, account_id: Uuid) -> Result<(Money, Money), anyhow::Error>;
+    #[allow(clippy::too_many_arguments)]
     async fn create_transfer_transactions(
         &self,
         source_account_id: Uuid,
@@ -95,6 +97,7 @@ pub trait BankAccountApi: Sync + Send {
         dest_ledger_id: String,
         amount: Money,
         tenant_id: i32,
+        fx_conversion: Option<(Decimal, Decimal, String)>,
     ) -> Result<Uuid, anyhow::Error>;
 }
 
@@ -301,6 +304,7 @@ impl BankAccountApi for BankAccountLogic {
         dest_ledger_id: String,
         amount: Money,
         tenant_id: i32,
+        fx_conversion: Option<(Decimal, Decimal, String)>,
     ) -> Result<Uuid, anyhow::Error> {
         self.database
             .create_transfer_transactions(
@@ -310,6 +314,7 @@ impl BankAccountApi for BankAccountLogic {
                 dest_ledger_id,
                 amount,
                 tenant_id,
+                fx_conversion,
             )
             .await
             .map_err(|e| anyhow!("Failed to create transfer transactions: {}", e))

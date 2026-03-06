@@ -110,6 +110,7 @@ pub trait DatabaseClient {
         dest_ledger_id: String,
         amount: Money,
         tenant_id: i32,
+        fx_conversion: Option<(Decimal, Decimal, String)>,
     ) -> Result<Uuid, Error>;
     async fn move_to_dead_letter(
         &self,
@@ -346,6 +347,7 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
         dest_ledger_id: String,
         amount: Money,
         tenant_id: i32,
+        fx_conversion: Option<(Decimal, Decimal, String)>,
     ) -> Result<Uuid, Error> {
         self.client
             .create_transfer_transactions(
@@ -355,6 +357,7 @@ impl<C: DatabaseClient + Send + Sync> Adapter<C> {
                 dest_ledger_id,
                 amount,
                 tenant_id,
+                fx_conversion,
             )
             .await
     }

@@ -4,7 +4,7 @@ use crate::domain::finance::{
     BalanceSnapshot, JournalEntry, JournalLine, Outbox, SettlementReportRow, Transaction,
     TRANS_DEPOSIT, TRANS_TRANSFER, TRANS_WITHDRAWAL,
 };
-use crate::domain::models::{BankAccountKind, HouseAccount, LedgerAction};
+use crate::domain::models::{BankAccountKind, HouseAccount};
 use crate::domain::tenant::Tenant;
 use crate::domain::user::BankAccountWithLedger;
 use crate::event_sourcing::command::LedgerCommand;
@@ -195,12 +195,12 @@ impl DatabaseClient for PgPool {
 
         // Insert Outbox
         let transaction_type = transaction.transaction_type();
-        let event_type = if transaction_type == LedgerAction::Deposit {
+        let event_type = if transaction_type.is_credit() {
             "LedgerCommand::Credit"
         } else {
             "LedgerCommand::Debit"
         };
-        let cmd = if transaction_type == LedgerAction::Deposit {
+        let cmd = if transaction_type.is_credit() {
             LedgerCommand::Credit {
                 id: Uuid::parse_str(&ledger_id).map_err(|e| Error::Protocol(e.to_string()))?,
                 account_id: transaction.bank_account_id,
@@ -382,6 +382,7 @@ impl DatabaseClient for PgPool {
                 b.payload->>'account_type' as account_type,
                 b.payload->>'kind' as kind,
                 b.payload->>'currency' as currency,
+                b.payload->>'name' as name,
                 b.payload->>'ledger_id' as ledger_id,
                 (l.payload->'available'->>'amount')::numeric as available,
                 (l.payload->'pending'->>'amount')::numeric as pending,
@@ -420,6 +421,7 @@ impl DatabaseClient for PgPool {
                 b.payload->>'account_type' as account_type,
                 b.payload->>'kind' as kind,
                 b.payload->>'currency' as currency,
+                b.payload->>'name' as name,
                 b.payload->>'ledger_id' as ledger_id,
                 (l.payload->'available'->>'amount')::numeric as available,
                 (l.payload->'pending'->>'amount')::numeric as pending,
@@ -682,6 +684,7 @@ impl DatabaseClient for PgPool {
         dest_ledger_id: String,
         amount: Money,
         tenant_id: i32,
+        fx_conversion: Option<(Decimal, Decimal, String)>,
     ) -> Result<Uuid, Error> {
         let mut tx = self.begin().await?;
 
@@ -739,14 +742,17 @@ impl DatabaseClient for PgPool {
 
         let currency_str = amount.currency.to_string();
         let now = chrono::Utc::now();
+        let fx_rate = fx_conversion.as_ref().map(|(r, _, _)| *r);
+        let amount_usd = fx_conversion.as_ref().map(|(_, a, _)| *a);
+        let fx_source = fx_conversion.as_ref().map(|(_, _, s)| s.clone());
 
         // Source transaction (debit/withdrawal side)
         let source_tx_id = Uuid::new_v4();
         let source_ref = crate::common::snowflake::generate_transaction_reference(TRANS_TRANSFER);
         sqlx::query(
             r#"
-            INSERT INTO transactions (id, bank_account_id, transaction_reference, transaction_date, amount, currency, description, metadata, status, journal_entry_id, tenant_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            INSERT INTO transactions (id, bank_account_id, transaction_reference, transaction_date, amount, currency, description, metadata, status, journal_entry_id, tenant_id, fx_rate_to_usd, amount_usd, fx_rate_source)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
         )
         .bind(source_tx_id)
@@ -760,6 +766,9 @@ impl DatabaseClient for PgPool {
         .bind("processing")
         .bind(journal_entry_id)
         .bind(tenant_id)
+        .bind(fx_rate)
+        .bind(amount_usd)
+        .bind(&fx_source)
         .execute(&mut *tx)
         .await?;
 
@@ -768,8 +777,8 @@ impl DatabaseClient for PgPool {
         let dest_ref = crate::common::snowflake::generate_transaction_reference(TRANS_TRANSFER);
         sqlx::query(
             r#"
-            INSERT INTO transactions (id, bank_account_id, transaction_reference, transaction_date, amount, currency, description, metadata, status, journal_entry_id, tenant_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            INSERT INTO transactions (id, bank_account_id, transaction_reference, transaction_date, amount, currency, description, metadata, status, journal_entry_id, tenant_id, fx_rate_to_usd, amount_usd, fx_rate_source)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
         )
         .bind(dest_tx_id)
@@ -783,6 +792,9 @@ impl DatabaseClient for PgPool {
         .bind("processing")
         .bind(journal_entry_id)
         .bind(tenant_id)
+        .bind(fx_rate)
+        .bind(amount_usd)
+        .bind(&fx_source)
         .execute(&mut *tx)
         .await?;
 
@@ -997,6 +1009,7 @@ impl DatabaseClient for PgPool {
                 b.payload->>'account_type' as account_type,
                 b.payload->>'kind' as kind,
                 b.payload->>'currency' as currency,
+                b.payload->>'name' as name,
                 b.payload->>'ledger_id' as ledger_id,
                 (l.payload->'available'->>'amount')::numeric as available,
                 (l.payload->'pending'->>'amount')::numeric as pending,

@@ -12,6 +12,7 @@ use super::models::LedgerAction;
 pub const TRANS_DEPOSIT: &str = "DE";
 pub const TRANS_WITHDRAWAL: &str = "WI";
 pub const TRANS_TRANSFER: &str = "TR";
+pub const TRANS_INTEREST: &str = "IN";
 
 #[derive(FromRow, Debug, Serialize)]
 pub struct Transaction {
@@ -52,14 +53,16 @@ pub struct TransactionWithMoney {
 
 impl Transaction {
     pub fn transaction_type(&self) -> LedgerAction {
-        if self.transaction_reference.contains(TRANS_DEPOSIT) {
+        if self.transaction_reference.starts_with(TRANS_INTEREST) {
+            LedgerAction::Interest
+        } else if self.transaction_reference.starts_with(TRANS_DEPOSIT) {
             LedgerAction::Deposit
-        } else if self.transaction_reference.contains(TRANS_WITHDRAWAL) {
+        } else if self.transaction_reference.starts_with(TRANS_WITHDRAWAL) {
             LedgerAction::Withdraw
-        } else if self.transaction_reference.contains(TRANS_TRANSFER) {
+        } else if self.transaction_reference.starts_with(TRANS_TRANSFER) {
             LedgerAction::Transfer
         } else {
-            LedgerAction::Deposit // safe fallback instead of panic
+            LedgerAction::Deposit // safe fallback
         }
     }
 
@@ -167,9 +170,38 @@ mod tests {
     }
 
     #[test]
+    fn test_transaction_type_interest() {
+        let tx = make_transaction("IN1234567890", dec!(1.23), "USD");
+        assert_eq!(tx.transaction_type(), LedgerAction::Interest);
+        assert!(tx.transaction_type().is_credit());
+    }
+
+    #[test]
     fn test_transaction_type_unknown_fallback() {
         let tx = make_transaction("XX-99999", dec!(10), "USD");
         assert_eq!(tx.transaction_type(), LedgerAction::Deposit); // safe fallback
+    }
+
+    #[test]
+    fn test_is_credit() {
+        assert!(LedgerAction::Deposit.is_credit());
+        assert!(LedgerAction::Interest.is_credit());
+        assert!(!LedgerAction::Withdraw.is_credit());
+        assert!(!LedgerAction::Transfer.is_credit());
+    }
+
+    #[test]
+    fn test_into_transaction_with_money_interest_type() {
+        let tx = make_transaction("IN1234567890", dec!(1.23), "USD");
+        let with_money = tx.into_transaction_with_money();
+        assert_eq!(with_money.transaction_type, "interest");
+    }
+
+    #[test]
+    fn test_into_transaction_with_money_deposit_type() {
+        let tx = make_transaction("DE-12345", dec!(100), "USD");
+        let with_money = tx.into_transaction_with_money();
+        assert_eq!(with_money.transaction_type, "deposit");
     }
 
     #[test]

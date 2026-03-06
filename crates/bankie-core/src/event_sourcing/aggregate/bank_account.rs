@@ -737,6 +737,7 @@ mod aggregate_tests {
             _dest_ledger_id: String,
             _amount: Money,
             _tenant_id: i32,
+            _fx_conversion: Option<(Decimal, Decimal, String)>,
         ) -> Result<Uuid, anyhow::Error> {
             Ok(Uuid::new_v4())
         }

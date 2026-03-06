@@ -1,7 +1,8 @@
 use command::LedgerCommand;
 use event::{BaseEvent, Event};
 use finance::{
-    JournalEntry, JournalLine, Transaction, TRANS_DEPOSIT, TRANS_TRANSFER, TRANS_WITHDRAWAL,
+    JournalEntry, JournalLine, Transaction, TRANS_DEPOSIT, TRANS_INTEREST, TRANS_TRANSFER,
+    TRANS_WITHDRAWAL,
 };
 use models::{BankAccountKind, LedgerAction};
 use rust_decimal::Decimal;
@@ -66,6 +67,51 @@ pub async fn create_transaction_with_journal(
     action_type: LedgerAction,
     tenant_id: i32,
 ) -> Result<Uuid, error::BankAccountError> {
+    create_transaction_with_journal_inner(
+        bank_account,
+        services,
+        amount,
+        house_account_ledger,
+        action_type,
+        tenant_id,
+        None,
+    )
+    .await
+}
+
+/// Like `create_transaction_with_journal` but allows overriding the transaction
+/// reference prefix (e.g. `Some("IN")` for interest postings).
+#[allow(dead_code)]
+pub async fn create_transaction_with_journal_custom_prefix(
+    bank_account: &models::BankAccount,
+    services: &BankAccountServices,
+    amount: Money,
+    house_account_ledger: String,
+    action_type: LedgerAction,
+    tenant_id: i32,
+    prefix: &str,
+) -> Result<Uuid, error::BankAccountError> {
+    create_transaction_with_journal_inner(
+        bank_account,
+        services,
+        amount,
+        house_account_ledger,
+        action_type,
+        tenant_id,
+        Some(prefix),
+    )
+    .await
+}
+
+async fn create_transaction_with_journal_inner(
+    bank_account: &models::BankAccount,
+    services: &BankAccountServices,
+    amount: Money,
+    house_account_ledger: String,
+    action_type: LedgerAction,
+    tenant_id: i32,
+    prefix_override: Option<&str>,
+) -> Result<Uuid, error::BankAccountError> {
     // Validate ledger available is sufficient
     services
         .services
@@ -77,11 +123,12 @@ pub async fn create_transaction_with_journal(
         )
         .await?;
 
-    let key = match action_type {
+    let key = prefix_override.unwrap_or(match action_type {
         LedgerAction::Deposit => TRANS_DEPOSIT,
         LedgerAction::Withdraw => TRANS_WITHDRAWAL,
         LedgerAction::Transfer => TRANS_TRANSFER,
-    };
+        LedgerAction::Interest => TRANS_INTEREST,
+    });
 
     // FX rate conversion: graceful degradation — never blocks the transaction
     let fx_conversion = if let Some(fx_service) = &services.fx_rate_service {
@@ -138,7 +185,7 @@ pub async fn create_transaction_with_journal(
         tenant_id,
     };
 
-    if action_type == LedgerAction::Deposit {
+    if action_type.is_credit() {
         house_account_journal_line.debit_amount = amount.amount;
         user_account_journal_line.credit_amount = amount.amount;
     } else {
@@ -184,6 +231,16 @@ pub async fn create_transfer_transactions(
     let source_account_id = Uuid::parse_str(&source_account.id)
         .map_err(|e| error::BankAccountError::from(e.to_string().as_str()))?;
 
+    // FX rate conversion: graceful degradation — never blocks the transaction
+    let fx_conversion = if let Some(fx_service) = &services.fx_rate_service {
+        fx_service
+            .convert_to_usd(amount.amount, &amount.currency.to_string())
+            .await
+            .map(|c| (c.fx_rate_to_usd, c.amount_usd, c.source.to_string()))
+    } else {
+        None
+    };
+
     services
         .services
         .create_transfer_transactions(
@@ -193,6 +250,7 @@ pub async fn create_transfer_transactions(
             dest_ledger_id,
             amount,
             tenant_id,
+            fx_conversion,
         )
         .await
         .map_err(|_| "transfer transaction creation failed".into())
