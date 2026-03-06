@@ -46,6 +46,14 @@ pub enum LedgerAction {
     Deposit,
     Withdraw,
     Transfer,
+    Interest,
+}
+
+impl LedgerAction {
+    /// Whether this action credits the user account (deposit-like).
+    pub fn is_credit(&self) -> bool {
+        matches!(self, LedgerAction::Deposit | LedgerAction::Interest)
+    }
 }
 
 impl fmt::Display for LedgerAction {
@@ -54,6 +62,7 @@ impl fmt::Display for LedgerAction {
             LedgerAction::Deposit => write!(f, "deposit"),
             LedgerAction::Withdraw => write!(f, "withdrawal"),
             LedgerAction::Transfer => write!(f, "transfer"),
+            LedgerAction::Interest => write!(f, "interest"),
         }
     }
 }

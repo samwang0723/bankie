@@ -1,7 +1,8 @@
 use command::LedgerCommand;
 use event::{BaseEvent, Event};
 use finance::{
-    JournalEntry, JournalLine, Transaction, TRANS_DEPOSIT, TRANS_TRANSFER, TRANS_WITHDRAWAL,
+    JournalEntry, JournalLine, Transaction, TRANS_DEPOSIT, TRANS_INTEREST, TRANS_TRANSFER,
+    TRANS_WITHDRAWAL,
 };
 use models::{BankAccountKind, LedgerAction};
 use rust_decimal::Decimal;
@@ -126,6 +127,7 @@ async fn create_transaction_with_journal_inner(
         LedgerAction::Deposit => TRANS_DEPOSIT,
         LedgerAction::Withdraw => TRANS_WITHDRAWAL,
         LedgerAction::Transfer => TRANS_TRANSFER,
+        LedgerAction::Interest => TRANS_INTEREST,
     });
 
     // FX rate conversion: graceful degradation — never blocks the transaction
@@ -183,7 +185,7 @@ async fn create_transaction_with_journal_inner(
         tenant_id,
     };
 
-    if action_type == LedgerAction::Deposit {
+    if action_type.is_credit() {
         house_account_journal_line.debit_amount = amount.amount;
         user_account_journal_line.credit_amount = amount.amount;
     } else {

@@ -4,7 +4,7 @@ use crate::domain::finance::{
     BalanceSnapshot, JournalEntry, JournalLine, Outbox, SettlementReportRow, Transaction,
     TRANS_DEPOSIT, TRANS_TRANSFER, TRANS_WITHDRAWAL,
 };
-use crate::domain::models::{BankAccountKind, HouseAccount, LedgerAction};
+use crate::domain::models::{BankAccountKind, HouseAccount};
 use crate::domain::tenant::Tenant;
 use crate::domain::user::BankAccountWithLedger;
 use crate::event_sourcing::command::LedgerCommand;
@@ -195,12 +195,12 @@ impl DatabaseClient for PgPool {
 
         // Insert Outbox
         let transaction_type = transaction.transaction_type();
-        let event_type = if transaction_type == LedgerAction::Deposit {
+        let event_type = if transaction_type.is_credit() {
             "LedgerCommand::Credit"
         } else {
             "LedgerCommand::Debit"
         };
-        let cmd = if transaction_type == LedgerAction::Deposit {
+        let cmd = if transaction_type.is_credit() {
             LedgerCommand::Credit {
                 id: Uuid::parse_str(&ledger_id).map_err(|e| Error::Protocol(e.to_string()))?,
                 account_id: transaction.bank_account_id,
