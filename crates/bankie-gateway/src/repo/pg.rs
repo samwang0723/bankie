@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
+
+use crate::config::DbPools;
 use uuid::Uuid;
 
 use super::RepoError;
@@ -134,12 +136,16 @@ fn status_str(status: &KeyStatus) -> &'static str {
 // ─── PgOrgRepository ───
 
 pub struct PgOrgRepository {
-    pool: PgPool,
+    write_pool: PgPool,
+    read_pool: PgPool,
 }
 
 impl PgOrgRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pools: &DbPools) -> Self {
+        Self {
+            write_pool: pools.write().clone(),
+            read_pool: pools.read().clone(),
+        }
     }
 }
 
@@ -163,7 +169,7 @@ impl super::org::OrgRepository for PgOrgRepository {
         .bind(id)
         .bind(&name)
         .bind(&slug)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -179,7 +185,7 @@ impl super::org::OrgRepository for PgOrgRepository {
             "#,
         )
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -195,7 +201,7 @@ impl super::org::OrgRepository for PgOrgRepository {
             "#,
         )
         .bind(&slug)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -227,7 +233,7 @@ impl super::org::OrgRepository for PgOrgRepository {
         .bind(id)
         .bind(name)
         .bind(status_str)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -238,12 +244,16 @@ impl super::org::OrgRepository for PgOrgRepository {
 // ─── PgMemberRepository ───
 
 pub struct PgMemberRepository {
-    pool: PgPool,
+    write_pool: PgPool,
+    read_pool: PgPool,
 }
 
 impl PgMemberRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pools: &DbPools) -> Self {
+        Self {
+            write_pool: pools.write().clone(),
+            read_pool: pools.read().clone(),
+        }
     }
 }
 
@@ -272,7 +282,7 @@ impl super::member::MemberRepository for PgMemberRepository {
         .bind(&email)
         .bind(&password_hash)
         .bind(&role)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.write_pool)
         .await
         .map_err(|e| {
             if e.to_string().contains("duplicate key")
@@ -297,7 +307,7 @@ impl super::member::MemberRepository for PgMemberRepository {
             "#,
         )
         .bind(&email)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -314,7 +324,7 @@ impl super::member::MemberRepository for PgMemberRepository {
             "#,
         )
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -332,7 +342,7 @@ impl super::member::MemberRepository for PgMemberRepository {
             "#,
         )
         .bind(org_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -354,7 +364,7 @@ impl super::member::MemberRepository for PgMemberRepository {
         )
         .bind(id)
         .bind(org_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -373,7 +383,7 @@ impl super::member::MemberRepository for PgMemberRepository {
         )
         .bind(id)
         .bind(&role)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -396,7 +406,7 @@ impl super::member::MemberRepository for PgMemberRepository {
         )
         .bind(id)
         .bind(&status)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -411,7 +421,7 @@ impl super::member::MemberRepository for PgMemberRepository {
             "#,
         )
         .bind(id)
-        .execute(&self.pool)
+        .execute(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -447,7 +457,7 @@ impl super::member::MemberRepository for PgMemberRepository {
         .bind(&status)
         .bind(invite_token_hash.as_deref())
         .bind(invite_expires_at)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.write_pool)
         .await
         .map_err(|e| {
             if e.to_string().contains("duplicate key")
@@ -475,7 +485,7 @@ impl super::member::MemberRepository for PgMemberRepository {
             "#,
         )
         .bind(&hash)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -505,7 +515,7 @@ impl super::member::MemberRepository for PgMemberRepository {
         .bind(id)
         .bind(&name)
         .bind(&password_hash)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -532,7 +542,7 @@ impl super::member::MemberRepository for PgMemberRepository {
         .bind(id)
         .bind(&invite_token_hash)
         .bind(invite_expires_at)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -543,12 +553,16 @@ impl super::member::MemberRepository for PgMemberRepository {
 // ─── PgApiKeyRepository ───
 
 pub struct PgApiKeyRepository {
-    pool: PgPool,
+    write_pool: PgPool,
+    read_pool: PgPool,
 }
 
 impl PgApiKeyRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pools: &DbPools) -> Self {
+        Self {
+            write_pool: pools.write().clone(),
+            read_pool: pools.read().clone(),
+        }
     }
 }
 
@@ -581,7 +595,7 @@ impl super::api_key::ApiKeyRepository for PgApiKeyRepository {
         .bind(&key_prefix)
         .bind(&key_hash)
         .bind(&scopes_json)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -599,7 +613,7 @@ impl super::api_key::ApiKeyRepository for PgApiKeyRepository {
         )
         .bind(id)
         .bind(org_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -616,7 +630,7 @@ impl super::api_key::ApiKeyRepository for PgApiKeyRepository {
             "#,
         )
         .bind(&key_hash)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -634,7 +648,7 @@ impl super::api_key::ApiKeyRepository for PgApiKeyRepository {
             "#,
         )
         .bind(org_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -659,7 +673,7 @@ impl super::api_key::ApiKeyRepository for PgApiKeyRepository {
         .bind(id)
         .bind(status_str(&status))
         .bind(grace_expires_at)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -677,7 +691,7 @@ impl super::api_key::ApiKeyRepository for PgApiKeyRepository {
               AND grace_expires_at < now()
             "#,
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -717,12 +731,16 @@ impl From<AuditLogRow> for AuditLogEntry {
 }
 
 pub struct PgDashboardRepository {
-    pool: PgPool,
+    write_pool: PgPool,
+    read_pool: PgPool,
 }
 
 impl PgDashboardRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pools: &DbPools) -> Self {
+        Self {
+            write_pool: pools.write().clone(),
+            read_pool: pools.read().clone(),
+        }
     }
 }
 
@@ -744,7 +762,7 @@ impl super::dashboard::DashboardRepository for PgDashboardRepository {
         )
         .bind(org_id)
         .bind(since)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -766,7 +784,7 @@ impl super::dashboard::DashboardRepository for PgDashboardRepository {
         )
         .bind(&key_ids)
         .bind(since)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -789,7 +807,7 @@ impl super::dashboard::DashboardRepository for PgDashboardRepository {
         )
         .bind(org_id)
         .bind(limit)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -810,7 +828,7 @@ impl super::dashboard::DashboardRepository for PgDashboardRepository {
         .bind(entry.resource_id.as_deref())
         .bind(&entry.changes)
         .bind(entry.client_ip.as_deref())
-        .execute(&self.pool)
+        .execute(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -839,7 +857,7 @@ impl super::dashboard::DashboardRepository for PgDashboardRepository {
         .bind(filters.action.as_deref())
         .bind(filters.from)
         .bind(filters.to)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -864,7 +882,7 @@ impl super::dashboard::DashboardRepository for PgDashboardRepository {
         .bind(filters.to)
         .bind(limit)
         .bind(offset)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1057,12 +1075,16 @@ impl From<PendingDeliveryRow> for PendingDelivery {
 }
 
 pub struct PgWebhookRepository {
-    pool: PgPool,
+    write_pool: PgPool,
+    read_pool: PgPool,
 }
 
 impl PgWebhookRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pools: &DbPools) -> Self {
+        Self {
+            write_pool: pools.write().clone(),
+            read_pool: pools.read().clone(),
+        }
     }
 }
 
@@ -1094,7 +1116,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
         .bind(&signing_secret)
         .bind(&event_types_json)
         .bind(description.as_deref())
-        .fetch_one(&self.pool)
+        .fetch_one(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1116,7 +1138,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
         )
         .bind(id)
         .bind(org_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1134,7 +1156,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
             "#,
         )
         .bind(org_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1172,7 +1194,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
         .bind(event_types_json)
         .bind(description.as_deref())
         .bind(status.as_deref())
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1183,7 +1205,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
         // Delete deliveries first (FK constraint), then endpoint
         sqlx::query(r#"DELETE FROM portal.webhook_deliveries WHERE endpoint_id = $1"#)
             .bind(id)
-            .execute(&self.pool)
+            .execute(&self.write_pool)
             .await
             .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1191,7 +1213,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
             sqlx::query(r#"DELETE FROM portal.webhook_endpoints WHERE id = $1 AND org_id = $2"#)
                 .bind(id)
                 .bind(org_id)
-                .execute(&self.pool)
+                .execute(&self.write_pool)
                 .await
                 .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1219,7 +1241,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
         .bind(id)
         .bind(org_id)
         .bind(&new_secret)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1238,7 +1260,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
             "#,
         )
         .bind(id)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1254,7 +1276,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
             "#,
         )
         .bind(id)
-        .execute(&self.pool)
+        .execute(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1270,7 +1292,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
             "#,
         )
         .bind(id)
-        .execute(&self.pool)
+        .execute(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1297,7 +1319,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
         )
         .bind(tenant_id)
         .bind(&event_type)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1318,7 +1340,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
             "#,
         )
         .bind(limit)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1337,7 +1359,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
             "#,
         )
         .bind(&ids)
-        .execute(&self.pool)
+        .execute(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1370,7 +1392,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
         .bind(&event_type)
         .bind(&event_source_id)
         .bind(&payload)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.write_pool)
         .await
         .map_err(|e| {
             if e.to_string().contains("duplicate key")
@@ -1403,7 +1425,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
             "#,
         )
         .bind(limit)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1426,7 +1448,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
         .bind(id)
         .bind(http_status)
         .bind(latency_ms)
-        .execute(&self.pool)
+        .execute(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1458,7 +1480,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
         .bind(latency_ms)
         .bind(response_body.as_deref())
         .bind(next_retry_at)
-        .execute(&self.pool)
+        .execute(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1474,7 +1496,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
             "#,
         )
         .bind(id)
-        .execute(&self.pool)
+        .execute(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1500,7 +1522,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
             )
             .bind(endpoint_id)
             .bind(status_filter.as_deref())
-            .fetch_one(&self.pool)
+            .fetch_one(&self.read_pool)
             .await
             .map_err(|e| RepoError::Database(e.to_string()))?
         } else {
@@ -1511,7 +1533,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
                 "#,
             )
             .bind(endpoint_id)
-            .fetch_one(&self.pool)
+            .fetch_one(&self.read_pool)
             .await
             .map_err(|e| RepoError::Database(e.to_string()))?
         };
@@ -1533,7 +1555,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
             .bind(status_filter.as_deref())
             .bind(per_page)
             .bind(offset)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.read_pool)
             .await
             .map_err(|e| RepoError::Database(e.to_string()))?
         } else {
@@ -1551,7 +1573,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
             .bind(endpoint_id)
             .bind(per_page)
             .bind(offset)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.read_pool)
             .await
             .map_err(|e| RepoError::Database(e.to_string()))?
         };
@@ -1575,7 +1597,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
         )
         .bind(id)
         .bind(endpoint_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1598,7 +1620,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
             "#,
         )
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.write_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1635,7 +1657,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
         .bind(filters.path.as_deref())
         .bind(filters.from)
         .bind(filters.to)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -1662,7 +1684,7 @@ impl super::webhook::WebhookRepository for PgWebhookRepository {
         .bind(filters.to)
         .bind(per_page)
         .bind(offset)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 

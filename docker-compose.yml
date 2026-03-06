@@ -9,6 +9,9 @@ services:
     environment:
       - POSTGRESQL_PASSWORD=${POSTGRES_PASSWORD:-localpostgres}
       - POSTGRESQL_POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-localpostgres}
+      - POSTGRESQL_REPLICATION_MODE=master
+      - POSTGRESQL_REPLICATION_USER=repl_user
+      - POSTGRESQL_REPLICATION_PASSWORD=${REPL_PASSWORD:-localreplpass}
       - POSTGRESQL_SHARED_BUFFERS=128MB
       - POSTGRESQL_WORK_MEM=32MB
       - POSTGRESQL_MAINTENANCE_WORK_MEM=64MB
@@ -16,6 +19,43 @@ services:
       - POSTGRESQL_MAX_CONNECTIONS=100
       - POSTGRESQL_FSYNC=off
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - bankie-net
+
+  postgresql-replica:
+    container_name: bankie-postgres-replica
+    image: docker.io/bitnami/postgresql:latest
+    ports:
+      - '${DB_REPLICA_PORT:-5433}:5432'
+    volumes:
+      - postgresql_replica_data:/bitnami/postgresql
+    environment:
+      - POSTGRESQL_REPLICATION_MODE=slave
+      - POSTGRESQL_REPLICATION_USER=repl_user
+      - POSTGRESQL_REPLICATION_PASSWORD=${REPL_PASSWORD:-localreplpass}
+      - POSTGRESQL_MASTER_HOST=bankie-postgres
+      - POSTGRESQL_MASTER_PORT_NUMBER=5432
+      - POSTGRESQL_PASSWORD=${POSTGRES_PASSWORD:-localpostgres}
+      - POSTGRESQL_POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-localpostgres}
+      - POSTGRESQL_SHARED_BUFFERS=128MB
+      - POSTGRESQL_WORK_MEM=32MB
+      - POSTGRESQL_EFFECTIVE_CACHE_SIZE=512MB
+      - POSTGRESQL_MAX_CONNECTIONS=100
+    restart: unless-stopped
+    depends_on:
+      postgresql:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -163,6 +203,8 @@ services:
     depends_on:
       postgresql:
         condition: service_healthy
+      postgresql-replica:
+        condition: service_healthy
       redis:
         condition: service_healthy
       migrations:
@@ -260,6 +302,8 @@ services:
 
 volumes:
   postgresql_data:
+    driver: local
+  postgresql_replica_data:
     driver: local
   redis_data:
     driver: local
