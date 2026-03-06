@@ -1,51 +1,33 @@
-use auth::jwt::{generate_jwt, generate_secret_key};
-use auth::middleware::authorize;
-use axum::Router;
-use axum::{middleware, routing::get, routing::post, routing::put};
-use clap::Parser;
-use clap_derive::Parser;
-use common::idempotency::idempotency_check;
-use event_sourcing::command::BankAccountCommand;
-use interest::accrual_job::create_accrual_job;
-use interest::posting_job::create_interest_posting_job;
-use interest::route::{
+use bankie_core::auth::jwt::{generate_jwt, generate_secret_key};
+use bankie_core::auth::middleware::authorize;
+use bankie_core::common::idempotency::idempotency_check;
+use bankie_core::event_sourcing::command::BankAccountCommand;
+use bankie_core::interest::route::{
     create_rate_config, estimate_interest_handler, get_rate_config, list_accruals, list_postings,
     list_rate_configs, replace_rate_tiers, update_rate_config,
 };
-use job::{create_balance_snapshot_job, create_ledger_job};
-use route::{
+use bankie_core::route::{
     accounts_query_handler, balance_history_handler, bank_account_by_number_handler,
     bank_account_command_handler, bank_account_query_handler, health_check_handler,
     house_account_create_handler, house_account_query_handler, ledger_query_handler,
     readiness_check_handler, settlement_report_handler, sub_account_query_handler,
     transaction_query_handler, user_query_handler,
 };
+use bankie_core::state::new_application_state;
+use bankie_core::SharedState;
+
+use axum::Router;
+use axum::{middleware, routing::get, routing::post, routing::put};
+use clap::Parser;
+use clap_derive::Parser;
 use sqlx::PgPool;
-use state::{new_application_state, ApplicationState};
-use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::task;
-use tokio_cron_scheduler::JobScheduler;
 use tower_http::add_extension::AddExtensionLayer;
 use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
-
-mod auth;
-mod command;
-mod common;
-mod configs;
-mod domain;
-mod event_sourcing;
-mod house_account;
-mod interest;
-mod job;
-mod report;
-mod repository;
-mod route;
-mod service;
-mod state;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -58,9 +40,6 @@ struct Args {
     #[arg(short, long)]
     service: Option<String>,
 }
-
-// Wrap ApplicationState in Arc for thread-safe sharing
-type SharedState = Arc<ApplicationState<PgPool>>;
 
 /// Command channel capacity — bounded to prevent OOM under load (H1 fix).
 const COMMAND_CHANNEL_CAPACITY: usize = 10_000;
@@ -123,61 +102,6 @@ async fn main() {
             task::spawn(async move {
                 process_commands(command_state, rx).await;
             });
-
-            // Add cron job for update ledger from outbox events
-            let sched = match JobScheduler::new().await {
-                Ok(s) => s,
-                Err(e) => {
-                    error!("Failed to create job scheduler: {:?}", e);
-                    return;
-                }
-            };
-            match create_ledger_job(state.clone()).await {
-                Ok(job) => {
-                    if let Err(e) = sched.add(job).await {
-                        error!("Failed to add ledger job: {:?}", e);
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to create ledger job: {:?}", e);
-                }
-            }
-            // Daily balance snapshot job
-            match create_balance_snapshot_job(state.clone()).await {
-                Ok(job) => {
-                    if let Err(e) = sched.add(job).await {
-                        error!("Failed to add balance snapshot job: {:?}", e);
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to create balance snapshot job: {:?}", e);
-                }
-            }
-            // Daily interest accrual job
-            match create_accrual_job(state.clone()).await {
-                Ok(job) => {
-                    if let Err(e) = sched.add(job).await {
-                        error!("Failed to add interest accrual job: {:?}", e);
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to create interest accrual job: {:?}", e);
-                }
-            }
-            // Daily interest posting job
-            match create_interest_posting_job(state.clone()).await {
-                Ok(job) => {
-                    if let Err(e) = sched.add(job).await {
-                        error!("Failed to add interest posting job: {:?}", e);
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to create interest posting job: {:?}", e);
-                }
-            }
-            if let Err(e) = sched.start().await {
-                error!("Failed to start scheduler: {:?}", e);
-            }
 
             // Configure Axum routes
             let compression_layer: CompressionLayer = CompressionLayer::new();

@@ -190,6 +190,41 @@ services:
     networks:
       - bankie-net
 
+  bankie-worker:
+    container_name: bankie-worker
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    environment:
+      - ENV=docker
+      - DB_PASSWD=${DB_PASSWD:-localpass}
+      - JWT_SECRET=${JWT_SECRET:-LocalDevSecretKey1234567890abcdefghijklmnop}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-localredispass}
+      - RUST_LOG=${RUST_LOG:-info}
+      - SQLX_OFFLINE=true
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    restart: unless-stopped
+    networks:
+      - bankie-net
+
   portal-spa:
     container_name: portal-spa
     build:

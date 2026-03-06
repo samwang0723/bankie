@@ -1,5 +1,5 @@
 .PHONY: help test test-coverage lint ci changelog-gen changelog-commit docker-build \
-       local-setup local-infra local-init-db local-migrate local-build local-start local-gateway local-portal local-stop local-jwt local-demo local-e2e local-interactive local-core-test \
+       local-setup local-infra local-init-db local-migrate local-build local-start local-worker local-gateway local-portal local-stop local-jwt local-demo local-e2e local-interactive local-core-test \
        docker-up docker-down docker-logs docker-clean docker-jwt docker-e2e docker-interactive docker-core-test
 
 help: ## show this help
@@ -33,7 +33,7 @@ SERVICE      ?= demo-service
 
 DATABASE_URL ?= postgres://$(DB_USER):$(DB_PASSWD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)
 
-local-setup: local-infra local-init-db local-migrate local-build local-jwt-gen local-start ## one-shot: infra + db + build + jwt + server
+local-setup: local-infra local-init-db local-migrate local-build local-jwt-gen local-start local-worker ## one-shot: infra + db + build + jwt + server + worker
 	@echo ""
 	@echo "=========================================="
 	@echo "  Bankie is running on http://localhost:3030"
@@ -116,6 +116,12 @@ local-start: ## start the bankie server (background)
 	done
 	@echo "[local] Server ready at http://localhost:3030"
 
+local-worker: ## start the worker process (background, runs cron jobs)
+	@echo "[local] Starting bankie-worker..."
+	@DB_PASSWD=$(DB_PASSWD) JWT_SECRET=$(JWT_SECRET) ENV=local RUST_LOG=info \
+		cargo run --bin bankie-worker &
+	@echo "[local] Worker started (cron jobs running in background)"
+
 local-gateway: ## start the gateway server (background, requires bankie running)
 	@echo "[local] Starting gateway..."
 	@DB_PASSWD=$(DB_PASSWD) JWT_SECRET=$(JWT_SECRET) ENV=local RUST_LOG=info \
@@ -132,9 +138,10 @@ local-portal: ## serve portal SPA locally (requires npm)
 	@cd portal-spa && npm run dev &
 	@echo "[local] Portal SPA at http://localhost:5173"
 
-local-stop: ## stop server + gateway + tear down infra
-	@echo "[local] Stopping bankie server and gateway..."
+local-stop: ## stop server + worker + gateway + tear down infra
+	@echo "[local] Stopping bankie server, worker, and gateway..."
 	@-pkill -f "bankie.*--mode server" 2>/dev/null || true
+	@-pkill -f "bankie-worker" 2>/dev/null || true
 	@-pkill -f "bankie-gateway" 2>/dev/null || true
 	@echo "[local] Stopping Docker containers..."
 	@docker compose -f docker-compose.local.yml down

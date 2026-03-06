@@ -36,9 +36,17 @@ uuid = { workspace = true }
 redis = { workspace = true }
 reqwest = { workspace = true }
 
+[lib]
+name = "bankie_core"
+path = "src/lib.rs"
+
 [[bin]]
 name = "bankie"
 path = "src/main.rs"
+
+[[bin]]
+name = "bankie-worker"
+path = "src/worker.rs"
 
 [[bin]]
 name = "migrations"
