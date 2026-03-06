@@ -11,7 +11,7 @@ use tracing::info;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-use bankie_gateway::config::SETTINGS;
+use bankie_gateway::config::{DbPools, SETTINGS};
 use bankie_gateway::job;
 use bankie_gateway::middleware;
 use bankie_gateway::openapi::ApiDoc;
@@ -39,12 +39,31 @@ async fn main() {
     let settings = SETTINGS.clone();
     let addr = settings.listen_addr.clone();
 
-    // Connect to database
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(10)
+    // Connect to primary database (writes + lag-sensitive reads)
+    let primary_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5)
+        .min_connections(1)
         .connect(&settings.database.connection_string())
         .await
-        .expect("Failed to connect to database");
+        .expect("Failed to connect to primary database");
+
+    // Connect to read replica (if configured)
+    let replica_pool = if let Some(replica_conn) = settings.database.replica_connection_string() {
+        info!("Connecting to read replica database");
+        Some(
+            sqlx::postgres::PgPoolOptions::new()
+                .max_connections(10)
+                .min_connections(2)
+                .connect(&replica_conn)
+                .await
+                .expect("Failed to connect to read replica database"),
+        )
+    } else {
+        info!("No read replica configured — using primary for all queries");
+        None
+    };
+
+    let db_pools = DbPools::new(primary_pool, replica_pool);
 
     // Connect to Redis
     let redis_client = redis::Client::open(settings.redis.connection_string())
@@ -52,11 +71,12 @@ async fn main() {
 
     // Portal state with SQL-backed repositories
     let portal_state = Arc::new(PortalState {
-        org_repo: Arc::new(PgOrgRepository::new(pool.clone())),
-        member_repo: Arc::new(PgMemberRepository::new(pool.clone())),
-        api_key_repo: Arc::new(PgApiKeyRepository::new(pool.clone())),
-        dashboard_repo: Arc::new(PgDashboardRepository::new(pool.clone())),
-        webhook_repo: Arc::new(PgWebhookRepository::new(pool.clone())),
+        org_repo: Arc::new(PgOrgRepository::new(&db_pools)),
+        member_repo: Arc::new(PgMemberRepository::new(&db_pools)),
+        api_key_repo: Arc::new(PgApiKeyRepository::new(&db_pools)),
+        dashboard_repo: Arc::new(PgDashboardRepository::new(&db_pools)),
+        webhook_repo: Arc::new(PgWebhookRepository::new(&db_pools)),
+        db_pools: db_pools.clone(),
         jwt_secret: settings.jwt_secret.clone(),
         redis_client: Some(redis_client.clone()),
     });
@@ -69,6 +89,8 @@ async fn main() {
 
     // Build the proxied API routes with full middleware stack:
     //   api_key_resolver → rate_limiter → jwt_minter → api_logger → proxy_handler
+    // api_key_resolver is a read (lookup by hash) — use read pool
+    // api_logger inserts rows — use write pool
     let api_routes = Router::new()
         .fallback(any(proxy::proxy_handler))
         .layer(axum_middleware::from_fn(middleware::api_logger::api_logger))
@@ -80,7 +102,7 @@ async fn main() {
             middleware::api_key_resolver::api_key_resolver,
         ))
         .layer(axum::extract::Extension(redis_client))
-        .layer(axum::extract::Extension(pool))
+        .layer(axum::extract::Extension(db_pools))
         .with_state(settings.clone());
 
     let app = Router::new()

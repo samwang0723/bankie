@@ -1,6 +1,7 @@
 use config::Config;
 use lazy_static::lazy_static;
 use serde::Deserialize;
+use sqlx::PgPool;
 use tracing::info;
 
 /// Gateway-specific configuration.
@@ -24,6 +25,15 @@ pub struct DatabaseSettings {
     pub dbname: String,
     #[serde(skip_deserializing)]
     pub dbpasswd: String,
+    pub read_replica: Option<ReadReplicaSettings>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReadReplicaSettings {
+    pub host: String,
+    pub port: String,
+    pub user: Option<String>,
+    pub dbname: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -123,6 +133,71 @@ impl DatabaseSettings {
             self.user, self.dbpasswd, self.host, self.port, self.dbname
         )
     }
+
+    pub fn replica_connection_string(&self) -> Option<String> {
+        self.read_replica.as_ref().map(|r| {
+            let user = r.user.as_deref().unwrap_or(&self.user);
+            let dbname = r.dbname.as_deref().unwrap_or(&self.dbname);
+            format!(
+                "postgres://{}:{}@{}:{}/{}",
+                user, self.dbpasswd, r.host, r.port, dbname
+            )
+        })
+    }
+}
+
+impl ReadReplicaSettings {
+    pub fn connection_string(&self, primary: &DatabaseSettings) -> String {
+        let user = self.user.as_deref().unwrap_or(&primary.user);
+        let dbname = self.dbname.as_deref().unwrap_or(&primary.dbname);
+        format!(
+            "postgres://{}:{}@{}:{}/{}",
+            user, primary.dbpasswd, self.host, self.port, dbname
+        )
+    }
+}
+
+/// Holds primary (write) and replica (read) database connection pools.
+/// If no replica is configured, both point to the same primary pool.
+#[derive(Clone)]
+pub struct DbPools {
+    primary: PgPool,
+    replica: PgPool,
+}
+
+impl DbPools {
+    pub fn new(primary: PgPool, replica: Option<PgPool>) -> Self {
+        let replica = replica.unwrap_or_else(|| primary.clone());
+        Self { primary, replica }
+    }
+
+    /// Read pool — for queries that tolerate replication lag.
+    pub fn read(&self) -> &PgPool {
+        &self.replica
+    }
+
+    /// Write pool — for mutations and lag-sensitive reads.
+    pub fn write(&self) -> &PgPool {
+        &self.primary
+    }
+
+    /// Create a dummy `DbPools` for unit tests that use mock repositories.
+    /// The pools are not connected to any database.
+    #[cfg(test)]
+    pub fn test_dummy() -> Self {
+        let opts = sqlx::postgres::PgConnectOptions::new()
+            .host("localhost")
+            .port(5432)
+            .username("test")
+            .database("test");
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_lazy_with(opts);
+        Self {
+            primary: pool.clone(),
+            replica: pool,
+        }
+    }
 }
 
 impl RedisSettings {
@@ -139,18 +214,74 @@ impl RedisSettings {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_database_connection_string() {
-        let db = DatabaseSettings {
+    fn test_db_settings() -> DatabaseSettings {
+        DatabaseSettings {
             host: "localhost".to_string(),
             port: "5432".to_string(),
             user: "gw_user".to_string(),
             dbname: "bankie_main".to_string(),
             dbpasswd: "secret".to_string(),
-        };
+            read_replica: None,
+        }
+    }
+
+    #[test]
+    fn test_database_connection_string() {
+        let db = test_db_settings();
         assert_eq!(
             db.connection_string(),
             "postgres://gw_user:secret@localhost:5432/bankie_main"
+        );
+    }
+
+    #[test]
+    fn test_replica_connection_string_with_defaults() {
+        let mut db = test_db_settings();
+        db.read_replica = Some(ReadReplicaSettings {
+            host: "replica-host".to_string(),
+            port: "5433".to_string(),
+            user: None,
+            dbname: None,
+        });
+        assert_eq!(
+            db.replica_connection_string().unwrap(),
+            "postgres://gw_user:secret@replica-host:5433/bankie_main"
+        );
+    }
+
+    #[test]
+    fn test_replica_connection_string_with_overrides() {
+        let mut db = test_db_settings();
+        db.read_replica = Some(ReadReplicaSettings {
+            host: "replica-host".to_string(),
+            port: "5433".to_string(),
+            user: Some("replica_user".to_string()),
+            dbname: Some("replica_db".to_string()),
+        });
+        assert_eq!(
+            db.replica_connection_string().unwrap(),
+            "postgres://replica_user:secret@replica-host:5433/replica_db"
+        );
+    }
+
+    #[test]
+    fn test_replica_connection_string_none_when_no_replica() {
+        let db = test_db_settings();
+        assert!(db.replica_connection_string().is_none());
+    }
+
+    #[test]
+    fn test_read_replica_settings_connection_string() {
+        let primary = test_db_settings();
+        let replica = ReadReplicaSettings {
+            host: "replica-host".to_string(),
+            port: "5433".to_string(),
+            user: None,
+            dbname: None,
+        };
+        assert_eq!(
+            replica.connection_string(&primary),
+            "postgres://gw_user:secret@replica-host:5433/bankie_main"
         );
     }
 

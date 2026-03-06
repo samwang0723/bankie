@@ -8,6 +8,7 @@ use axum::{
 use sqlx::PgPool;
 use tracing::warn;
 
+use crate::config::DbPools;
 use crate::repo::api_key::ResolvedApiKey;
 
 /// Sensitive query parameter names that should be stripped from logged paths.
@@ -37,10 +38,10 @@ struct ApiLogEntry {
 /// - IP addresses are masked to /24 (IPv4) or /48 (IPv6)
 /// - Sensitive query params (token, secret, password, key) are stripped
 ///
-/// Requires `PgPool` and `ResolvedApiKey` in extensions.
+/// Requires `DbPools` and `ResolvedApiKey` in extensions.
 /// Logging failures are best-effort (warned, not propagated).
 pub async fn api_logger(req: Request<Body>, next: Next) -> Response<Body> {
-    let pool = req.extensions().get::<PgPool>().cloned();
+    let pools = req.extensions().get::<DbPools>().cloned();
     let resolved_key = req.extensions().get::<ResolvedApiKey>().cloned();
     let method = req.method().to_string();
     let raw_path = req
@@ -55,8 +56,8 @@ pub async fn api_logger(req: Request<Body>, next: Next) -> Response<Body> {
     let status_code = response.status().as_u16() as i32;
     let latency_ms = start.elapsed().as_millis() as i32;
 
-    // Best-effort async log insert with PII redaction
-    if let (Some(pool), Some(key)) = (pool, resolved_key) {
+    // Best-effort async log insert with PII redaction (write operation → use write pool)
+    if let (Some(pools), Some(key)) = (pools, resolved_key) {
         let entry = ApiLogEntry {
             api_key_id: key.api_key_id,
             tenant_id: key.tenant_id,
@@ -66,8 +67,9 @@ pub async fn api_logger(req: Request<Body>, next: Next) -> Response<Body> {
             latency_ms,
             client_ip: client_ip.as_deref().map(redact_ip),
         };
+        let write_pool = pools.write().clone();
         tokio::spawn(async move {
-            if let Err(e) = insert_api_log(&pool, &entry).await {
+            if let Err(e) = insert_api_log(&write_pool, &entry).await {
                 warn!("Failed to insert API log: {}", e);
             }
         });
