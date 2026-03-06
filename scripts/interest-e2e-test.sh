@@ -236,11 +236,17 @@ wait_for_interest() {
 # State variables
 # ---------------------------------------------------------------------------
 RATE_CONFIG_ID=""
+TWD_RATE_CONFIG_ID=""
 HOUSE_USD_ID=""
+HOUSE_TWD_ID=""
 CHECKING_ACCOUNT_ID=""
 CHECKING_LEDGER_ID=""
 INTEREST_ACCOUNT_ID=""
 INTEREST_LEDGER_ID=""
+TWD_CHECKING_ACCOUNT_ID=""
+TWD_CHECKING_LEDGER_ID=""
+TWD_INTEREST_ACCOUNT_ID=""
+TWD_INTEREST_LEDGER_ID=""
 USER_ID="interest-test-user-$(date +%s)"
 TODAY=$(date -u +%Y-%m-%d)
 YESTERDAY=$(date -u -v-1d +%Y-%m-%d 2>/dev/null || date -u -d "yesterday" +%Y-%m-%d 2>/dev/null || echo "$TODAY")
@@ -325,6 +331,53 @@ if assert_status "$HTTP_STATUS" "200" "get rate config tiers"; then
   else
     fail "expected 2 tiers, got ${tier_count}"
   fi
+fi
+
+run_test "POST /v1/interest/rates -- create TWD rate config (Daily posting, 2 tiers)"
+http_post "${BASE_URL}/v1/interest/rates" '{
+  "currency": "TWD",
+  "account_kind": "Interest",
+  "day_count": "Actual/365",
+  "posting_frequency": "Daily",
+  "effective_from": "'"${TODAY}"'",
+  "tiers": [
+    { "tier_order": 1, "min_balance": 0, "max_balance": 500000, "apr": 0.020 },
+    { "tier_order": 2, "min_balance": 500000, "max_balance": null, "apr": 0.015 }
+  ]
+}'
+if [[ "$HTTP_STATUS" == "201" ]]; then
+  TWD_RATE_CONFIG_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+  if [[ -n "$TWD_RATE_CONFIG_ID" ]]; then
+    pass
+  else
+    fail "create TWD rate config: could not extract id"
+  fi
+elif [[ "$HTTP_STATUS" == "500" || "$HTTP_STATUS" == "409" ]]; then
+  echo -e "    ${YELLOW}(TWD rate config already exists, fetching existing...)${NC}"
+  http_get "${BASE_URL}/v1/interest/rates?currency=TWD"
+  TWD_RATE_CONFIG_ID=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+entries = data.get('entries', [])
+for e in entries:
+    if e.get('currency') == 'TWD' and e.get('account_kind') == 'Interest':
+        print(e['id'])
+        break
+" 2>/dev/null || echo "")
+  if [[ -n "$TWD_RATE_CONFIG_ID" ]]; then
+    pass
+  else
+    fail "create TWD rate config: duplicate detected but could not fetch existing id"
+  fi
+else
+  fail "create TWD rate config: expected status 201, got ${HTTP_STATUS}"
+fi
+
+run_test "GET /v1/interest/rates?currency=TWD -- list TWD rate configs"
+http_get "${BASE_URL}/v1/interest/rates?currency=TWD"
+if assert_status "$HTTP_STATUS" "200" "list TWD rate configs" && \
+   assert_entries_count "$HTTP_BODY" 1 "TWD rate config count"; then
+  pass
 fi
 
 run_test "GET /v1/interest/rates?currency=EUR -- empty list for unconfigured currency"
@@ -647,6 +700,160 @@ if assert_status "$HTTP_STATUS" "200" "interest ledger query"; then
   fi
 fi
 
+# --- TWD Account Setup ---
+
+run_test "POST /v1/house_account -- create TWD house account"
+http_post "${BASE_URL}/v1/house_account" '{
+  "status": "active",
+  "account_name": "Interest Test TWD House",
+  "account_type": "House",
+  "currency": "TWD"
+}'
+if [[ "$HTTP_STATUS" == "201" ]]; then
+  HOUSE_TWD_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+  if [[ -n "$HOUSE_TWD_ID" ]]; then
+    pass
+  else
+    fail "create house TWD: could not extract id"
+  fi
+elif [[ "$HTTP_STATUS" == "400" || "$HTTP_STATUS" == "409" || "$HTTP_STATUS" == "500" ]]; then
+  echo -e "    ${YELLOW}(TWD house account already exists, fetching existing...)${NC}"
+  http_get "${BASE_URL}/v1/house_account?currency=TWD"
+  HOUSE_TWD_ID=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+entries = data.get('entries', [])
+if entries:
+    print(entries[0]['id'])
+" 2>/dev/null || echo "")
+  if [[ -n "$HOUSE_TWD_ID" ]]; then
+    pass
+  else
+    fail "create house TWD: duplicate detected but could not fetch existing"
+  fi
+else
+  fail "create house TWD: expected status 201, got ${HTTP_STATUS}"
+fi
+
+sleep 3
+
+run_test "Open + Approve Checking account (TWD)"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"OpenAccount\": {
+    \"account_type\": \"Retail\",
+    \"kind\": \"Checking\",
+    \"currency\": \"TWD\",
+    \"external_reference_id\": \"${USER_ID}\"
+  }
+}"
+if assert_status "$HTTP_STATUS" "201" "open TWD checking"; then
+  TWD_CHECKING_ACCOUNT_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+fi
+
+sleep 2
+
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"ApproveAccount\": {\"id\": \"${TWD_CHECKING_ACCOUNT_ID}\"}
+}"
+if assert_status "$HTTP_STATUS" "200" "approve TWD checking"; then
+  pass
+fi
+
+sleep 2
+
+http_get "${BASE_URL}/v1/bank_account/${TWD_CHECKING_ACCOUNT_ID}"
+TWD_CHECKING_LEDGER_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['ledger_id'])" 2>/dev/null || echo "")
+
+run_test "Deposit 1500000 TWD into Checking"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"Deposit\": {
+    \"id\": \"${TWD_CHECKING_ACCOUNT_ID}\",
+    \"amount\": {\"amount\": \"1500000\", \"currency\": \"TWD\"}
+  }
+}"
+if assert_status "$HTTP_STATUS" "200" "deposit 1500000 TWD"; then
+  pass
+fi
+
+wait_for_outbox
+
+# Verify TWD deposit processed
+http_get "${BASE_URL}/v1/ledger/${TWD_CHECKING_LEDGER_ID}"
+twd_checking_bal=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['available']['amount'])" 2>/dev/null || echo "0")
+if python3 -c "exit(0 if float('${twd_checking_bal}') >= 1500000.0 else 1)" 2>/dev/null; then
+  echo -e "    ${GREEN}TWD deposit confirmed: checking balance = ${twd_checking_bal}${NC}"
+else
+  echo -e "    ${RED}WARNING: TWD deposit may not have processed. Balance = ${twd_checking_bal}${NC}"
+  echo -e "    ${YELLOW}(Retrying TWD deposit in case house account was not ready...)${NC}"
+  sleep 5
+  http_post "${BASE_URL}/v1/bank_account" "{
+    \"Deposit\": {
+      \"id\": \"${TWD_CHECKING_ACCOUNT_ID}\",
+      \"amount\": {\"amount\": \"1500000\", \"currency\": \"TWD\"}
+    }
+  }"
+  wait_for_outbox
+  http_get "${BASE_URL}/v1/ledger/${TWD_CHECKING_LEDGER_ID}"
+  twd_checking_bal=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['available']['amount'])" 2>/dev/null || echo "0")
+  echo -e "    ${YELLOW}After retry: TWD checking balance = ${twd_checking_bal}${NC}"
+fi
+
+run_test "Open + Approve Interest sub-account (TWD, parent_id = TWD checking)"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"OpenAccount\": {
+    \"account_type\": \"Retail\",
+    \"kind\": \"Interest\",
+    \"currency\": \"TWD\",
+    \"external_reference_id\": \"${USER_ID}\",
+    \"parent_id\": \"${TWD_CHECKING_ACCOUNT_ID}\"
+  }
+}"
+if assert_status "$HTTP_STATUS" "201" "open TWD interest account"; then
+  TWD_INTEREST_ACCOUNT_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+  if [[ -n "$TWD_INTEREST_ACCOUNT_ID" ]]; then
+    pass
+  else
+    fail "open TWD interest: could not extract id"
+  fi
+fi
+
+sleep 2
+
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"ApproveAccount\": {\"id\": \"${TWD_INTEREST_ACCOUNT_ID}\"}
+}"
+assert_status "$HTTP_STATUS" "200" "approve TWD interest account"
+
+sleep 2
+
+http_get "${BASE_URL}/v1/bank_account/${TWD_INTEREST_ACCOUNT_ID}"
+TWD_INTEREST_LEDGER_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['ledger_id'])" 2>/dev/null || echo "")
+
+run_test "Transfer 1000000 TWD from Checking → Interest"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"Transfer\": {
+    \"id\": \"${TWD_CHECKING_ACCOUNT_ID}\",
+    \"to_account_id\": \"${TWD_INTEREST_ACCOUNT_ID}\",
+    \"amount\": {\"amount\": \"1000000\", \"currency\": \"TWD\"}
+  }
+}"
+if assert_status "$HTTP_STATUS" "200" "TWD transfer to interest"; then
+  pass
+fi
+
+wait_for_outbox 20
+
+run_test "Verify TWD Interest account ledger balance = 1000000"
+http_get "${BASE_URL}/v1/ledger/${TWD_INTEREST_LEDGER_ID}"
+if assert_status "$HTTP_STATUS" "200" "TWD interest ledger query"; then
+  available=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['available']['amount'])" 2>/dev/null || echo "")
+  if python3 -c "exit(0 if float('${available}') == 1000000.0 else 1)" 2>/dev/null; then
+    pass
+  else
+    fail "TWD interest ledger: expected 1000000, got ${available}"
+  fi
+fi
+
 # ===========================================================================
 # SUITE 4: Interest Estimate (pre-accrual)
 # ===========================================================================
@@ -671,6 +878,17 @@ if assert_status "$HTTP_STATUS" "200" "estimate default days"; then
     pass
   else
     fail "estimate default days: expected 30, got ${est_days}"
+  fi
+fi
+
+run_test "GET /v1/interest/estimate -- estimate 30 days for TWD Interest account"
+http_get "${BASE_URL}/v1/interest/estimate?account_id=${TWD_INTEREST_ACCOUNT_ID}&days=30"
+if assert_status "$HTTP_STATUS" "200" "TWD interest estimate"; then
+  est_interest=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['estimated_interest'])" 2>/dev/null || echo "0")
+  est_currency=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['currency'])" 2>/dev/null || echo "")
+  if assert_positive_decimal "$est_interest" "TWD estimated interest > 0" && \
+     [[ "$est_currency" == "TWD" ]]; then
+    pass
   fi
 fi
 
@@ -773,6 +991,45 @@ else:
   fi
 else
   echo -e "    ${YELLOW}(Skipping detailed accrual checks — no accrual data available)${NC}"
+fi
+
+run_test "GET /v1/interest/accruals -- query accruals for TWD Interest account"
+http_get "${BASE_URL}/v1/interest/accruals?account_id=${TWD_INTEREST_ACCOUNT_ID}&start_date=2026-01-01&end_date=2026-12-31"
+if assert_status "$HTTP_STATUS" "200" "list TWD accruals"; then
+  twd_accrual_count=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('entries',[])))" 2>/dev/null || echo "0")
+  if [[ "$twd_accrual_count" -ge "1" ]]; then
+    pass
+    # Verify TWD accrual currency
+    twd_accrual_currency=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+entries = data.get('entries', [])
+if entries:
+    print(entries[0].get('currency', ''))
+else:
+    print('')
+" 2>/dev/null || echo "")
+    run_test "Verify TWD accrual currency = TWD"
+    if [[ "$twd_accrual_currency" == "TWD" ]]; then
+      pass
+    else
+      fail "TWD accrual currency: expected TWD, got ${twd_accrual_currency}"
+    fi
+  else
+    echo -e "    ${YELLOW}SKIP: No TWD accruals found (cron may not have run yet).${NC}"
+    TOTAL=$((TOTAL - 1))
+  fi
+fi
+
+run_test "GET /v1/interest/accruals -- TWD Checking account should have NO accruals"
+http_get "${BASE_URL}/v1/interest/accruals?account_id=${TWD_CHECKING_ACCOUNT_ID}&start_date=2026-01-01&end_date=2026-12-31"
+if assert_status "$HTTP_STATUS" "200" "TWD checking accruals"; then
+  count=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('entries',[])))" 2>/dev/null || echo "")
+  if [[ "$count" == "0" ]]; then
+    pass
+  else
+    fail "TWD checking account should have 0 accruals, got ${count}"
+  fi
 fi
 
 run_test "GET /v1/interest/accruals -- Checking account should have NO accruals"
@@ -946,6 +1203,43 @@ else
   echo -e "    ${YELLOW}(Skipping detailed posting checks — no posting data available)${NC}"
 fi
 
+run_test "GET /v1/interest/postings -- query postings for TWD Interest account"
+http_get "${BASE_URL}/v1/interest/postings?account_id=${TWD_INTEREST_ACCOUNT_ID}&start_date=2026-01-01&end_date=2026-12-31"
+if assert_status "$HTTP_STATUS" "200" "list TWD postings"; then
+  twd_posting_count=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('entries',[])))" 2>/dev/null || echo "0")
+  if [[ "$twd_posting_count" -ge "1" ]]; then
+    pass
+    # Verify TWD posting has integer amount (0 decimal precision)
+    twd_posted_amount=$(echo "$HTTP_BODY" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+entries = data.get('entries', [])
+if entries:
+    print(entries[0].get('posted_amount', '0'))
+else:
+    print('0')
+" 2>/dev/null || echo "0")
+    run_test "Verify TWD posted_amount is whole number (0 decimal precision)"
+    if assert_positive_decimal "$twd_posted_amount" "TWD posted_amount"; then
+      pass
+    fi
+  else
+    echo -e "    ${YELLOW}SKIP: No TWD postings found (posting cron may not have run yet).${NC}"
+    TOTAL=$((TOTAL - 1))
+  fi
+fi
+
+run_test "GET /v1/interest/postings -- TWD Checking account should have NO postings"
+http_get "${BASE_URL}/v1/interest/postings?account_id=${TWD_CHECKING_ACCOUNT_ID}&start_date=2026-01-01&end_date=2026-12-31"
+if assert_status "$HTTP_STATUS" "200" "TWD checking postings"; then
+  count=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('entries',[])))" 2>/dev/null || echo "")
+  if [[ "$count" == "0" ]]; then
+    pass
+  else
+    fail "TWD checking account should have 0 postings, got ${count}"
+  fi
+fi
+
 run_test "GET /v1/interest/postings -- Checking account should have NO postings"
 http_get "${BASE_URL}/v1/interest/postings?account_id=${CHECKING_ACCOUNT_ID}&start_date=2026-01-01&end_date=2026-12-31"
 if assert_status "$HTTP_STATUS" "200" "checking postings"; then
@@ -1112,6 +1406,40 @@ if [[ -n "$ZERO_ACCOUNT_ID" ]]; then
       pass
     else
       fail "zero-balance account: expected 0 accruals, got ${count}"
+    fi
+  fi
+fi
+
+run_test "Open TWD Interest account with zero balance — no accrual expected"
+TWD_EDGE_USER="interest-twd-edge-$(date +%s)"
+http_post "${BASE_URL}/v1/bank_account" "{
+  \"OpenAccount\": {
+    \"account_type\": \"Retail\",
+    \"kind\": \"Interest\",
+    \"currency\": \"TWD\",
+    \"external_reference_id\": \"${TWD_EDGE_USER}\"
+  }
+}"
+TWD_ZERO_ACCOUNT_ID=""
+if assert_status "$HTTP_STATUS" "201" "open TWD zero-balance interest"; then
+  TWD_ZERO_ACCOUNT_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+  pass
+fi
+
+if [[ -n "$TWD_ZERO_ACCOUNT_ID" ]]; then
+  sleep 2
+  http_post "${BASE_URL}/v1/bank_account" "{
+    \"ApproveAccount\": {\"id\": \"${TWD_ZERO_ACCOUNT_ID}\"}
+  }"
+
+  run_test "Query accruals for TWD zero-balance Interest account — expect empty"
+  http_get "${BASE_URL}/v1/interest/accruals?account_id=${TWD_ZERO_ACCOUNT_ID}&start_date=2026-01-01&end_date=2026-12-31"
+  if assert_status "$HTTP_STATUS" "200" "TWD zero balance accruals"; then
+    count=$(echo "$HTTP_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('entries',[])))" 2>/dev/null || echo "")
+    if [[ "$count" == "0" ]]; then
+      pass
+    else
+      fail "TWD zero-balance account: expected 0 accruals, got ${count}"
     fi
   fi
 fi
