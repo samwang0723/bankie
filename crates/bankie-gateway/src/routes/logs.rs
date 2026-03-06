@@ -112,6 +112,7 @@ mod tests {
             api_key_repo: Arc::new(MockApiKeyRepository::new()),
             dashboard_repo: Arc::new(MockDashboardRepository::new()),
             webhook_repo: Arc::new(webhook_repo),
+            db_pools: crate::config::DbPools::test_dummy(),
             jwt_secret: "test-secret".to_string(),
             redis_client: None,
         })

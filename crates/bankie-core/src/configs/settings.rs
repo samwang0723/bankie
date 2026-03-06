@@ -17,6 +17,15 @@ pub struct DatabaseSettings {
     pub dbname: String,
     #[serde(skip_deserializing)]
     pub dbpasswd: String,
+    pub read_replica: Option<ReadReplicaSettings>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReadReplicaSettings {
+    pub host: String,
+    pub port: String,
+    pub user: Option<String>,
+    pub dbname: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -92,6 +101,19 @@ impl DatabaseSettings {
             self.user, self.dbpasswd, self.host, self.port, self.dbname
         )
     }
+
+    /// Build a connection string for the read replica, falling back to
+    /// primary settings for user/dbname/password when not specified.
+    pub fn replica_connection_string(&self) -> Option<String> {
+        self.read_replica.as_ref().map(|r| {
+            let user = r.user.as_deref().unwrap_or(&self.user);
+            let dbname = r.dbname.as_deref().unwrap_or(&self.dbname);
+            format!(
+                "postgres://{}:{}@{}:{}/{}",
+                user, self.dbpasswd, r.host, r.port, dbname
+            )
+        })
+    }
 }
 
 impl RedisSettings {
@@ -136,12 +158,68 @@ mod tests {
             user: "test_user".to_string(),
             dbname: "test_db".to_string(),
             dbpasswd: "test_password".to_string(),
+            read_replica: None,
         };
 
         let connection_string = db_settings.connection_string();
         assert_eq!(
             connection_string,
             "postgres://test_user:test_password@localhost:5432/test_db"
+        );
+    }
+
+    #[test]
+    fn test_replica_connection_string_none() {
+        let db_settings = DatabaseSettings {
+            host: "localhost".to_string(),
+            port: "5432".to_string(),
+            user: "test_user".to_string(),
+            dbname: "test_db".to_string(),
+            dbpasswd: "test_password".to_string(),
+            read_replica: None,
+        };
+        assert!(db_settings.replica_connection_string().is_none());
+    }
+
+    #[test]
+    fn test_replica_connection_string_with_defaults() {
+        let db_settings = DatabaseSettings {
+            host: "primary".to_string(),
+            port: "5432".to_string(),
+            user: "app_user".to_string(),
+            dbname: "app_db".to_string(),
+            dbpasswd: "secret".to_string(),
+            read_replica: Some(ReadReplicaSettings {
+                host: "replica-host".to_string(),
+                port: "5433".to_string(),
+                user: None,
+                dbname: None,
+            }),
+        };
+        assert_eq!(
+            db_settings.replica_connection_string().unwrap(),
+            "postgres://app_user:secret@replica-host:5433/app_db"
+        );
+    }
+
+    #[test]
+    fn test_replica_connection_string_with_overrides() {
+        let db_settings = DatabaseSettings {
+            host: "primary".to_string(),
+            port: "5432".to_string(),
+            user: "app_user".to_string(),
+            dbname: "app_db".to_string(),
+            dbpasswd: "secret".to_string(),
+            read_replica: Some(ReadReplicaSettings {
+                host: "replica-host".to_string(),
+                port: "5433".to_string(),
+                user: Some("ro_user".to_string()),
+                dbname: Some("ro_db".to_string()),
+            }),
+        };
+        assert_eq!(
+            db_settings.replica_connection_string().unwrap(),
+            "postgres://ro_user:secret@replica-host:5433/ro_db"
         );
     }
 

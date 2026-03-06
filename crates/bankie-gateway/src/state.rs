@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::config::DbPools;
 use crate::repo::api_key::ApiKeyRepository;
 use crate::repo::dashboard::DashboardRepository;
 use crate::repo::member::MemberRepository;
@@ -12,6 +13,7 @@ pub struct PortalState {
     pub api_key_repo: Arc<dyn ApiKeyRepository>,
     pub dashboard_repo: Arc<dyn DashboardRepository>,
     pub webhook_repo: Arc<dyn WebhookRepository>,
+    pub db_pools: DbPools,
     pub jwt_secret: String,
     pub redis_client: Option<redis::Client>,
 }

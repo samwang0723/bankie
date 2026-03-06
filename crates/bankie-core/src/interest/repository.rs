@@ -118,12 +118,16 @@ pub trait InterestRepository: Send + Sync {
 /// PostgreSQL implementation of `InterestRepository`.
 #[derive(Clone)]
 pub struct PgInterestRepository {
-    pool: PgPool,
+    read_pool: PgPool,
+    write_pool: PgPool,
 }
 
 impl PgInterestRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(read_pool: PgPool, write_pool: PgPool) -> Self {
+        Self {
+            read_pool,
+            write_pool,
+        }
     }
 }
 
@@ -152,7 +156,7 @@ impl InterestRepository for PgInterestRepository {
         .bind(currency)
         .bind(account_kind)
         .bind(date)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await
     }
 
@@ -166,7 +170,7 @@ impl InterestRepository for PgInterestRepository {
             "#,
         )
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await
     }
 
@@ -180,7 +184,7 @@ impl InterestRepository for PgInterestRepository {
             "#,
         )
         .bind(rate_config_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await
     }
 
@@ -205,11 +209,11 @@ impl InterestRepository for PgInterestRepository {
         if let Some(ref curr) = currency {
             sqlx::query_as::<_, InterestRateConfig>(&query)
                 .bind(curr)
-                .fetch_all(&self.pool)
+                .fetch_all(&self.read_pool)
                 .await
         } else {
             sqlx::query_as::<_, InterestRateConfig>(&query)
-                .fetch_all(&self.pool)
+                .fetch_all(&self.read_pool)
                 .await
         }
     }
@@ -237,7 +241,7 @@ impl InterestRepository for PgInterestRepository {
         .bind(config.effective_from)
         .bind(config.effective_to)
         .bind(config.is_active)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.write_pool)
         .await
     }
 
@@ -259,7 +263,7 @@ impl InterestRepository for PgInterestRepository {
         .bind(id)
         .bind(effective_to)
         .bind(is_active)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.write_pool)
         .await
     }
 
@@ -268,7 +272,7 @@ impl InterestRepository for PgInterestRepository {
         rate_config_id: Uuid,
         tiers: &[InterestRateTier],
     ) -> Result<(), Error> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_pool.begin().await?;
 
         sqlx::query("DELETE FROM interest_rate_tiers WHERE rate_config_id = $1")
             .bind(rate_config_id)
@@ -317,7 +321,7 @@ impl InterestRepository for PgInterestRepository {
             "#,
         )
         .bind(accrual_date)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
 
         let accounts = rows
@@ -367,7 +371,7 @@ impl InterestRepository for PgInterestRepository {
         .bind(accrual.daily_interest)
         .bind(accrual.rate_config_id)
         .bind(&accrual.tier_breakdown)
-        .execute(&self.pool)
+        .execute(&self.write_pool)
         .await?;
         Ok(())
     }
@@ -390,7 +394,7 @@ impl InterestRepository for PgInterestRepository {
         .bind(account_id)
         .bind(period_start)
         .bind(period_end)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.read_pool)
         .await?;
         Ok(result.0)
     }
@@ -418,7 +422,7 @@ impl InterestRepository for PgInterestRepository {
         .bind(start_date)
         .bind(end_date)
         .bind(tenant_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await
     }
 
@@ -446,7 +450,7 @@ impl InterestRepository for PgInterestRepository {
         .bind(start_date)
         .bind(end_date)
         .bind(tenant_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await
     }
 
@@ -473,7 +477,7 @@ impl InterestRepository for PgInterestRepository {
         .bind(posting.transaction_id)
         .bind(&posting.status)
         .bind(&posting.error_message)
-        .execute(&self.pool)
+        .execute(&self.write_pool)
         .await?;
         Ok(())
     }
@@ -496,7 +500,7 @@ impl InterestRepository for PgInterestRepository {
         .bind(status)
         .bind(transaction_id)
         .bind(error_message)
-        .execute(&self.pool)
+        .execute(&self.write_pool)
         .await?;
         Ok(())
     }
@@ -513,7 +517,7 @@ impl InterestRepository for PgInterestRepository {
             "#,
         )
         .bind(account_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await
     }
 
@@ -529,7 +533,7 @@ impl InterestRepository for PgInterestRepository {
               AND bav.payload->>'status' = 'Approved'
             "#,
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
 
         let accounts = rows
@@ -564,7 +568,7 @@ impl InterestRepository for PgInterestRepository {
             "#,
         )
         .bind(ledger_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.read_pool)
         .await?;
 
         Ok(balance.unwrap_or(Decimal::ZERO))

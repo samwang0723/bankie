@@ -1,6 +1,5 @@
 use chrono::Utc;
 use rust_decimal::Decimal;
-use sqlx::PgPool;
 use tokio_cron_scheduler::{Job, JobSchedulerError};
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -13,6 +12,7 @@ use crate::common::money::{Currency, Money};
 use crate::common::snowflake::generate_transaction_reference;
 use crate::domain::finance::{JournalEntry, JournalLine, Transaction, TRANS_INTEREST};
 use crate::repository::adapter::Adapter;
+use crate::repository::pools::DbPools;
 use crate::repository::redis::{acquire_lock, release_lock, LOCK_TIMEOUT};
 use crate::SharedState;
 
@@ -56,7 +56,7 @@ pub async fn create_interest_posting_job(state: SharedState) -> Result<Job, JobS
 pub async fn run_posting_cycle(
     db: &dyn InterestRepository,
     cache: &redis::Client,
-    adapter: &Adapter<PgPool>,
+    adapter: &Adapter<DbPools>,
     fx_rate_service: Option<&FxRateService>,
 ) {
     let identifier = match acquire_lock(cache, POSTING_LOCK_KEY, LOCK_TIMEOUT).await {
@@ -216,7 +216,7 @@ pub async fn execute_posting(
     posting: &InterestPosting,
     ledger_id: &str,
     db: &dyn InterestRepository,
-    adapter: &Adapter<PgPool>,
+    adapter: &Adapter<DbPools>,
     fx_rate_service: Option<&FxRateService>,
 ) -> Result<(), String> {
     // 1. Get house account ledger_id for this currency + tenant

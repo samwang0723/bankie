@@ -3,9 +3,9 @@ use axum::{
     http::{Request, Response, StatusCode},
     middleware::Next,
 };
-use sqlx::PgPool;
 use tracing::{error, warn};
 
+use crate::config::DbPools;
 use crate::models::api_key::hash_api_key;
 use crate::repo::api_key::{find_by_hash, ResolvedApiKey};
 
@@ -44,13 +44,13 @@ pub async fn api_key_resolver(
         }
     }
 
-    // Cache miss — query DB
-    let pool = req.extensions().get::<PgPool>().cloned().ok_or_else(|| {
-        error!("PgPool not found in request extensions");
+    // Cache miss — query DB (read operation → use read pool)
+    let pools = req.extensions().get::<DbPools>().cloned().ok_or_else(|| {
+        error!("DbPools not found in request extensions");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let resolved = find_by_hash(&pool, &key_hash)
+    let resolved = find_by_hash(pools.read(), &key_hash)
         .await
         .map_err(|e| {
             error!("Database error resolving API key: {}", e);

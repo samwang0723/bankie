@@ -18,9 +18,9 @@ use bankie_core::SharedState;
 
 use axum::Router;
 use axum::{middleware, routing::get, routing::post, routing::put};
+use bankie_core::repository::pools::DbPools;
 use clap::Parser;
 use clap_derive::Parser;
-use sqlx::PgPool;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::task;
@@ -152,7 +152,7 @@ async fn main() {
                 .route("/v1/interest/postings", get(list_postings))
                 .route("/v1/interest/estimate", get(estimate_interest_handler))
                 .layer(middleware::from_fn(idempotency_check))
-                .layer(middleware::from_fn(authorize::<PgPool>))
+                .layer(middleware::from_fn(authorize::<DbPools>))
                 .layer(AddExtensionLayer::new(redis_client))
                 .layer(AddExtensionLayer::new(state.clone()))
                 .layer(AddExtensionLayer::new(

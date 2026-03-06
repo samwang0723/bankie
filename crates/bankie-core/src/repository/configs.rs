@@ -1,6 +1,5 @@
 use cqrs_es::{persist::PersistedEventStore, CqrsFramework, Query};
 use postgres_es::{PostgresCqrs, PostgresEventRepository, PostgresViewRepository};
-use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::error;
 
@@ -13,31 +12,26 @@ use crate::{
 };
 
 use super::adapter::Adapter;
+use super::pools::DbPools;
 
 pub fn configure_bank_account(
-    pool: PgPool,
+    pools: &DbPools,
     ledger_loader_saver: LedgerLoaderSaver,
     fx_rate_service: Option<Arc<FxRateService>>,
 ) -> (
     Arc<PostgresCqrs<BankAccount>>,
     Arc<PostgresViewRepository<BankAccountView, BankAccount>>,
 ) {
-    // A very simple query that writes each event to stdout.
     let logging_query = AccountLogging {};
 
-    // A query that stores the current state of an individual account.
+    // View repository reads from replica
     let account_view_repo = Arc::new(PostgresViewRepository::new(
         "bank_account_views",
-        pool.clone(),
+        pools.read().clone(),
     ));
     let mut account_query = AccountQuery::new(account_view_repo.clone());
-
-    // Without a query error handler there will be no indication if an
-    // error occurs (e.g., database connection failure, missing columns or table).
-    // Consider logging an error or panicking in your own application.
     account_query.use_error_handler(Box::new(|e| error!("{}", e)));
 
-    // Create and return an event-sourced `CqrsFramework`.
     let queries: Vec<Box<dyn Query<BankAccount>>> =
         vec![Box::new(logging_query), Box::new(account_query)];
     let mut services = BankAccountServices::new(Box::new(BankAccountLogic {
@@ -45,13 +39,14 @@ pub fn configure_bank_account(
             query: Arc::clone(&account_view_repo),
         },
         ledger: ledger_loader_saver,
-        database: Arc::new(Adapter::new(pool.clone())),
+        database: Arc::new(Adapter::new(pools.clone())),
     }));
     if let Some(fx_service) = fx_rate_service {
         services = services.with_fx_rate_service(fx_service);
     }
 
-    let repo = PostgresEventRepository::new(pool)
+    // Event repository writes to primary
+    let repo = PostgresEventRepository::new(pools.write().clone())
         .with_tables("bank_account_events", "bank_account_snapshots");
     let store = PersistedEventStore::new_snapshot_store(repo, 3);
     let cqrs = CqrsFramework::new(store, queries, services);
@@ -60,28 +55,27 @@ pub fn configure_bank_account(
 }
 
 pub fn configure_ledger(
-    pool: PgPool,
+    pools: &DbPools,
 ) -> (
     Arc<PostgresCqrs<Ledger>>,
     Arc<PostgresViewRepository<LedgerView, Ledger>>,
 ) {
-    // A very simple query that writes each event to stdout.
     let logging_query = LedgerLogging {};
 
-    // A query that stores the current state of an individual account.
-    let ledger_view_repo = Arc::new(PostgresViewRepository::new("ledger_views", pool.clone()));
+    // View repository reads from replica
+    let ledger_view_repo = Arc::new(PostgresViewRepository::new(
+        "ledger_views",
+        pools.read().clone(),
+    ));
     let mut ledger_query = LedgerQuery::new(ledger_view_repo.clone());
-
-    // Without a query error handler there will be no indication if an
-    // error occurs (e.g., database connection failure, missing columns or table).
-    // Consider logging an error or panicking in your own application.
     ledger_query.use_error_handler(Box::new(|e| error!("{}", e)));
 
-    // Create and return an event-sourced `CqrsFramework`.
     let queries: Vec<Box<dyn Query<Ledger>>> =
         vec![Box::new(logging_query), Box::new(ledger_query)];
 
-    let repo = PostgresEventRepository::new(pool).with_tables("ledger_events", "ledger_snapshots");
+    // Event repository writes to primary
+    let repo = PostgresEventRepository::new(pools.write().clone())
+        .with_tables("ledger_events", "ledger_snapshots");
     let store = PersistedEventStore::new_snapshot_store(repo, 3);
     let cqrs = CqrsFramework::new(store, queries, MockLedgerServices {});
 
