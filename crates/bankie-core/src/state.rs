@@ -14,24 +14,51 @@ use crate::event_sourcing::command::BankAccountCommand;
 use crate::interest::repository::{InterestRepository, PgInterestRepository};
 use crate::repository::adapter::{Adapter, DatabaseClient};
 use crate::repository::configs::{configure_bank_account, configure_ledger};
+use crate::repository::pools::DbPools;
 use crate::SharedState;
 
 use postgres_es::{PostgresCqrs, PostgresViewRepository};
+
+/// Build a `DbPools` from the current `SETTINGS`.
+async fn create_db_pools(max_write: u32, min_write: u32, max_read: u32, min_read: u32) -> DbPools {
+    let primary: PgPool = PgPoolOptions::new()
+        .max_connections(max_write)
+        .min_connections(min_write)
+        .acquire_timeout(Duration::from_secs(3))
+        .idle_timeout(Duration::from_secs(600))
+        .connect(&SETTINGS.database.connection_string())
+        .await
+        .expect("Failed to connect to primary database");
+
+    let replica = match SETTINGS.database.replica_connection_string() {
+        Some(url) => {
+            let pool = PgPoolOptions::new()
+                .max_connections(max_read)
+                .min_connections(min_read)
+                .acquire_timeout(Duration::from_secs(3))
+                .idle_timeout(Duration::from_secs(600))
+                .connect(&url)
+                .await
+                .expect("Failed to connect to read replica database");
+            info!("Read replica pool created");
+            Some(pool)
+        }
+        None => {
+            info!("No read replica configured, using primary for all reads");
+            None
+        }
+    };
+
+    DbPools::new(primary, replica)
+}
 
 /// Create application state for the worker binary.
 /// Skips mpsc command channel and BankAccount CQRS (worker never handles HTTP commands).
 /// Includes: database, cache, ledger CQRS, interest_repo, fx_rate_service.
 pub async fn new_worker_state() -> SharedState {
-    let pool: PgPool = PgPoolOptions::new()
-        .max_connections(20)
-        .min_connections(2)
-        .acquire_timeout(Duration::from_secs(3))
-        .idle_timeout(Duration::from_secs(600))
-        .connect(&SETTINGS.database.connection_string())
-        .await
-        .expect("Failed to connect to database");
+    let pools = create_db_pools(15, 2, 20, 2).await;
 
-    let (ledger_cqrs, ledger_query) = configure_ledger(pool.clone());
+    let (ledger_cqrs, ledger_query) = configure_ledger(&pools);
     let ledger_loader_saver = LedgerLoaderSaver {
         cqrs: ledger_cqrs,
         query: ledger_query,
@@ -56,7 +83,7 @@ pub async fn new_worker_state() -> SharedState {
     };
 
     // Load assets from DB
-    let adapter = Adapter::new(pool.clone());
+    let adapter = Adapter::new(pools.clone());
     let asset_registry = match adapter.load_assets().await {
         Ok(assets) => {
             info!("Loaded {} assets from database", assets.len());
@@ -68,11 +95,13 @@ pub async fn new_worker_state() -> SharedState {
         }
     };
 
-    let interest_repo: Arc<dyn InterestRepository> =
-        Arc::new(PgInterestRepository::new(pool.clone()));
+    let interest_repo: Arc<dyn InterestRepository> = Arc::new(PgInterestRepository::new(
+        pools.read().clone(),
+        pools.write().clone(),
+    ));
 
     Arc::new(
-        ApplicationState::<PgPool>::new(Adapter::new(pool))
+        ApplicationState::<DbPools>::new(Adapter::new(pools))
             .with_cache(cache)
             .with_ledger(ledger_loader_saver)
             .with_asset_registry(asset_registry)
@@ -161,17 +190,10 @@ pub struct LedgerLoaderSaver {
 }
 
 pub async fn new_application_state(tx: Sender<BankAccountCommand>) -> SharedState {
-    // H3 FIX: Explicit connection pool sizing instead of library defaults
-    let pool: PgPool = PgPoolOptions::new()
-        .max_connections(50)
-        .min_connections(5)
-        .acquire_timeout(Duration::from_secs(3))
-        .idle_timeout(Duration::from_secs(600))
-        .connect(&SETTINGS.database.connection_string())
-        .await
-        .expect("Failed to connect to database");
+    // Primary: max=30, min=3; Replica: max=40, min=5
+    let pools = create_db_pools(30, 3, 40, 5).await;
 
-    let (ledger_cqrs, ledger_query) = configure_ledger(pool.clone());
+    let (ledger_cqrs, ledger_query) = configure_ledger(&pools);
     let ledger_loader_saver = LedgerLoaderSaver {
         cqrs: ledger_cqrs,
         query: ledger_query,
@@ -196,13 +218,13 @@ pub async fn new_application_state(tx: Sender<BankAccountCommand>) -> SharedStat
     };
 
     let (bc_cqrs, bc_query) = configure_bank_account(
-        pool.clone(),
+        &pools,
         ledger_loader_saver.clone(),
         Some(fx_rate_service.clone()),
     );
 
     // Load assets from DB
-    let adapter = Adapter::new(pool.clone());
+    let adapter = Adapter::new(pools.clone());
     let asset_registry = match adapter.load_assets().await {
         Ok(assets) => {
             info!("Loaded {} assets from database", assets.len());
@@ -214,11 +236,13 @@ pub async fn new_application_state(tx: Sender<BankAccountCommand>) -> SharedStat
         }
     };
 
-    let interest_repo: Arc<dyn InterestRepository> =
-        Arc::new(PgInterestRepository::new(pool.clone()));
+    let interest_repo: Arc<dyn InterestRepository> = Arc::new(PgInterestRepository::new(
+        pools.read().clone(),
+        pools.write().clone(),
+    ));
 
     Arc::new(
-        ApplicationState::<PgPool>::new(Adapter::new(pool))
+        ApplicationState::<DbPools>::new(Adapter::new(pools))
             .with_cache(cache)
             .with_bank_account(BankAccountLoaderSaver {
                 cqrs: bc_cqrs,

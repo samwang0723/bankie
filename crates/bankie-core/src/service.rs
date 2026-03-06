@@ -4,7 +4,6 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use cqrs_es::persist::ViewRepository;
 use rust_decimal::Decimal;
-use sqlx::PgPool;
 use tracing::error;
 use uuid::Uuid;
 
@@ -16,7 +15,7 @@ use crate::{
         models::{BankAccountKind, BankAccountStatus, BankAccountView, HouseAccount, LedgerAction},
     },
     event_sourcing::command::LedgerCommand,
-    repository::adapter::Adapter,
+    repository::{adapter::Adapter, pools::DbPools},
     state::{BankAccountLoader, LedgerLoaderSaver},
 };
 
@@ -104,7 +103,7 @@ pub trait BankAccountApi: Sync + Send {
 pub struct BankAccountLogic {
     pub bank_account: BankAccountLoader,
     pub ledger: LedgerLoaderSaver,
-    pub database: Arc<Adapter<PgPool>>,
+    pub database: Arc<Adapter<DbPools>>,
 }
 
 #[async_trait]

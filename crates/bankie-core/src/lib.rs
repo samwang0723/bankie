@@ -13,9 +13,9 @@ pub mod route;
 pub mod service;
 pub mod state;
 
-use sqlx::PgPool;
+use repository::pools::DbPools;
 use state::ApplicationState;
 use std::sync::Arc;
 
 /// Shared application state wrapped in `Arc` for thread-safe sharing across handlers and jobs.
-pub type SharedState = Arc<ApplicationState<PgPool>>;
+pub type SharedState = Arc<ApplicationState<DbPools>>;

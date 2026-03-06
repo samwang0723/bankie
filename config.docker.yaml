@@ -3,6 +3,12 @@ database:
   port: "5432"
   user: "bankie_app"
   dbname: "bankie_main"
+  # Optional read replica — omit to use primary for all reads
+  # read_replica:
+  #   host: "bankie-postgres-replica"
+  #   port: "5432"
+  #   user: "bankie_app"
+  #   dbname: "bankie_main"
 redis:
   host: "bankie-redis"
   port: "6379"
