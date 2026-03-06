@@ -66,10 +66,24 @@ impl Transaction {
         }
     }
 
+    /// Human-readable transaction type for display.
+    /// Distinguishes interest from regular deposit using the reference prefix.
+    pub fn display_type(&self) -> &'static str {
+        if self.transaction_reference.starts_with(TRANS_INTEREST) {
+            "interest"
+        } else if self.transaction_reference.starts_with(TRANS_WITHDRAWAL) {
+            "withdrawal"
+        } else if self.transaction_reference.starts_with(TRANS_TRANSFER) {
+            "transfer"
+        } else {
+            "deposit"
+        }
+    }
+
     pub fn into_transaction_with_money(self) -> TransactionWithMoney {
         let precision = default_precision(&self.currency) as usize;
         let amount_str = format!("{:.prec$}", self.amount, prec = precision);
-        let tx_type = self.transaction_type().to_string();
+        let tx_type = self.display_type().to_string();
         let amount_usd = self.amount_usd.map(|v| format!("{:.2}", v));
         let fx_rate_to_usd = self.fx_rate_to_usd.map(|v| format!("{}", v));
         TransactionWithMoney {
@@ -179,6 +193,43 @@ mod tests {
     fn test_transaction_type_unknown_fallback() {
         let tx = make_transaction("XX-99999", dec!(10), "USD");
         assert_eq!(tx.transaction_type(), LedgerAction::Deposit); // safe fallback
+    }
+
+    #[test]
+    fn test_display_type_deposit() {
+        let tx = make_transaction("DE-12345", dec!(100), "USD");
+        assert_eq!(tx.display_type(), "deposit");
+    }
+
+    #[test]
+    fn test_display_type_interest() {
+        let tx = make_transaction("IN1234567890", dec!(1.23), "USD");
+        assert_eq!(tx.display_type(), "interest");
+    }
+
+    #[test]
+    fn test_display_type_withdrawal() {
+        let tx = make_transaction("WI-67890", dec!(50), "USD");
+        assert_eq!(tx.display_type(), "withdrawal");
+    }
+
+    #[test]
+    fn test_display_type_transfer() {
+        let tx = make_transaction("TR-11111", dec!(75), "USD");
+        assert_eq!(tx.display_type(), "transfer");
+    }
+
+    #[test]
+    fn test_display_type_unknown_defaults_to_deposit() {
+        let tx = make_transaction("XX-99999", dec!(10), "USD");
+        assert_eq!(tx.display_type(), "deposit");
+    }
+
+    #[test]
+    fn test_into_transaction_with_money_interest_type() {
+        let tx = make_transaction("IN1234567890", dec!(1.23), "USD");
+        let with_money = tx.into_transaction_with_money();
+        assert_eq!(with_money.transaction_type, "interest");
     }
 
     #[test]

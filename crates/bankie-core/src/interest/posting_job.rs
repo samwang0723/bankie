@@ -8,6 +8,7 @@ use uuid::Uuid;
 use super::calculator::round_for_posting;
 use super::models::InterestPosting;
 use super::repository::InterestRepository;
+use crate::common::fx_rate::FxRateService;
 use crate::common::money::{Currency, Money};
 use crate::common::snowflake::generate_transaction_reference;
 use crate::domain::finance::{JournalEntry, JournalLine, Transaction, TRANS_INTEREST};
@@ -40,7 +41,13 @@ pub async fn create_interest_posting_job(state: SharedState) -> Result<Job, JobS
                     return;
                 }
             };
-            run_posting_cycle(interest_db.as_ref(), &cache, &state.database).await;
+            run_posting_cycle(
+                interest_db.as_ref(),
+                &cache,
+                &state.database,
+                state.fx_rate_service.as_deref(),
+            )
+            .await;
         })
     })
 }
@@ -50,6 +57,7 @@ pub async fn run_posting_cycle(
     db: &dyn InterestRepository,
     cache: &redis::Client,
     adapter: &Adapter<PgPool>,
+    fx_rate_service: Option<&FxRateService>,
 ) {
     let identifier = match acquire_lock(cache, POSTING_LOCK_KEY, LOCK_TIMEOUT).await {
         Some(id) => id,
@@ -180,7 +188,7 @@ pub async fn run_posting_cycle(
         }
 
         // Execute the posting: create a real deposit transaction
-        match execute_posting(&posting, &account.ledger_id, db, adapter).await {
+        match execute_posting(&posting, &account.ledger_id, db, adapter, fx_rate_service).await {
             Ok(()) => {
                 posted += 1;
             }
@@ -209,6 +217,7 @@ pub async fn execute_posting(
     ledger_id: &str,
     db: &dyn InterestRepository,
     adapter: &Adapter<PgPool>,
+    fx_rate_service: Option<&FxRateService>,
 ) -> Result<(), String> {
     // 1. Get house account ledger_id for this currency + tenant
     let house_account = adapter
@@ -223,8 +232,16 @@ pub async fn execute_posting(
         .map_err(|e| format!("Invalid currency: {}", e))?;
     let amount = Money::new(posting.posted_amount, currency);
 
-    // 3. Create the deposit transaction + journal via Adapter (same DB operations
-    //    as create_transaction_with_journal_custom_prefix but using Adapter directly)
+    // 3. FX rate conversion: graceful degradation — never blocks the transaction
+    let fx_conversion = if let Some(fx_service) = fx_rate_service {
+        fx_service
+            .convert_to_usd(amount.amount, &amount.currency.to_string())
+            .await
+    } else {
+        None
+    };
+
+    // 4. Create the deposit transaction + journal via Adapter
     let transaction = Transaction {
         id: Uuid::new_v4(),
         bank_account_id: Uuid::parse_str(&posting.account_id)
@@ -238,9 +255,9 @@ pub async fn execute_posting(
         journal_entry_id: None,
         status: "processing".to_string(),
         tenant_id: posting.tenant_id,
-        fx_rate_to_usd: None,
-        amount_usd: None,
-        fx_rate_source: None,
+        fx_rate_to_usd: fx_conversion.as_ref().map(|c| c.fx_rate_to_usd),
+        amount_usd: fx_conversion.as_ref().map(|c| c.amount_usd),
+        fx_rate_source: fx_conversion.map(|c| c.source.to_string()),
     };
 
     let journal_entry = JournalEntry {
