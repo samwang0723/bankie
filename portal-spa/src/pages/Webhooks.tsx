@@ -23,13 +23,9 @@ const VALID_EVENT_TYPES = [
   "account.opened",
   "account.approved",
   "account.frozen",
-  "account.unfrozen",
   "account.closed",
-  "transaction.deposit",
-  "transaction.withdrawal",
-  "transaction.transfer",
-  "ledger.credited",
-  "ledger.debited"
+  "transaction.completed",
+  "transaction.failed"
 ];
 
 function StatusBadge({ status }: { status: string }) {

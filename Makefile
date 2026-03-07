@@ -1,6 +1,6 @@
 .PHONY: help test test-coverage lint ci changelog-gen changelog-commit docker-build \
-       local-setup local-infra local-init-db local-migrate local-build local-start local-worker local-gateway local-portal local-stop local-jwt local-demo local-e2e local-interactive local-core-test \
-       docker-up docker-down docker-logs docker-clean docker-jwt docker-e2e docker-interactive docker-core-test
+       local-setup local-infra local-init-db local-migrate local-build local-start local-worker local-gateway local-portal local-stop local-jwt local-e2e local-gateway-e2e local-interactive local-core-test \
+       docker-up docker-down docker-logs docker-clean docker-jwt docker-e2e docker-gateway-e2e docker-interactive docker-core-test
 
 help: ## show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {sub("\\\\n",sprintf("\n%22c"," "), $$2);printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -44,8 +44,8 @@ local-setup: local-infra local-init-db local-migrate local-build local-jwt-gen l
 	@echo "Quick test:"
 	@echo "  curl -s http://localhost:3030/health"
 	@echo ""
-	@echo "Full demo (via Gateway):"
-	@echo "  make local-gateway && make local-demo"
+	@echo "Gateway E2E (via API key):"
+	@echo "  make local-gateway && make local-gateway-e2e"
 	@echo ""
 	@echo "Core API test (direct):"
 	@echo "  make local-core-test"
@@ -147,8 +147,8 @@ local-stop: ## stop server + worker + gateway + tear down infra
 	@docker compose -f docker-compose.local.yml down
 	@echo "[local] Stopped."
 
-local-demo: ## run the full demo scenario via Gateway (auto-creates portal org + API key)
-	@./scripts/demo.sh
+local-gateway-e2e: ## run Gateway E2E tests (requires running server + gateway; auto-creates org if no API_KEY)
+	@API_KEY=$(API_KEY) ./scripts/gateway-e2e-test.sh
 
 local-core-test: ## run Core API tests directly (requires running server + JWT)
 	@if [ ! -f .local-jwt-token ] || [ ! -s .local-jwt-token ]; then \
@@ -219,6 +219,9 @@ docker-e2e: docker-jwt ## run E2E tests against Docker stack
 		exit 1; \
 	fi
 	@./scripts/e2e-test.sh "$$(cat .docker-jwt-token)"
+
+docker-gateway-e2e: ## run Gateway E2E tests against Docker stack (auto-creates org if no API_KEY)
+	@API_KEY=$(API_KEY) ./scripts/gateway-e2e-test.sh
 
 docker-interactive: ## interactive console against Docker stack (via Gateway)
 	@./scripts/interactive.sh

@@ -4,7 +4,14 @@ const CURRENCY_PRECISION: Record<string, number> = {
   TWD: 0,
   BTC: 8,
   ETH: 18,
-  USDT: 6
+  USDT: 6,
+  USDC: 6
+};
+
+/** Currency symbols for fiat currencies */
+const CURRENCY_SYMBOL: Record<string, string> = {
+  USD: "$",
+  TWD: "NT$"
 };
 
 /** Max display decimals — ETH's 18 is too many for UI */
@@ -37,7 +44,8 @@ export function formatBalance(
     minimumFractionDigits: minDecimals(currency),
     maximumFractionDigits: maxDecimals(currency)
   });
-  return currency === "USD" ? `$${formatted}` : formatted;
+  const symbol = CURRENCY_SYMBOL[currency];
+  return symbol ? `${symbol}${formatted}` : formatted;
 }
 
 /** Format a USD value for display (e.g. "$16,621.50"). Returns null if input is null/undefined. */
@@ -86,7 +94,6 @@ export function formatAmount(
     minimumFractionDigits: minDecimals(currency),
     maximumFractionDigits: maxDecimals(currency)
   });
-  return currency === "USD"
-    ? `${prefix}$${formatted}`
-    : `${prefix}${formatted}`;
+  const symbol = CURRENCY_SYMBOL[currency] ?? "";
+  return `${prefix}${symbol}${formatted}`;
 }

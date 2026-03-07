@@ -6,6 +6,7 @@ import { handleApiError } from "../hooks/useAuth.ts";
 import { Pagination } from "../components/Pagination.tsx";
 import type { BankAccountView, HouseAccountView } from "../types/index.ts";
 import { formatBalance } from "../utils/currency.ts";
+import { useFxRates } from "../hooks/useFxRates.ts";
 
 type Tab = "bank" | "house";
 
@@ -44,10 +45,15 @@ function formatDate(dateStr: string): string {
   });
 }
 
+function formatUsdEquiv(value: number): string {
+  return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 function BankAccountsTab() {
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
+  const { toUsd } = useFxRates();
 
   const { data: accountData, isLoading } = useQuery({
     queryKey: ["accounts", offset],
@@ -232,6 +238,16 @@ function BankAccountsTab() {
                     </td>
                     <td className="px-6 font-mono text-[13px] font-semibold text-slate-900">
                       {formatBalance(account.available, account.currency)}
+                      {(() => {
+                        const usd = toUsd(account.available, account.currency);
+                        if (usd == null) return null;
+                        return (
+                          <span className="block font-mono text-[11px] font-normal text-slate-400">
+                            {"\u2248 "}
+                            {formatUsdEquiv(usd)}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="px-6 text-right w-[80px]">
                       <button
