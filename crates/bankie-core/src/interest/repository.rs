@@ -314,7 +314,7 @@ impl InterestRepository for PgInterestRepository {
                    bs.available AS balance
             FROM bank_account_views bav
             INNER JOIN balance_snapshots bs
-                ON bs.account_id = bav.view_id AND bs.snapshot_date = $1
+                ON bs.account_id = bav.view_id AND bs.snapshot_date = $1 + INTERVAL '1 day'
             WHERE bav.payload->>'kind' = 'Interest'
               AND bav.payload->>'status' = 'Approved'
               AND bs.available > 0
