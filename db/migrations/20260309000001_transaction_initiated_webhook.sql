@@ -25,11 +25,12 @@ BEGIN
     END IF;
 
     -- Derive transaction type from reference prefix
+    -- Actual prefixes: DE (deposit), WI (withdrawal), TR (transfer), IN (interest)
     tx_type := CASE
-        WHEN NEW.transaction_reference LIKE 'DEP-%' THEN 'deposit'
-        WHEN NEW.transaction_reference LIKE 'WDR-%' THEN 'withdrawal'
-        WHEN NEW.transaction_reference LIKE 'TRF-%' THEN 'transfer'
-        WHEN NEW.transaction_reference LIKE 'IN-%'  THEN 'interest'
+        WHEN NEW.transaction_reference LIKE 'DE%' THEN 'deposit'
+        WHEN NEW.transaction_reference LIKE 'WI%' THEN 'withdrawal'
+        WHEN NEW.transaction_reference LIKE 'TR%' THEN 'transfer'
+        WHEN NEW.transaction_reference LIKE 'IN%' THEN 'interest'
         ELSE 'unknown'
     END;
 
