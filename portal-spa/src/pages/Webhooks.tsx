@@ -24,6 +24,7 @@ const VALID_EVENT_TYPES = [
   "account.approved",
   "account.frozen",
   "account.closed",
+  "transaction.initiated",
   "transaction.completed",
   "transaction.failed"
 ];

@@ -76,6 +76,7 @@ pub const VALID_EVENT_TYPES: &[&str] = &[
     "account.approved",
     "account.frozen",
     "account.closed",
+    "transaction.initiated",
     "transaction.completed",
     "transaction.failed",
 ];
@@ -388,6 +389,32 @@ mod tests {
     fn test_validate_event_types_empty() {
         let types: Vec<String> = vec![];
         assert!(validate_event_types(&types).is_ok());
+    }
+
+    #[test]
+    fn test_validate_event_types_transaction_initiated() {
+        let types = vec!["transaction.initiated".to_string()];
+        assert!(validate_event_types(&types).is_ok());
+    }
+
+    #[test]
+    fn test_valid_event_types_contains_transaction_initiated() {
+        assert!(VALID_EVENT_TYPES.contains(&"transaction.initiated"));
+    }
+
+    #[test]
+    fn test_validate_all_transaction_event_types() {
+        let types = vec![
+            "transaction.initiated".to_string(),
+            "transaction.completed".to_string(),
+            "transaction.failed".to_string(),
+        ];
+        assert!(validate_event_types(&types).is_ok());
+    }
+
+    #[test]
+    fn test_valid_event_types_count() {
+        assert_eq!(VALID_EVENT_TYPES.len(), 7);
     }
 
     // --- Signing secret tests ---
